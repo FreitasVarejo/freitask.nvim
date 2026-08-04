@@ -2,18 +2,24 @@
 --
 -- Opera exclusivamente sob ~/ObsidianVault/tasks/. Cada projeto é um
 -- subdiretório (id kebab-case) e cada task é um arquivo markdown cujo bloco
--- inicial (`>` blockquote) codifica status/título/id, e da linha 4 em diante
--- linhas arbitrárias (impedimentos, notas — texto livre). O id da task (=
--- nome do arquivo) é também o nome da branch associada; por isso não há linha
--- `Branch:` separada — o wikilink `[[id]]` na sua própria linha representa
--- ambos. Formato atual do bloco:
---   > [!todo] **Título da task**     ← tipo do callout dá ícone/cor + título
---   > [[id-da-task]]                 ← link do obsidian (id == branch)
---   > 1 - Backlog                    ← texto do status
--- O número/nome do status é derivado do TIPO do callout da linha 1 (mapeado
--- via status.json). O parser também aceita os formatos legados (status na
--- linha 1, título na linha 2, e/ou linha `> Branch:`) para migração; ver
--- M.migrate_format.
+-- inicial (`>` blockquote) codifica status/título/id/nome, e da linha 4 em
+-- diante linhas arbitrárias (impedimentos, notas — texto livre). O id da task
+-- (= nome do arquivo) é também o nome da branch associada; por isso não há
+-- linha `Branch:` separada — o wikilink na linha 2 representa ambos. Formato
+-- atual do bloco:
+--   > [!todo] Título da task                          ← callout dá ícone/cor do status + título
+--   > [[tasks/projeto/id-da-task|id-da-task]]          ← link do obsidian (caminho + alias == id == branch)
+--   > Ajustando formulário de inscrição                ← "nome" livre, independente do status
+-- O status é derivado EXCLUSIVAMENTE do TIPO do callout da linha 1 (mapeado
+-- via status.json, que cobre todos os callouts do render-markdown.nvim). A
+-- linha 3 é texto livre digitado a cada criação/edição — não codifica status.
+-- O parser também aceita os formatos legados (título em negrito, `[[id]]` sem
+-- caminho, status-texto `N - Título` na linha 3, e/ou linha `> Branch:`) para
+-- migração; ver M.migrate_format.
+--
+-- Uma task pode ser arquivada (`archived: true` no frontmatter YAML, via
+-- M.archive_task) para sumir do cache/CURRENT.md sem apagar o arquivo, ou
+-- deletada de fato (arquivo removido do disco).
 --
 -- Este módulo é `require`-ável (`require("util.tasks")`) para que tanto o
 -- plugin do picker (plugins/task-manager.lua) quanto os keymaps buffer-local
@@ -28,13 +34,39 @@ local root = vim.fn.expand("~/ObsidianVault/tasks")
 local RESERVED = { daily = true, templates = true }
 
 -- Metadados de status padrão, espelhados em tasks/status.json no primeiro uso e
--- usados como fallback quando o arquivo está ausente ou corrompido.
+-- usados como fallback quando o arquivo está ausente ou corrompido. Cobre todos
+-- os tipos de callout suportados pelo render-markdown.nvim (ver
+-- https://github.com/MeanderingProgrammer/render-markdown.nvim/wiki/Callouts),
+-- ordenados como uma narrativa de workflow: todo → notas/info → em progresso →
+-- aguardando/atenção → bloqueado/problema → concluído → referência.
 local DEFAULT_STATUS_JSON = [[{
-  "1": { "title": "Backlog", "callout": "todo", "icon": "", "hl_group": "DiagnosticInfo" },
-  "2": { "title": "In Progress", "callout": "example", "icon": "", "hl_group": "DiagnosticHint" },
-  "3": { "title": "Blocked", "callout": "warning", "icon": "󰂃", "hl_group": "DiagnosticWarn" },
-  "4": { "title": "Review", "callout": "question", "icon": "󰋗", "hl_group": "DiagnosticVirtualTextInfo" },
-  "5": { "title": "Done", "callout": "success", "icon": "", "hl_group": "DiagnosticOk" }
+  "1": { "title": "Todo", "callout": "todo", "icon": "󰗡", "hl_group": "DiagnosticInfo" },
+  "2": { "title": "Note", "callout": "note", "icon": "󰋽", "hl_group": "DiagnosticInfo" },
+  "3": { "title": "Info", "callout": "info", "icon": "󰋽", "hl_group": "DiagnosticInfo" },
+  "4": { "title": "Abstract", "callout": "abstract", "icon": "󰨸", "hl_group": "DiagnosticInfo" },
+  "5": { "title": "Summary", "callout": "summary", "icon": "󰨸", "hl_group": "DiagnosticInfo" },
+  "6": { "title": "TL;DR", "callout": "tldr", "icon": "󰨸", "hl_group": "DiagnosticInfo" },
+  "7": { "title": "Example", "callout": "example", "icon": "󰉹", "hl_group": "DiagnosticHint" },
+  "8": { "title": "Important", "callout": "important", "icon": "󰅾", "hl_group": "DiagnosticHint" },
+  "9": { "title": "Question", "callout": "question", "icon": "󰘥", "hl_group": "DiagnosticWarn" },
+  "10": { "title": "Help", "callout": "help", "icon": "󰘥", "hl_group": "DiagnosticWarn" },
+  "11": { "title": "FAQ", "callout": "faq", "icon": "󰘥", "hl_group": "DiagnosticWarn" },
+  "12": { "title": "Attention", "callout": "attention", "icon": "󰀪", "hl_group": "DiagnosticWarn" },
+  "13": { "title": "Warning", "callout": "warning", "icon": "󰀪", "hl_group": "DiagnosticWarn" },
+  "14": { "title": "Caution", "callout": "caution", "icon": "󰳦", "hl_group": "DiagnosticWarn" },
+  "15": { "title": "Bug", "callout": "bug", "icon": "󰨰", "hl_group": "DiagnosticError" },
+  "16": { "title": "Failure", "callout": "failure", "icon": "󰅖", "hl_group": "DiagnosticError" },
+  "17": { "title": "Fail", "callout": "fail", "icon": "󰅖", "hl_group": "DiagnosticError" },
+  "18": { "title": "Missing", "callout": "missing", "icon": "󰅖", "hl_group": "DiagnosticError" },
+  "19": { "title": "Danger", "callout": "danger", "icon": "󱐌", "hl_group": "DiagnosticError" },
+  "20": { "title": "Error", "callout": "error", "icon": "󱐌", "hl_group": "DiagnosticError" },
+  "21": { "title": "Tip", "callout": "tip", "icon": "󰌶", "hl_group": "DiagnosticOk" },
+  "22": { "title": "Hint", "callout": "hint", "icon": "󰌶", "hl_group": "DiagnosticOk" },
+  "23": { "title": "Success", "callout": "success", "icon": "󰄬", "hl_group": "DiagnosticOk" },
+  "24": { "title": "Check", "callout": "check", "icon": "󰄬", "hl_group": "DiagnosticOk" },
+  "25": { "title": "Done", "callout": "done", "icon": "󰄬", "hl_group": "DiagnosticOk" },
+  "26": { "title": "Quote", "callout": "quote", "icon": "󱆨", "hl_group": "Comment" },
+  "27": { "title": "Cite", "callout": "cite", "icon": "󱆨", "hl_group": "Comment" }
 }]]
 
 -- Dobra de acentos multibyte-safe para ids kebab-case (títulos PT-BR).
@@ -78,6 +110,69 @@ local function kebab(s)
   s = s:gsub("%-+", "-") -- colapsa dashes repetidos
   s = s:gsub("^%-+", ""):gsub("%-+$", "") -- apara dashes nas pontas
   return s
+end
+
+--- Frontmatter -----------------------------------------------------------
+
+---Verdadeiro se o arquivo de task tem `archived: true` no frontmatter YAML.
+---@param path string
+---@return boolean
+function M.is_archived(path)
+  if vim.fn.filereadable(path) == 0 then
+    return false
+  end
+  local lines = vim.fn.readfile(path, "", 20)
+  if lines[1] ~= "---" then
+    return false
+  end
+  for i = 2, #lines do
+    if lines[i] == "---" then
+      break
+    end
+    if lines[i]:match("^archived:%s*true%s*$") then
+      return true
+    end
+  end
+  return false
+end
+
+---Define/atualiza uma chave booleana no frontmatter YAML do arquivo, criando
+---o frontmatter se ele ainda não existir.
+---@param path string
+---@param key string
+---@param value boolean
+local function set_frontmatter_flag(path, key, value)
+  local lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
+  local val = tostring(value)
+  if lines[1] == "---" then
+    local close
+    for i = 2, #lines do
+      if lines[i] == "---" then
+        close = i
+        break
+      end
+    end
+    if close then
+      local found = false
+      for i = 2, close - 1 do
+        if lines[i]:match("^" .. key .. ":") then
+          lines[i] = key .. ": " .. val
+          found = true
+          break
+        end
+      end
+      if not found then
+        table.insert(lines, close, key .. ": " .. val)
+      end
+      vim.fn.writefile(lines, path)
+      return
+    end
+  end
+  local out = { "---", key .. ": " .. val, "---", "" }
+  for _, l in ipairs(lines) do
+    out[#out + 1] = l
+  end
+  vim.fn.writefile(out, path)
 end
 
 --- State ---------------------------------------------------------------------
@@ -149,14 +244,25 @@ local function status_by_callout()
   return rev
 end
 
----Verdadeiro se `content` é um "texto de status" (ex.: "1 - Backlog") coerente
----com o status.json — usado p/ não confundir a linha de status com uma nota.
+---Verdadeiro se `content` é um "texto de status" legado (ex.: "1 - Backlog")
+---— usado p/ não confundir a linha de status com uma nota/nome. O título é
+---comparado contra QUALQUER entrada de status.json (não só a de número
+---correspondente), pois renumerar/reordenar status.json não deve fazer uma
+---linha legada como "3 - Blocked" ser lida como nome livre.
 ---@param content string
 ---@return boolean, integer|nil
 local function is_status_text(content)
   local snum, stitle = content:match("^(%d+)%s*%-%s*(.+)$")
-  if snum and M.status and M.status[snum] and vim.trim(stitle) == (M.status[snum].title or "") then
-    return true, tonumber(snum)
+  if not snum or not M.status then
+    return false, nil
+  end
+  stitle = vim.trim(stitle)
+  for k, v in pairs(M.status) do
+    if v.title == stitle then
+      -- usa a chave ATUAL do título casado (não o dígito legado da linha),
+      -- para que uma renumeração de status.json não produza um status errado.
+      return true, tonumber(k)
+    end
   end
   return false, nil
 end
@@ -172,7 +278,7 @@ function M.parse_block(block)
     M.load_status()
   end
   local rev = status_by_callout()
-  local model = { status_num = 1, title = "", id = "", extras = {} }
+  local model = { status_num = 1, title = "", id = "", name = "", extras = {} }
 
   -- Linha 1: sempre "> [!callout] <resto>". O callout dá o status.
   local first = block[1] and strip_quote(block[1]) or ""
@@ -192,7 +298,8 @@ function M.parse_block(block)
     if model.id == "" then
       local lid = content:match("%[%[(.-)%]%]")
       if lid then
-        model.id = vim.trim((lid:gsub("|.*$", "")))
+        local target = vim.trim((lid:gsub("|.*$", "")))
+        model.id = vim.fn.fnamemodify(target, ":t:r")
       end
     end
     local is_only_link = content:match("^%s*%[%[.-%]%]%s*$") ~= nil
@@ -205,6 +312,9 @@ function M.parse_block(block)
       end
     elseif bold and model.title == "" then
       model.title = vim.trim(bold)
+    elseif model.name == "" then
+      -- primeira linha livre restante vira o "nome" (independente do status).
+      model.name = content
     else
       model.extras[#model.extras + 1] = content
     end
@@ -217,11 +327,19 @@ end
 ---@return string[]
 function M.serialize_block(model)
   local st = (M.status and M.status[tostring(model.status_num)]) or { callout = "note", title = "" }
+  -- Link com caminho relativo ao vault + id como alias evita ambiguidade entre
+  -- projetos diferentes que tenham tasks com o mesmo id; sem `model.project`
+  -- (ex.: contexto de teste) cai no formato legado `[[id]]`.
+  local link = model.project and string.format("tasks/%s/%s|%s", model.project, model.id or "", model.id or "")
+    or (model.id or "")
   local out = {
-    string.format("> [!%s] **%s**", st.callout or "note", model.title or ""),
-    string.format("> [[%s]]", model.id or ""),
-    string.format("> %s - %s", model.status_num, st.title or ""),
+    string.format("> [!%s] %s", st.callout or "note", model.title or ""),
+    string.format("> [[%s]]", link),
   }
+  local name = vim.trim(model.name or "")
+  if name ~= "" then
+    out[#out + 1] = "> " .. name
+  end
   local extras = vim.deepcopy(model.extras or {})
   while #extras > 0 and vim.trim(extras[#extras]) == "" do
     table.remove(extras)
@@ -338,6 +456,10 @@ function M.update_cache_entry(path)
     return
   end
   M.cache = M.cache or {}
+  if M.is_archived(path) then
+    M.remove_cache_entry(path)
+    return
+  end
   local num = M.parse_status_num(path) or 1
   for _, e in ipairs(M.cache) do
     if e.path == path then
@@ -413,18 +535,18 @@ end
 ---@param project string id do projeto
 ---@return string[]
 function M.template(title, task_id, project)
-  local st = (M.status and M.status["1"]) or { callout = "todo", title = "Backlog" }
-  return {
-    string.format("> [!%s] **%s**", st.callout or "todo", title),
-    string.format("> [[%s]]", task_id),
-    string.format("> 1 - %s", st.title or "Backlog"),
-    "",
-    "## Notas Soltas",
-    "- ",
-    "",
-    "### [" .. project .. "]",
-    "- [ ] ",
-  }
+  if not M.status then
+    M.load_status()
+  end
+  local block = M.serialize_block({ status_num = 1, title = title, id = task_id, project = project, extras = {} })
+  local out = vim.deepcopy(block)
+  out[#out + 1] = ""
+  out[#out + 1] = "## Notas Soltas"
+  out[#out + 1] = "- "
+  out[#out + 1] = ""
+  out[#out + 1] = "### [" .. project .. "]"
+  out[#out + 1] = "- [ ] "
+  return out
 end
 
 ---Reescreve o bloco de callout de um arquivo no disco (substituindo o primeiro
@@ -445,6 +567,24 @@ local function file_replace_callout(path, new_block)
     end
   end
   vim.fn.writefile(out, path)
+end
+
+---Arquiva uma task: marca `archived: true` no frontmatter (sem apagar o
+---arquivo) e remove do cache, para que ela suma do próximo CURRENT.md.
+---@param path string
+function M.archive_task(path)
+  local buf = loaded_buf(path)
+  if buf and vim.bo[buf].modified then
+    vim.notify("task-manager: salve o arquivo da task antes de arquivar", vim.log.levels.WARN)
+    return
+  end
+  set_frontmatter_flag(path, "archived", true)
+  M.remove_cache_entry(path)
+  if buf then
+    vim.api.nvim_buf_call(buf, function()
+      vim.cmd("silent edit!")
+    end)
+  end
 end
 
 --- CURRENT.md dashboard ------------------------------------------------------
@@ -605,9 +745,11 @@ function M.rebuild_current(opts)
   end
 end
 
----Migra todos os arquivos de task do formato legado (`> **Título** - [[id]]` +
----linha `> Branch:`) para o atual (título e `[[id]]` em linhas separadas, sem
----`Branch:`). Idempotente. Retorna a quantidade de arquivos reescritos.
+---Migra todos os arquivos de task para o formato atual (`[[tasks/<projeto>/<id>|id]]`
+---com caminho + alias, e a linha 3 livre como "nome" em vez de status-texto).
+---Cobre tanto o formato legado (`> **Título** - [[id]]` + `> Branch:`) quanto o
+---formato intermediário (`> N - Título` na linha 3). Idempotente. Retorna a
+---quantidade de arquivos reescritos.
 ---@return integer
 function M.migrate_format()
   M.ensure_root()
@@ -627,6 +769,7 @@ function M.migrate_format()
         if model.id == "" then
           model.id = vim.fn.fnamemodify(path, ":t:r") -- fallback: id = nome do arquivo
         end
+        model.project = project
         local newblk = M.serialize_block(model)
         if not vim.deep_equal(newblk, blk) then
           vim.fn.writefile(splice(lines, s, e, newblk), path)
@@ -711,6 +854,7 @@ local F = {
   title = "Título: ",
   id = "Id / Branch: ",
   status = "Status: ",
+  name = "Nome: ",
   notes = "── Notas (texto livre; uma por linha) ──",
 }
 
@@ -723,6 +867,7 @@ local function parse_form(bl, base)
     status_num = base.status_num,
     title = base.title,
     id = base.id,
+    name = base.name,
     extras = {},
   }
   local in_notes = false
@@ -740,6 +885,8 @@ local function parse_form(bl, base)
       if n then
         m.status_num = tonumber(n)
       end
+    elseif vim.startswith(l, F.name) then
+      m.name = vim.trim(l:sub(#F.name + 1))
     end
   end
   while #m.extras > 0 and vim.trim(m.extras[#m.extras]) == "" do
@@ -758,6 +905,7 @@ function M.edit_task_form(model, on_confirm)
     F.title .. (model.title or ""),
     F.id .. (model.id or ""),
     F.status .. model.status_num .. " - " .. (st.title or ""),
+    F.name .. (model.name or ""),
     F.notes,
   }
   for _, e in ipairs(model.extras or {}) do
@@ -853,6 +1001,7 @@ function M.apply_edit(ctx, nm)
     return
   end
 
+  nm.project = project
   local new_block = M.serialize_block(nm)
   local tbuf = loaded_buf(old_path)
 
@@ -956,7 +1105,7 @@ function M.open_tasks(project)
   M.load_status()
   Snacks.picker.pick({
     source = "obsidian_tasks",
-    title = "Tasks: " .. project .. "   ⏎ open · C-t new · C-x del · C-e edit · C-o back · ? help",
+    title = "Tasks: " .. project .. "   ⏎ open · C-t new · C-x del · C-r archive · C-e edit · C-o back · ? help",
     show_empty = true,
     finder = function()
       local items = {}
@@ -1022,6 +1171,22 @@ function M.open_tasks(project)
         end
         vim.fn.delete(item.file)
         M.remove_cache_entry(item.file)
+        M.rebuild_current({ quiet = true })
+        picker:find()
+      end,
+      -- <C-r>: arquiva a task selecionada (marca `archived: true`, mantém o
+      -- arquivo) após confirmação.
+      archive_task = function(picker, item)
+        item = item or picker:current()
+        if not item then
+          return
+        end
+        local choice = vim.fn.confirm("Archive task '" .. item.entry.task_id .. "'?", "&Yes\n&No", 2)
+        if choice ~= 1 then
+          return
+        end
+        M.archive_task(item.file)
+        M.rebuild_current({ quiet = true })
         picker:find()
       end,
       -- <C-e>: edita a task selecionada no form multi-campo.
@@ -1049,6 +1214,7 @@ function M.open_tasks(project)
         keys = {
           ["<c-t>"] = { "new_task", mode = { "i", "n" }, desc = "New task" },
           ["<c-x>"] = { "delete_task", mode = { "i", "n" }, desc = "Delete task" },
+          ["<c-r>"] = { "archive_task", mode = { "i", "n" }, desc = "Archive task" },
           ["<c-e>"] = { "edit_task", mode = { "i", "n" }, desc = "Edit task" },
           ["<c-o>"] = { "back_to_projects", mode = { "i", "n" }, desc = "Back to projects" },
         },
