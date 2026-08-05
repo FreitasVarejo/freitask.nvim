@@ -9,13 +9,29 @@
 -- atual do bloco:
 --   > [!todo] Título da task                          ← callout dá ícone/cor do status + título
 --   > [[tasks/projeto/id-da-task|id-da-task]]          ← link do obsidian (caminho + alias == id == branch)
---   > Ajustando formulário de inscrição                ← "nome" livre, independente do status
+--   > _Em análise do Fábio_                            ← descrição OPCIONAL do estado (itálico)
+--   > qualquer outra linha                             ← notas/impedimentos (texto livre)
 -- O status é derivado EXCLUSIVAMENTE do TIPO do callout da linha 1 (mapeado
--- via status.json, que cobre todos os callouts do render-markdown.nvim). A
--- linha 3 é texto livre digitado a cada criação/edição — não codifica status.
+-- via status.json, que cobre todos os callouts do render-markdown.nvim).
+--
+-- A descrição do estado é identificada pelo MARCADOR de itálico, não pela
+-- posição: uma linha inteiramente `_..._` (antes de qualquer nota) é a
+-- descrição; qualquer outra linha é nota. Isso evita a ambiguidade posicional
+-- de "sem descrição + uma nota" vs. "com descrição + sem nota", e é por isso
+-- que a linha é simplesmente omitida quando não há descrição (nunca gravamos
+-- um `>` vazio no meio do bloco).
+--
+-- Um callout cujo tipo não existe no status.json vira `status_num = 0`
+-- (STATUS_INVALID) e o tipo digitado é preservado verbatim no arquivo, para
+-- que a task continue editável pelo <leader>oe e o erro apareça no form em vez
+-- de sumir. Status 0 ordena no topo do projeto, gritando para ser consertado.
+-- O form é ESTRITO (recusa tipo desconhecido); só o parser é tolerante.
+--
 -- O parser também aceita os formatos legados (título em negrito, `[[id]]` sem
 -- caminho, status-texto `N - Título` na linha 3, e/ou linha `> Branch:`) para
--- migração; ver M.migrate_format.
+-- migração; ver M.migrate_format. O antigo "nome livre" da linha 3 vira nota,
+-- pois sua semântica era "nome", não "estado" — tratá-lo como descrição de
+-- estado inventaria informação.
 --
 -- Uma task pode ser arquivada (`archived: true` no frontmatter YAML, via
 -- M.archive_task) para sumir do cache/CURRENT.md sem apagar o arquivo, ou
@@ -68,6 +84,34 @@ local DEFAULT_STATUS_JSON = [[{
   "26": { "title": "Quote", "callout": "quote", "icon": "󱆨", "hl_group": "Comment" },
   "27": { "title": "Cite", "callout": "cite", "icon": "󱆨", "hl_group": "Comment" }
 }]]
+
+-- Status sentinela (0) para callouts cujo tipo não existe no status.json.
+-- Deliberadamente FORA do status.json: aquele arquivo lista estados válidos, e
+-- 0 não é um estado que se escolhe — é o que sobra quando o tipo não casa.
+-- Note que quote/cite (26/27) NÃO caem aqui: são estados válidos e deliberados
+-- para material de referência, e devem continuar ordenando por último.
+local STATUS_INVALID = { title = "Sem status", callout = "invalid", icon = "󰘸", hl_group = "DiagnosticError" }
+
+-- Títulos do status.json ANTIGO (pré-callouts), que já não existem no atual.
+-- Valor = status equivalente hoje, para o caso raro de a linha 1 não ter
+-- callout. Usado só por is_status_text, para reconhecer e descartar as linhas
+-- "> N - Título" espalhadas pelo vault durante a migração.
+local LEGACY_STATUS_TITLES = {
+  ["Backlog"] = 1, -- todo
+  ["In Progress"] = 7, -- example
+  ["Blocked"] = 13, -- warning
+  ["Review"] = 9, -- question
+}
+
+---Metadados do status `num`, com fallback para o sentinela de inválido.
+---@param num integer|nil
+---@return table
+function M.status_meta(num)
+  if not num or num == 0 then
+    return STATUS_INVALID
+  end
+  return (M.status and M.status[tostring(num)]) or STATUS_INVALID
+end
 
 -- Dobra de acentos multibyte-safe para ids kebab-case (títulos PT-BR).
 local ACCENTS = {
@@ -268,6 +312,15 @@ local function is_status_text(content)
       return true, tonumber(k)
     end
   end
+  -- Vocabulário legado que NÃO existe mais no status.json (ele foi trocado
+  -- pelos nomes de callout do render-markdown). Sem esta tabela, linhas como
+  -- "1 - Backlog" deixam de casar e a migração as promoveria a nota
+  -- permanente em toda task do vault. Mantida separada e fechada: casar
+  -- qualquer "N - Texto" comeria notas legítimas como "3 - comprar leite".
+  local legacy = LEGACY_STATUS_TITLES[stitle]
+  if legacy then
+    return true, legacy
+  end
   return false, nil
 end
 
@@ -276,27 +329,33 @@ end
 ---(legado); id do primeiro `[[...]]`. Linhas de status-texto, id-só e `Branch:`
 ---legada são consumidas; o resto vira `extras` (texto livre).
 ---@param block string[] linhas cruas do bloco (com `>`)
----@return table model { status_num, title, id, extras[] }
+---@return table model { status_num, raw_callout, title, id, desc, extras[] }
 function M.parse_block(block)
   if not M.status then
     M.load_status()
   end
   local rev = status_by_callout()
-  local model = { status_num = 1, title = "", id = "", name = "", extras = {} }
+  local model = { status_num = 1, raw_callout = "", title = "", id = "", desc = "", extras = {} }
 
-  -- Linha 1: sempre "> [!callout] <resto>". O callout dá o status.
+  -- Linha 1: sempre "> [!callout] <resto>". O callout dá o status. O match é
+  -- PERMISSIVO (`[^%]]*` e não `%w+`) porque um tipo inválido pode conter
+  -- acento ou hífen; com `%w+` o match falhava por completo, o prefixo não era
+  -- removido e "[!questão] Título" virava o título inteiro — corrupção.
   local first = block[1] and strip_quote(block[1]) or ""
-  local callout = first:match("^%[!(%w+)%]")
-  if callout and rev[callout] then
-    model.status_num = rev[callout]
+  local callout = first:match("^%[!([^%]]*)%]")
+  if callout then
+    model.raw_callout = callout
+    -- tipo desconhecido → 0, preservando o texto digitado para o form mostrar.
+    model.status_num = rev[callout] or 0
   end
-  local rest = first:gsub("^%[!%w+%]%s*", "")
+  local rest = callout and first:gsub("^%[![^%]]*%]%s*", "") or first
   if rest ~= "" and not (is_status_text(rest)) then
     -- resto da linha 1 é o título (novo formato); no legado seria status-texto.
     model.title = vim.trim(rest:match("%*%*(.-)%*%*") or rest)
   end
 
   -- Linhas 2..n
+  local seen_note = false
   for i = 2, #block do
     local content = strip_quote(block[i])
     if model.id == "" then
@@ -310,17 +369,25 @@ function M.parse_block(block)
     local statusy, snum = is_status_text(content)
     local is_branch = content:match("^[Bb]ranch:") ~= nil
     local bold = content:match("%*%*(.-)%*%*")
+    -- Descrição do estado: linha inteiramente em itálico. Só vale ANTES de
+    -- qualquer nota, senão uma nota em itálico lá embaixo seria promovida a
+    -- descrição do estado.
+    local italic = content:match("^_(.-)_$")
     if is_only_link or statusy or is_branch then
       if statusy and not callout then
         model.status_num = snum -- fallback quando a linha 1 não tinha callout
       end
     elseif bold and model.title == "" then
       model.title = vim.trim(bold)
-    elseif model.name == "" then
-      -- primeira linha livre restante vira o "nome" (independente do status).
-      model.name = content
+    elseif italic and italic ~= "" and model.desc == "" and not seen_note then
+      model.desc = vim.trim(italic)
     else
+      -- Todo o resto é nota — inclusive o antigo "nome livre" da linha 3, que
+      -- é rebaixado a nota na migração (ver comentário do topo do módulo).
       model.extras[#model.extras + 1] = content
+      if vim.trim(content) ~= "" then
+        seen_note = true
+      end
     end
   end
   return model
@@ -330,19 +397,33 @@ end
 ---@param model table
 ---@return string[]
 function M.serialize_block(model)
-  local st = (M.status and M.status[tostring(model.status_num)]) or { callout = "note", title = "" }
+  -- Status válido → normaliza para o callout canônico do status.json. Status 0
+  -- → devolve o tipo digitado verbatim, para o erro sobreviver ao round-trip e
+  -- aparecer no form (gravar um blockquote sem `[!tipo]` deixaria a task
+  -- ilegível para resolve_under_cursor, isto é: inconsertável pelo plugin).
+  local callout
+  if model.status_num == 0 then
+    callout = vim.trim(model.raw_callout or "")
+    if callout == "" then
+      callout = "invalid" -- não existe no status.json, logo reparseia como 0
+    end
+  else
+    callout = M.status_meta(model.status_num).callout or "note"
+  end
   -- Link com caminho relativo ao vault + id como alias evita ambiguidade entre
   -- projetos diferentes que tenham tasks com o mesmo id; sem `model.project`
   -- (ex.: contexto de teste) cai no formato legado `[[id]]`.
   local link = model.project and string.format("tasks/%s/%s|%s", model.project, model.id or "", model.id or "")
     or (model.id or "")
   local out = {
-    string.format("> [!%s] %s", st.callout or "note", model.title or ""),
+    string.format("> [!%s] %s", callout, model.title or ""),
     string.format("> [[%s]]", link),
   }
-  local name = vim.trim(model.name or "")
-  if name ~= "" then
-    out[#out + 1] = "> " .. name
+  -- Omitida quando vazia: um `>` vazio no meio do bloco faria a primeira nota
+  -- ser promovida a descrição no re-parse.
+  local desc = vim.trim(model.desc or "")
+  if desc ~= "" then
+    out[#out + 1] = "> _" .. desc .. "_"
   end
   local extras = vim.deepcopy(model.extras or {})
   while #extras > 0 and vim.trim(extras[#extras]) == "" do
@@ -803,7 +884,9 @@ function M.resolve_under_cursor()
     vim.notify("task-manager: cursor não está sobre um callout", vim.log.levels.WARN)
     return nil
   end
-  if not lines[s]:match(">%s*%[!%w+%]") then
+  -- permissivo como o parser: uma task com tipo inválido (status 0) precisa
+  -- continuar abrindo no form, senão o estado quebrado seria inconsertável.
+  if not lines[s]:match(">%s*%[![^%]]*%]") then
     vim.notify("task-manager: bloco sob o cursor não é um callout de task", vim.log.levels.WARN)
     return nil
   end
@@ -1120,7 +1203,7 @@ function M.open_tasks(project)
     end,
     format = function(item)
       local e = item.entry
-      local st = (M.status and M.status[tostring(e.status_num)]) or {}
+      local st = M.status_meta(e.status_num)
       local hl = st.hl_group or "Normal"
       return {
         { (st.icon or "") .. " ", hl },
