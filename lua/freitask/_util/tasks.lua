@@ -101,7 +101,11 @@ local ACCENTS = {
 ---@param s string
 ---@return string
 local function kebab(s)
-  s = s:lower()
+  -- vim.fn.tolower e não s:lower(): o lower() do Lua só mexe em bytes ASCII,
+  -- então "Á" não virava "á", não casava a tabela de dobra abaixo e acabava
+  -- descartado por [^%w%s%-] — "Ávida" saía como "vida". Passou a importar
+  -- agora que a criação deriva o id do título.
+  s = vim.fn.tolower(s)
   for from, to in pairs(ACCENTS) do
     s = s:gsub(from, to)
   end
