@@ -1147,8 +1147,14 @@ function M.apply_edit(ctx, nm)
       vim.notify("task-manager: salve o arquivo da task antes de renomear o id", vim.log.levels.WARN)
       return
     end
+    -- rename de verdade, em vez de escrever-o-novo + apagar-o-velho: se a
+    -- escrita falhar no meio, o arquivo antigo não chega a ser destruído.
+    if vim.fn.filereadable(old_path) == 1 and vim.fn.rename(old_path, new_path) ~= 0 then
+      vim.notify("task-manager: não consegui renomear para " .. nm.id, vim.log.levels.ERROR)
+      return
+    end
     local src = tbuf and vim.api.nvim_buf_get_lines(tbuf, 0, -1, false)
-      or (vim.fn.filereadable(old_path) == 1 and vim.fn.readfile(old_path) or {})
+      or (vim.fn.filereadable(new_path) == 1 and vim.fn.readfile(new_path) or {})
     local s, e = first_block_range(src)
     local out = s and splice(src, s, e, new_block) or vim.deepcopy(new_block)
     vim.fn.writefile(out, new_path)
@@ -1158,7 +1164,6 @@ function M.apply_edit(ctx, nm)
         vim.cmd("silent keepjumps write!")
       end)
     end
-    vim.fn.delete(old_path)
     M.remove_cache_entry(old_path)
     M.update_cache_entry(new_path)
   else
