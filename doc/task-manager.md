@@ -29,26 +29,44 @@ Diretórios **reservados** (não são projetos): `daily/` (arquivo diário) e
 
 ## Formato do bloco de uma tarefa
 
-O topo de cada arquivo de tarefa é um *callout* do Obsidian de 3 linhas:
+O topo de cada arquivo de tarefa é um *callout* do Obsidian de 2 a N linhas:
 
 ```markdown
 > [!todo] Título da task
 > [[tasks/bjju-web/id-da-task|id-da-task]]
-> Ajustando formulário de inscrição
+> _Aguardando aprovação do Fábio_
+> impedimento: falta acesso à VPN
 ```
 
 | Linha | Conteúdo | Papel |
 | ----- | -------- | ----- |
-| 1 | `> [!<callout>] <título>` | O **tipo do callout** (`todo`, `example`, …) dá ícone/cor **e é a ÚNICA fonte de verdade do status** — não há número redundante em nenhum outro lugar. O título vai em texto simples aqui (sem negrito — o `[!callout]` já destaca a linha). |
+| 1 | `> [!<callout>] <título>` | O **tipo do callout** (`todo`, `example`, …) dá ícone/cor **e é a ÚNICA fonte de verdade do status** — não há número redundante em nenhum outro lugar. O título vai em texto simples aqui (sem negrito — o `[!callout]` já destaca a linha). Se o tipo não existir em `status.json`, a task cai em **status 0** (ver seção própria abaixo) — continua editável, só perde ícone/cor. |
 | 2 | `> [[tasks/<projeto>/<id>\|<id>]]` | Link do Obsidian para a própria nota, com caminho relativo ao vault (evita ambiguidade entre projetos com o mesmo id) e o `id` como alias; o `id` também é o nome da branch. |
-| 3 | `> <nome>` | **Texto livre, independente do status** — você informa/edita esse "nome" a cada criação/edição do callout (ex.: em que ponto a task está, um resumo curto). Omitida se vazia. |
-| 4+ | `> qualquer texto` | Livre: impedimentos, notas, etc. **Preservado na íntegra** ao editar. |
+| 3 (opcional) | `> _descrição do estado_` | **Só existe se envolta em itálico** (`_..._`) — é o que identifica a linha como descrição, não a posição. Texto curto e independente do status em si (ex.: "aguardando revisão de X"), digitado a cada edição. **Omitida por completo se vazia** — nunca grave um `>` vazio no meio do bloco: isso faria a nota seguinte ser lida como descrição no próximo parse. |
+| 4+ | `> qualquer texto` | Notas/impedimentos, texto livre. **Preservado na íntegra** ao editar. Uma linha em itálico aqui (depois de já haver alguma nota) continua sendo nota, não descrição — o marcador só conta na primeira linha livre do bloco. |
 
 Depois do bloco vem o corpo livre do arquivo (`## Notas Soltas`, checklists…),
 que a ferramenta **nunca** reescreve.
 
 **Frontmatter YAML** (`--- id/aliases/tags ---`) que o obsidian.nvim injeta ao
 salvar é tolerado: a detecção do callout pula o frontmatter automaticamente.
+
+### Status 0 — callout sem tipo reconhecido
+
+Se a linha 1 tem um `[!tipo]` que não existe em `status.json` (typo, tipo
+removido, edição manual malfeita), a task recebe `status_num = 0` em vez de
+cair silenciosamente em `todo`. O tipo digitado é **preservado verbatim** no
+arquivo (não é substituído nem apagado), para que:
+
+- a task continue abrindo no form via `<leader>oe`/`<C-e>` — status 0 não é um
+  beco sem saída;
+- o erro fique visível ao reabrir (o form mostra o tipo errado na linha 3,
+  pronto pra corrigir);
+- no board, a task ordene **antes de tudo no seu projeto** (0 é o menor
+  `status_num`), com ícone/hl de erro — sinal de "conserte isso".
+
+Não confundir com `quote`/`cite` (26/27): esses são status **válidos e
+deliberados**, para material de referência, e ordenam por último normalmente.
 
 ### Status (`~/ObsidianVault/tasks/status.json`)
 
@@ -116,7 +134,7 @@ weekday: Monday
 
 > [!todo] Criar jiujitsu unicamp
 > [[tasks/bjju-web/criar-jiujitsu-unicamp|criar-jiujitsu-unicamp]]
-> Ajustando formulário de inscrição
+> _Ajustando formulário de inscrição_
 ```
 
 - **Auto-regeneração**: salvar qualquer arquivo de tarefa (`BufWritePost`)
@@ -138,17 +156,42 @@ weekday: Monday
 | `<leader>oe` | cursor sobre um callout (em `CURRENT.md` ou no arquivo da tarefa) | Abre o **form** de edição multi-campo |
 | `<C-a>` | picker de projetos | Regenera e abre o `CURRENT.md` |
 
-Dentro do picker de tarefas: `<C-t>` nova tarefa · `<C-x>` deletar · `<C-r>`
-arquivar · `<C-e>` editar (form) · `<C-o>` voltar. No picker de projetos:
-`<C-c>` novo projeto.
+Dentro do picker de tarefas: `<C-t>` nova tarefa (abre o form vazio) · `<C-x>`
+deletar · `<C-r>` arquivar · `<C-e>` editar (form) · `<C-o>` voltar. No picker
+de projetos: `<C-c>` novo projeto.
 
-O **form** (janela flutuante) edita de uma vez, na ordem: `Título`,
-`Id / Branch`, `Status`, `Nome` (o texto livre da linha 3, independente do
-status), e depois notas livres. `⏎` salva, `q`/`<Esc>` cancela, `<C-s>` escolhe
-o status. Editar a partir do `CURRENT.md` grava no arquivo-fonte **e** atualiza
-o bloco no painel in place. Renomear o `Id` faz rename da tarefa via delete +
-recreate (o arquivo e a branch passam a se chamar pelo novo id; backlinks
-externos **não** são migrados automaticamente).
+O **form** (janela flutuante) é **posicional, sem rótulos no texto** — os
+rótulos aparecem como virtual text à direita de cada linha, mas não fazem
+parte do conteúdo editável:
+
+```
+Título da task                          título
+id-da-task                               id / branch
+todo _descrição opcional do estado_      tipo de status + descrição
+nota livre 1
+nota livre 2
+```
+
+Linha 1 = título · linha 2 = id (kebab-case; se deixada em branco, é derivada
+do título) · linha 3 = `<tipo-de-callout>` seguido, opcionalmente, de
+`_descrição_` em itálico · linha 4+ = notas livres.
+
+`⏎` salva, `q`/`<Esc>` cancela, `<C-s>` abre um `vim.ui.select` com os status
+disponíveis (troca só o tipo da linha 3, preservando a descrição); a linha 3
+também tem completion (`<C-x><C-o>`) para os tipos de callout. **A validação é
+estrita**: tipo de callout desconhecido na linha 3, ou menos de 3 linhas, faz o
+`⏎` recusar e notificar em vez de fechar — o texto digitado continua no buffer
+para corrigir. (O parser do *arquivo* é tolerante — vira status 0 — mas o form
+não deixa você criar um status 0 sem querer.)
+
+O mesmo form serve para **criar** (`<C-t>`, buffer vazio com status inicial
+`todo`) e **editar** (`<C-e>`/`<leader>oe`, pré-preenchido) — um único formato,
+um único parser (`parse_form`), sem dois caminhos para o mesmo dado divergirem.
+
+Editar a partir do `CURRENT.md` grava no arquivo-fonte **e** atualiza o bloco
+no painel in place. Renomear o `Id` faz **rename real** do arquivo (`vim.fn.rename`,
+não escrever-o-novo-e-apagar-o-velho) — o arquivo e a branch passam a se chamar
+pelo novo id; backlinks externos **não** são migrados automaticamente.
 
 ### Arquivar vs. deletar
 
@@ -168,27 +211,35 @@ mas diferem no que sobra em disco:
 
 ## Para agentes de IA — como criar/editar tarefas sem quebrar nada
 
-1. **Criar tarefa**: escreva `tasks/<projeto>/<id>.md` com o bloco de 3 linhas
-   acima. `id` deve ser kebab-case (use `M.template` se estiver em Lua). O
-   projeto (diretório) precisa existir.
+1. **Criar tarefa**: prefira `require("util.tasks").template(model)` a montar
+   o markdown na mão — `model` é `{ status_num, raw_callout, title, id, desc,
+   extras, project }`, os mesmos campos que `parse_block` devolve. `id` deve
+   ser kebab-case (`M.template` não faz isso por você; use `kebab()` interno ou
+   deixe o form derivar do título). O projeto (diretório) precisa existir.
 2. **Status é derivado EXCLUSIVAMENTE do tipo do callout da linha 1** — para
-   mudar o status, troque o callout (`[!todo]`→`[!success]`). Não escreva
-   número/status em nenhuma outra linha; a linha 3 é um campo livre à parte
-   (ver item 4 a seguir), não o status.
+   mudar o status, troque o callout (`[!todo]`→`[!success]`). Se o tipo não
+   existir em `status.json`, a task vira status 0 (ver seção "Status 0"
+   acima) em vez de falhar — mas isso normalmente indica um typo, não é o
+   caminho recomendado para setar status de propósito.
 3. **`id` == nome da branch** (sem `feat/`). O link da linha 2 é
    `[[tasks/<projeto>/<id>|<id>]]` (caminho vault-relative como alvo, `id` como
    alias) — não invente uma linha `Branch:` separada, e não use `[[id]]` sem
    caminho para tarefas novas (evita colisão entre projetos com o mesmo id).
-4. **Linha 3 é um "nome" livre, independente do status** — texto curto que
-   você (ou o agente, a pedido do usuário) informa a cada criação/edição do
-   callout. Omita a linha inteira se não houver nome. Preserve as linhas 4+
-   (impedimentos/notas) ao editar — são texto livre do usuário.
+4. **A descrição do estado (linha 3) só existe se estiver em itálico**
+   (`_texto_`) — é o marcador, não a posição, que a distingue de uma nota.
+   Omita a linha inteira se não houver descrição (nunca grave `>` vazio no
+   meio do bloco — isso deslocaria a leitura da primeira nota real). Preserve
+   as linhas seguintes (impedimentos/notas) ao editar — são texto livre do
+   usuário, e sobrevivem tal como estão.
 5. **Reaproveite o parser canônico** em vez de regex ad-hoc:
    `require("util.tasks").parse_block(linhas)` →
-   `{ status_num, title, id, name, extras }`, e `serialize_block(model)` de
-   volta (`model.project` precisa estar setado para o link sair com caminho).
-   O par é idempotente (round-trip seguro) e já lida com frontmatter e
-   formatos legados.
+   `{ status_num, raw_callout, title, id, desc, extras }`, e
+   `serialize_block(model)` de volta (`model.project` precisa estar setado
+   para o link sair com caminho). `raw_callout` é o tipo cru digitado —
+   relevante só quando `status_num == 0`, para preservar o typo em vez de
+   apagá-lo. O par é idempotente (round-trip seguro) e já lida com
+   frontmatter e formatos legados (inclusive o "nome" livre pré-migração, que
+   vira nota).
 6. **Não edite as seções `## <projeto>` do `CURRENT.md` à mão** — são geradas.
    Edite os arquivos de tarefa; o painel se atualiza ao salvar. Só
    `## Notas Avulsas` é livre.
@@ -205,7 +256,15 @@ mas diferem no que sobra em disco:
   formato — mudanças de formato começam aí.
 - `M.migrate_format()` converte arquivos de formatos antigos para o atual
   (idempotente); rode-o após qualquer mudança de formato, seguido de
-  `M.rebuild_current()`.
+  `M.rebuild_current()`. Reconhece tanto o vocabulário atual de `status.json`
+  quanto títulos legados que já saíram dele (`LEGACY_STATUS_TITLES`, ex.:
+  "Backlog", "In Progress") — se `status.json` for reestruturado de novo,
+  cheque se essa tabela precisa crescer, senão a migração vira texto-livre
+  permanente em vez de status.
+- O cache (`M.cache`) guarda o **bloco bruto** de cada task (`entry.block`),
+  lido uma única vez por `scan_task`; `rebuild_current` reimprime a partir daí
+  em vez de reler os arquivos. Ao adicionar campos ao cache, prefira estender
+  `scan_task` a abrir o arquivo de novo em outro lugar.
 - Validação headless (sem framework de teste; o repo é config):
   ```bash
   luacheck nvim/lua/util/tasks.lua
