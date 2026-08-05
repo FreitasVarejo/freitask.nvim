@@ -533,6 +533,48 @@ end
 
 --- Cache ---------------------------------------------------------------------
 
+---Lê o arquivo de uma task UMA vez e extrai tudo que o cache precisa.
+---Substitui o par is_archived + read_callout, que abria o mesmo arquivo duas
+---vezes por task — e o rebuild_current abria uma terceira para reimprimir o
+---bloco. Guardando o bloco na entry, o regen não toca mais no disco.
+---@param path string
+---@return { archived: boolean, block: string[], status_num: integer }|nil
+local function scan_task(path)
+  if vim.fn.filereadable(path) == 0 then
+    return nil
+  end
+  local lines = vim.fn.readfile(path)
+
+  local archived = false
+  if lines[1] == "---" then
+    for i = 2, #lines do
+      if lines[i] == "---" then
+        break
+      end
+      if lines[i]:match("^archived:%s*true%s*$") then
+        archived = true
+        break
+      end
+    end
+  end
+
+  local block = {}
+  local s, e = first_block_range(lines)
+  if s then
+    for i = s, e do
+      block[#block + 1] = lines[i]
+    end
+  end
+
+  if not M.status then
+    M.load_status()
+  end
+  -- Arquivo de task sem callout é um arquivo quebrado: 0 o deixa no topo do
+  -- projeto em vez de escondê-lo no meio do Backlog.
+  local status_num = (#block > 0) and M.parse_block(block).status_num or 0
+  return { archived = archived, block = block, status_num = status_num }
+end
+
 ---Insere ou atualiza uma task no cache em memória.
 ---@param path string
 function M.update_cache_entry(path)
@@ -541,18 +583,25 @@ function M.update_cache_entry(path)
     return
   end
   M.cache = M.cache or {}
-  if M.is_archived(path) then
+  local scan = scan_task(path)
+  if not scan or scan.archived then
     M.remove_cache_entry(path)
     return
   end
-  local num = M.parse_status_num(path) or 1
   for _, e in ipairs(M.cache) do
     if e.path == path then
-      e.status_num = num
+      e.status_num = scan.status_num
+      e.block = scan.block
       return
     end
   end
-  M.cache[#M.cache + 1] = { project = project, task_id = task_id, status_num = num, path = path }
+  M.cache[#M.cache + 1] = {
+    project = project,
+    task_id = task_id,
+    status_num = scan.status_num,
+    block = scan.block,
+    path = path,
+  }
 end
 
 ---Remove uma task do cache (após deleção).
@@ -814,7 +863,8 @@ function M.rebuild_current(opts)
       lines[#lines + 1] = ""
     else
       for _, e in ipairs(entries) do
-        for _, cl in ipairs(M.read_callout(e.path)) do
+        -- bloco vem do cache (scan_task já o leu); sem I/O aqui.
+        for _, cl in ipairs(e.block or {}) do
           lines[#lines + 1] = cl
         end
         lines[#lines + 1] = ""
