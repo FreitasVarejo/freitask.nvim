@@ -663,17 +663,15 @@ end
 
 --- File operations -----------------------------------------------------------
 
----Template markdown para uma nova task.
----@param title string título original (não-slugificado)
----@param task_id string id kebab-case
----@param project string id do projeto
+---Template markdown para uma nova task, a partir do modelo vindo do form.
+---@param model table { status_num, title, id, desc, extras[], project }
 ---@return string[]
-function M.template(title, task_id, project)
+function M.template(model)
   if not M.status then
     M.load_status()
   end
-  local block = M.serialize_block({ status_num = 1, title = title, id = task_id, project = project, extras = {} })
-  local out = vim.deepcopy(block)
+  local project = model.project
+  local out = vim.deepcopy(M.serialize_block(model))
   out[#out + 1] = ""
   out[#out + 1] = "## Notas Soltas"
   out[#out + 1] = "- "
@@ -986,64 +984,146 @@ function M.resolve_under_cursor()
   }
 end
 
--- Rótulos do form (edições devem preservar os prefixos exatos).
-local F = {
-  title = "Título: ",
-  id = "Id / Branch: ",
-  status = "Status: ",
-  name = "Nome: ",
-  notes = "── Notas (texto livre; uma por linha) ──",
-}
+--- Form posicional ------------------------------------------------------------
+--
+-- O buffer não tem rótulos — é para uso rápido, quatro campos por posição:
+--   1  título
+--   2  id / branch
+--   3  <tipo-de-callout> [descrição opcional do estado]
+--   4+ notas (texto livre)
+-- Os rótulos aparecem como virtual text à direita (ver render_form_labels), o
+-- que preserva a densidade do buffer sem custar a legibilidade: sem eles, uma
+-- linha apagada por acidente desloca todos os campos em silêncio — e como
+-- apply_edit trata mudança de id como rename, o deslocamento chega a mexer em
+-- arquivo. Por isso o confirm também VALIDA antes de aplicar.
 
----Reconstrói um modelo a partir das linhas do form buffer.
----@param bl string[]
----@param base table modelo original (fallback dos campos)
----@return table
-local function parse_form(bl, base)
-  local m = {
-    status_num = base.status_num,
-    title = base.title,
-    id = base.id,
-    name = base.name,
-    extras = {},
-  }
-  local in_notes = false
-  for _, l in ipairs(bl) do
-    if in_notes then
-      m.extras[#m.extras + 1] = l
-    elseif l == F.notes then
-      in_notes = true
-    elseif vim.startswith(l, F.title) then
-      m.title = vim.trim(l:sub(#F.title + 1))
-    elseif vim.startswith(l, F.id) then
-      m.id = kebab(vim.trim(l:sub(#F.id + 1)))
-    elseif vim.startswith(l, F.status) then
-      local n = l:sub(#F.status + 1):match("(%d+)")
-      if n then
-        m.status_num = tonumber(n)
-      end
-    elseif vim.startswith(l, F.name) then
-      m.name = vim.trim(l:sub(#F.name + 1))
+local FORM_LABELS = { "título", "id / branch", "tipo de status + descrição" }
+local form_ns = vim.api.nvim_create_namespace("obsidian_task_form")
+
+---Desenha os rótulos das 3 primeiras linhas como virtual text.
+---@param buf integer
+local function render_form_labels(buf)
+  if not vim.api.nvim_buf_is_valid(buf) then
+    return
+  end
+  vim.api.nvim_buf_clear_namespace(buf, form_ns, 0, -1)
+  local n = vim.api.nvim_buf_line_count(buf)
+  for i, label in ipairs(FORM_LABELS) do
+    if i <= n then
+      vim.api.nvim_buf_set_extmark(buf, form_ns, i - 1, 0, {
+        virt_text = { { "  " .. label, "Comment" } },
+        virt_text_pos = "eol",
+      })
     end
   end
-  while #m.extras > 0 and vim.trim(m.extras[#m.extras]) == "" do
-    table.remove(m.extras)
-  end
-  return m
 end
 
----Abre um form buffer flutuante para editar uma task de uma vez.
----@param model table
+---Completion de tipos de callout, para a linha 3 do form. Sem isso o formato
+---posicional exigiria decorar os 27 tipos.
+---@param findstart integer
+---@param base string
+function M.callout_omnifunc(findstart, base)
+  if findstart == 1 then
+    local line = vim.api.nvim_get_current_line()
+    local col = vim.api.nvim_win_get_cursor(0)[2]
+    local start = col
+    while start > 0 and line:sub(start, start):match("[%w_]") do
+      start = start - 1
+    end
+    return start
+  end
+  if not M.status then
+    M.load_status()
+  end
+  local out = {}
+  local keys = vim.tbl_keys(M.status or {})
+  table.sort(keys, function(a, b)
+    return tonumber(a) < tonumber(b)
+  end)
+  for _, k in ipairs(keys) do
+    local st = M.status[k]
+    if st.callout and vim.startswith(st.callout, base) then
+      out[#out + 1] = { word = st.callout, menu = k .. " · " .. (st.title or "") }
+    end
+  end
+  return out
+end
+
+---Reconstrói um modelo a partir das linhas do form posicional.
+---Estrito de propósito: o parser de arquivo é tolerante (tipo desconhecido →
+---status 0), mas aqui recusamos, senão um typo viraria uma task inválida em
+---silêncio — que é justamente o bug que o status 0 existe para tornar visível.
+---@param bl string[]
+---@param base table modelo original (fallback de project/raw_callout)
+---@return table|nil model, string|nil err
+local function parse_form(bl, base)
+  if #bl < 3 then
+    return nil, "form precisa de ao menos 3 linhas (título, id, status)"
+  end
+  if not M.status then
+    M.load_status()
+  end
+
+  local title = vim.trim(bl[1])
+  local id = kebab(vim.trim(bl[2]))
+  if id == "" then
+    id = kebab(title) -- id em branco deriva do título (usado na criação)
+  end
+  if title == "" and id == "" then
+    return nil, "título e id vazios"
+  end
+  if id == "" then
+    return nil, "id inválido"
+  end
+
+  local tag, desc = vim.trim(bl[3]):match("^(%S+)%s*(.*)$")
+  if not tag then
+    return nil, "linha 3 precisa começar com um tipo de callout (ex.: todo)"
+  end
+  local rev = status_by_callout()
+  local status_num = rev[tag]
+  if not status_num then
+    return nil, string.format("tipo de callout desconhecido: %q (use <C-s> ou <C-x><C-o>)", tag)
+  end
+
+  local extras = {}
+  for i = 4, #bl do
+    extras[#extras + 1] = bl[i]
+  end
+  while #extras > 0 and vim.trim(extras[#extras]) == "" do
+    table.remove(extras)
+  end
+
+  return {
+    status_num = status_num,
+    raw_callout = tag,
+    title = title,
+    id = id,
+    desc = vim.trim(desc or ""),
+    extras = extras,
+    project = base and base.project,
+  }
+end
+
+---Abre o form posicional flutuante. Usado tanto pela edição quanto pela
+---criação — um único formato, um único parser.
+---@param model table modelo inicial (na criação, campos vazios + status default)
+---@param opts { title: string }
 ---@param on_confirm fun(new_model: table)
-function M.edit_task_form(model, on_confirm)
+function M.edit_task_form(model, opts, on_confirm)
   M.load_status()
-  local st = (M.status and M.status[tostring(model.status_num)]) or {}
+  -- Status 0 devolve o tipo digitado, para o erro ficar visível e editável.
+  local tag = (model.status_num == 0) and vim.trim(model.raw_callout or "")
+    or (M.status_meta(model.status_num).callout or "todo")
+  local status_line = tag
+  if vim.trim(model.desc or "") ~= "" then
+    status_line = tag .. " " .. vim.trim(model.desc)
+  end
+
   local lines = {
-    F.title .. (model.title or ""),
-    F.id .. (model.id or ""),
-    F.status .. model.status_num .. " - " .. (st.title or ""),
-    F.name .. (model.name or ""),
-    F.notes,
+    model.title or "",
+    model.id or "",
+    status_line,
   }
   for _, e in ipairs(model.extras or {}) do
     lines[#lines + 1] = e
@@ -1053,6 +1133,7 @@ function M.edit_task_form(model, on_confirm)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"
+  vim.bo[buf].omnifunc = "v:lua.require'util.tasks'.callout_omnifunc"
 
   local width = 66
   local height = math.max(#lines + 2, 8)
@@ -1064,8 +1145,16 @@ function M.edit_task_form(model, on_confirm)
     col = math.floor((vim.o.columns - width) / 2),
     style = "minimal",
     border = "rounded",
-    title = " Editar task  ⏎ salva · q cancela · C-s status ",
+    title = " " .. (opts.title or "Task") .. "  ⏎ salva · q cancela · C-s status ",
     title_pos = "center",
+  })
+
+  render_form_labels(buf)
+  vim.api.nvim_create_autocmd({ "TextChanged", "TextChangedI" }, {
+    buffer = buf,
+    callback = function()
+      render_form_labels(buf)
+    end,
   })
 
   local function close()
@@ -1076,8 +1165,14 @@ function M.edit_task_form(model, on_confirm)
 
   local function confirm()
     local bl = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+    local nm, err = parse_form(bl, model)
+    if not nm then
+      -- não fecha: o buffer fica aberto com o texto para corrigir.
+      vim.notify("task-manager: " .. err, vim.log.levels.WARN)
+      return
+    end
     close()
-    on_confirm(parse_form(bl, model))
+    on_confirm(nm)
   end
 
   local function pick_status()
@@ -1087,7 +1182,7 @@ function M.edit_task_form(model, on_confirm)
     end)
     local choices = {}
     for _, n in ipairs(keys) do
-      choices[#choices + 1] = { num = n, label = n .. " - " .. (M.status[n].title or "") }
+      choices[#choices + 1] = { callout = M.status[n].callout, label = n .. " - " .. (M.status[n].title or "") }
     end
     vim.ui.select(choices, {
       prompt = "Status:",
@@ -1098,13 +1193,12 @@ function M.edit_task_form(model, on_confirm)
       if not c or not vim.api.nvim_buf_is_valid(buf) then
         return
       end
-      local bl = vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-      for i, l in ipairs(bl) do
-        if vim.startswith(l, F.status) then
-          vim.api.nvim_buf_set_lines(buf, i - 1, i, false, { F.status .. c.label })
-          break
-        end
-      end
+      -- troca só o tipo, preservando a descrição do estado que já estiver lá.
+      local cur = vim.api.nvim_buf_get_lines(buf, 2, 3, false)[1] or ""
+      local rest = vim.trim(cur):match("^%S+%s+(.*)$") or ""
+      local new = (rest ~= "") and (c.callout .. " " .. rest) or c.callout
+      vim.api.nvim_buf_set_lines(buf, 2, 3, false, { new })
+      render_form_labels(buf)
     end)
   end
 
@@ -1202,7 +1296,7 @@ function M.edit_under_cursor()
   if not ctx then
     return
   end
-  M.edit_task_form(ctx.model, function(nm)
+  M.edit_task_form(ctx.model, { title = "Editar task" }, function(nm)
     M.apply_edit(ctx, nm)
   end)
 end
@@ -1233,8 +1327,31 @@ function M.edit_task_file(path)
     task_path = path,
     model = model,
   }
-  M.edit_task_form(model, function(nm)
+  M.edit_task_form(model, { title = "Editar task" }, function(nm)
     M.apply_edit(ctx, nm)
+  end)
+end
+
+---Abre o form vazio para criar uma task no projeto — mesmo buffer e mesmo
+---parser da edição, então só existe um formato para aprender. O id em branco é
+---derivado do título por parse_form.
+---@param project string
+function M.create_task_form(project)
+  M.ensure_root()
+  M.load_status()
+  local seed = { status_num = 1, title = "", id = "", desc = "", extras = {}, project = project }
+  M.edit_task_form(seed, { title = "Nova task em " .. project }, function(nm)
+    local path = root .. "/" .. project .. "/" .. nm.id .. ".md"
+    if vim.fn.filereadable(path) == 1 then
+      vim.notify("task-manager: task já existe: " .. nm.id, vim.log.levels.WARN)
+      return
+    end
+    nm.project = project
+    local out = M.template(nm)
+    vim.fn.writefile(out, path)
+    M.update_cache_entry(path)
+    M.rebuild_current({ quiet = true })
+    vim.cmd.edit(vim.fn.fnameescape(path))
   end)
 end
 
@@ -1277,28 +1394,11 @@ function M.open_tasks(project)
       end)
     end,
     actions = {
-      -- <C-t>: cria uma nova task a partir de um título.
+      -- <C-t>: cria uma nova task no form posicional (mesmo buffer da edição).
       new_task = function(picker)
-        vim.ui.input({ prompt = "New task title: " }, function(input)
-          if not input or input == "" then
-            return
-          end
-          local id = kebab(input)
-          if id == "" then
-            vim.notify("task-manager: título de task inválido", vim.log.levels.WARN)
-            return
-          end
-          local path = root .. "/" .. project .. "/" .. id .. ".md"
-          if vim.fn.filereadable(path) == 1 then
-            vim.notify("task-manager: task já existe: " .. id, vim.log.levels.WARN)
-            return
-          end
-          vim.fn.writefile(M.template(input, id, project), path)
-          M.update_cache_entry(path)
-          picker:close()
-          vim.schedule(function()
-            vim.cmd.edit(vim.fn.fnameescape(path))
-          end)
+        picker:close()
+        vim.schedule(function()
+          M.create_task_form(project)
         end)
       end,
       -- <C-x>: deleta a task selecionada após confirmação.
