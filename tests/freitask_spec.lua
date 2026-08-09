@@ -32,11 +32,12 @@ describe("kebab", function()
     eq("foo-bar", X.kebab("--foo--bar--"))
   end)
 
-  it("come o underscore em vez de virar dash", function()
-    -- CARACTERIZAÇÃO, não aprovação: `%w` do Lua não inclui `_`, então o
-    -- primeiro gsub o remove e a regra `[%s_]+ → -` nunca chega a ver um.
-    -- "foo_bar" deveria virar "foo-bar". Corrigido no passo seguinte.
-    eq("foobar", X.kebab("foo_bar"))
+  it("converte underscore em dash", function()
+    -- Regressão: `%w` do Lua não inclui `_`, então a classe permitida precisa
+    -- listá-lo explicitamente — senão ele é apagado antes da regra que o
+    -- converteria, e "foo_bar" sai "foobar".
+    eq("foo-bar", X.kebab("foo_bar"))
+    eq("foo-bar", X.kebab("foo __ bar"))
   end)
 
   it("devolve string vazia quando não sobra nada", function()

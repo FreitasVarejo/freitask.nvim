@@ -53,6 +53,71 @@
 
 local M = {}
 
+--- Tipos ---------------------------------------------------------------------
+--
+-- As formas de tabela deste módulo eram descritas em PROSA nos comentários de
+-- cada função (`@param model table` + um parágrafo explicando os campos).
+-- Prosa não é verificada: um campo renomeado deixava a descrição errada sem
+-- que nada reclamasse. Como `---@class`, o lua_ls confere — e a documentação
+-- passa a ficar num lugar só.
+
+---Metadados de um status, como vêm do status.json.
+---@class freitask.StatusMeta
+---@field title string
+---@field callout string
+---@field icon string
+---@field hl_group string
+
+---Bloco de callout de uma task, decomposto. É o modelo que circula entre o
+---parser, o form e o serializer.
+---@class freitask.Model
+---@field status_num integer 0 = callout não reconhecido (ver STATUS_INVALID)
+---@field raw_callout string tipo digitado, preservado verbatim quando status_num == 0
+---@field title string
+---@field id string == nome do arquivo == nome da branch
+---@field desc string descrição do estado (a linha em itálico); "" quando ausente
+---@field extras string[] notas/impedimentos, texto livre
+---@field project string|nil sem ele, o link sai no formato legado `[[id]]`
+---@field archived string|nil tipo de arquivamento; move o alvo do link
+
+---Uma task no cache em memória. `block` é guardado para que o regen do
+---CURRENT.md não precise reabrir o arquivo.
+---@class freitask.Entry
+---@field project string
+---@field task_id string
+---@field status_num integer
+---@field block string[]
+---@field path string
+---@field archived string|nil
+
+---Contexto de uma edição em curso: de onde o bloco veio e para onde volta.
+---@class freitask.Ctx
+---@field source "current"|"task"
+---@field buf integer
+---@field block_start integer|nil
+---@field block_end integer|nil
+---@field project string
+---@field archived string|nil
+---@field task_path string
+---@field model freitask.Model
+
+---Um achado do doctor. `fixed` diz se ESTA passagem reparou.
+---@class freitask.Finding
+---@field level "error"|"warn"
+---@field kind string
+---@field path string vault-relative
+---@field msg string
+---@field fixed boolean
+
+---Arquivo de task já decomposto pelo caminho.
+---@class freitask.TaskRef
+---@field path string
+---@field project string
+---@field id string
+---@field archived string|nil
+
+--- Constantes ----------------------------------------------------------------
+
 local vault = vim.fn.expand("~/ObsidianVault")
 local root = vault .. "/tasks"
 
@@ -76,6 +141,12 @@ end
 -- fora do status.json porque não é um estado que se escolhe: é a tradução do
 -- nome do diretório, que é o dado real.
 local ARCHIVED_LABELS = { done = "feito", dropped = "abandonado", failed = "falhou" }
+
+-- Rótulos do vim.fn.confirm, com `&` marcando a tecla de atalho. As iniciais
+-- são distintas de propósito (o/p/f): "done" e "dropped" colidiriam em "d".
+-- Fica ao lado de ARCHIVED_TYPES para que acrescentar um tipo sem lhe dar um
+-- rótulo apareça na hora, e não como um item mudo no prompt.
+local ARCHIVED_PROMPT = { done = "d&one", dropped = "dro&pped", failed = "&failed" }
 
 -- Callouts que sugerem cada tipo no prompt de arquivamento. Só um DEFAULT: o
 -- tipo é escolhido por quem arquiva, senão o caminho viraria uma segunda fonte
@@ -139,7 +210,7 @@ local LEGACY_STATUS_TITLES = {
 
 ---Metadados do status `num`, com fallback para o sentinela de inválido.
 ---@param num integer|nil
----@return table
+---@return freitask.StatusMeta
 function M.status_meta(num)
   if not num or num == 0 then
     return STATUS_INVALID
@@ -187,11 +258,58 @@ local function kebab(s)
   for from, to in pairs(ACCENTS) do
     s = s:gsub(from, to)
   end
-  s = s:gsub("[^%w%s%-]", "") -- descarta o que não for word/space/dash
+  -- `_` precisa entrar na classe permitida: `%w` do Lua é só letra+dígito, e
+  -- sem ele o underscore era APAGADO aqui, antes de a regra abaixo poder
+  -- convertê-lo em dash — "foo_bar" saía "foobar", não "foo-bar".
+  s = s:gsub("[^%w%s%-_]", "") -- descarta o que não for word/space/dash/underscore
   s = s:gsub("[%s_]+", "-") -- espaços e underscores viram dash
   s = s:gsub("%-+", "-") -- colapsa dashes repetidos
   s = s:gsub("^%-+", ""):gsub("%-+$", "") -- apara dashes nas pontas
   return s
+end
+
+--- Utilitários de arquivo e de buffer ----------------------------------------
+
+---Linhas de um arquivo, ou lista vazia se ele não existe. O par
+---`filereadable(p) == 1 and readfile(p) or {}` aparecia em meia dúzia de
+---lugares; concentrá-lo garante que "arquivo ausente" signifique a mesma coisa
+---em todos eles.
+---@param path string
+---@return string[]
+local function read_lines(path)
+  if vim.fn.filereadable(path) == 0 then
+    return {}
+  end
+  return vim.fn.readfile(path)
+end
+
+---Recarrega um buffer a partir do disco, descartando o que estiver nele. Só é
+---chamado depois de o arquivo ter sido reescrito por nós, e sempre com o
+---buffer sabidamente limpo — quem pode ter alteração pendente checa `modified`
+---antes e desiste.
+---@param buf integer
+local function reload_buf(buf)
+  vim.api.nvim_buf_call(buf, function()
+    vim.cmd("silent edit!")
+  end)
+end
+
+---Reaponta um buffer para o novo caminho do arquivo e o recarrega. `pcall`
+---porque nvim_buf_set_name falha se já houver outro buffer com esse nome — e
+---nesse caso o rename em si já aconteceu, então abortar seria pior.
+---@param buf integer
+---@param path string
+local function retarget_buf(buf, path)
+  pcall(vim.api.nvim_buf_set_name, buf, path)
+  reload_buf(buf)
+end
+
+---Todos os arquivos markdown do vault. Três lugares precisam desta varredura
+---(referências, alvos resolvíveis e o scan de links do doctor) com filtros
+---diferentes; o glob em si é o mesmo.
+---@return string[]
+local function vault_notes()
+  return vim.fn.glob(vault .. "/**/*.md", true, true)
 end
 
 --- Caminhos de task ----------------------------------------------------------
@@ -295,7 +413,9 @@ function M.ensure_root()
   end
 end
 
----Carrega metadados de status de tasks/status.json (cai no default).
+---Carrega metadados de status de tasks/status.json (cai no default). É uma
+---releitura FORÇADA de propósito: os pontos de entrada a chamam para que uma
+---edição do status.json valha na hora, sem reiniciar o Neovim.
 function M.load_status()
   local sj = root .. "/status.json"
   if vim.fn.filereadable(sj) == 1 then
@@ -311,6 +431,15 @@ function M.load_status()
   M.status = vim.json.decode(DEFAULT_STATUS_JSON)
 end
 
+---Garante que há status carregado, sem forçar releitura. Substitui o
+---`if not M.status then M.load_status() end` que estava repetido em toda
+---função que precisava do mapa — cada repetição era uma chance de esquecer.
+local function ensure_status()
+  if not M.status then
+    M.load_status()
+  end
+end
+
 ---Lê só a primeira linha de um arquivo de task e extrai o número do status.
 ---@param path string
 ---@return integer|nil
@@ -319,9 +448,7 @@ function M.parse_status_num(path)
   if #blk == 0 then
     return nil
   end
-  if not M.status then
-    M.load_status()
-  end
+  ensure_status()
   return M.parse_block(blk).status_num
 end
 
@@ -335,17 +462,23 @@ local function strip_quote(line)
 end
 
 ---Mapa tipo-de-callout → número de status (ex.: todo→1), a partir do status.json.
+---Memoizado pela IDENTIDADE da tabela de status, não por um flag: assim tanto
+---um M.load_status() quanto alguém trocando M.status na mão invalidam sozinhos.
+---Antes o mapa era reconstruído a cada parse_block — isto é, 27 entradas por
+---task, a cada build_cache do vault inteiro.
 ---@return table<string, integer>
+local rev_src, rev_map = nil, {}
 local function status_by_callout()
-  local rev = {}
-  if M.status then
-    for k, v in pairs(M.status) do
+  if rev_src ~= M.status then
+    local rev = {}
+    for k, v in pairs(M.status or {}) do
       if v.callout then
         rev[v.callout] = tonumber(k)
       end
     end
+    rev_src, rev_map = M.status, rev
   end
-  return rev
+  return rev_map
 end
 
 ---Verdadeiro se `content` é um "texto de status" legado (ex.: "1 - Backlog")
@@ -385,11 +518,9 @@ end
 ---(legado); id do primeiro `[[...]]`. Linhas de status-texto, id-só e `Branch:`
 ---legada são consumidas; o resto vira `extras` (texto livre).
 ---@param block string[] linhas cruas do bloco (com `>`)
----@return table model { status_num, raw_callout, title, id, desc, extras[] }
+---@return freitask.Model
 function M.parse_block(block)
-  if not M.status then
-    M.load_status()
-  end
+  ensure_status()
   local rev = status_by_callout()
   local model = { status_num = 1, raw_callout = "", title = "", id = "", desc = "", extras = {} }
 
@@ -450,7 +581,7 @@ function M.parse_block(block)
 end
 
 ---Reconstrói o bloco `>` a partir do modelo (ordem canônica).
----@param model table
+---@param model freitask.Model
 ---@return string[]
 function M.serialize_block(model)
   -- Status válido → normaliza para o callout canônico do status.json. Status 0
@@ -560,6 +691,19 @@ local function first_block_range(lines)
   return start, finish
 end
 
+---Faixa e CONTEÚDO do primeiro bloco `>`. O par first_block_range + laço de
+---cópia `for i = s, e do blk[#blk+1] = lines[i] end` aparecia em sete lugares;
+---aqui ele existe uma vez.
+---@param lines string[]
+---@return integer|nil start, integer|nil finish, string[]|nil block
+local function first_block(lines)
+  local s, e = first_block_range(lines)
+  if not s then
+    return nil
+  end
+  return s, e, vim.list_slice(lines, s, e)
+end
+
 ---Faixa do bloco `>` que contém a linha `lnum` (1-indexed). nil se `lnum` não
 ---estiver sobre uma linha de blockquote.
 ---@param lines string[]
@@ -604,19 +748,10 @@ local function scan_task(path)
   if vim.fn.filereadable(path) == 0 then
     return nil
   end
-  local lines = vim.fn.readfile(path)
+  local _, _, block = first_block(read_lines(path))
+  block = block or {}
 
-  local block = {}
-  local s, e = first_block_range(lines)
-  if s then
-    for i = s, e do
-      block[#block + 1] = lines[i]
-    end
-  end
-
-  if not M.status then
-    M.load_status()
-  end
+  ensure_status()
   -- Arquivo de task sem callout é um arquivo quebrado: 0 o deixa no topo do
   -- projeto em vez de escondê-lo no meio do Backlog.
   local status_num = (#block > 0) and M.parse_block(block).status_num or 0
@@ -677,7 +812,7 @@ end
 
 ---Tasks cacheadas de um projeto, ordenadas por status e depois id.
 ---@param project string
----@return table[]
+---@return freitask.Entry[]
 function M.entries_for(project)
   local list = {}
   for _, e in ipairs(M.cache or {}) do
@@ -730,7 +865,7 @@ end
 ---@return string[]
 local function ref_candidates()
   local out = {}
-  for _, p in ipairs(vim.fn.glob(vault .. "/**/*.md", true, true)) do
+  for _, p in ipairs(vault_notes()) do
     if not p:match("^" .. vim.pesc(root) .. "/daily/") and p ~= root .. "/CURRENT.md" then
       out[#out + 1] = p
     end
@@ -799,7 +934,7 @@ function M.retarget_links(old_path, new_path)
     if path ~= old_path and path ~= new_path then
       local buf = loaded_buf(path)
       local lines = buf and vim.api.nvim_buf_get_lines(buf, 0, -1, false)
-        or (vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {})
+        or read_lines(path)
       local hits = 0
       for i, line in ipairs(lines) do
         local n = 0
@@ -824,9 +959,7 @@ function M.retarget_links(old_path, new_path)
         else
           vim.fn.writefile(lines, path)
           if buf then
-            vim.api.nvim_buf_call(buf, function()
-              vim.cmd("silent edit!")
-            end)
+            reload_buf(buf)
           end
           refs, files = refs + hits, files + 1
         end
@@ -849,12 +982,10 @@ end
 --- File operations -----------------------------------------------------------
 
 ---Template markdown para uma nova task, a partir do modelo vindo do form.
----@param model table { status_num, title, id, desc, extras[], project }
+---@param model freitask.Model
 ---@return string[]
 function M.template(model)
-  if not M.status then
-    M.load_status()
-  end
+  ensure_status()
   local project = model.project
   local out = vim.deepcopy(M.serialize_block(model))
   out[#out + 1] = ""
@@ -871,7 +1002,7 @@ end
 ---@param path string
 ---@param new_block string[]
 local function file_replace_callout(path, new_block)
-  local lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
+  local lines = read_lines(path)
   local s, e = first_block_range(lines)
   local out
   if s then
@@ -1011,13 +1142,9 @@ local function move_task(path, dest)
 
   -- O link da linha 2 é path-qualified, então precisa seguir a pasta nova; e o
   -- rodapé ganha a entrada de histórico. Um write só para as duas coisas.
-  local lines = vim.fn.readfile(new_path)
-  local s, e = first_block_range(lines)
+  local lines = read_lines(new_path)
+  local s, e, block = first_block(lines)
   if s then
-    local block = {}
-    for i = s, e do
-      block[#block + 1] = lines[i]
-    end
     local model = M.parse_block(block)
     if model.id == "" then
       model.id = id
@@ -1029,10 +1156,7 @@ local function move_task(path, dest)
   vim.fn.writefile(lines, new_path)
 
   if buf then
-    pcall(vim.api.nvim_buf_set_name, buf, new_path)
-    vim.api.nvim_buf_call(buf, function()
-      vim.cmd("silent edit!")
-    end)
+    retarget_buf(buf, new_path)
   end
 
   M.remove_cache_entry(path)
@@ -1041,6 +1165,39 @@ local function move_task(path, dest)
   end
   M.retarget_links(path, new_path)
   return new_path
+end
+
+---Pergunta o tipo de arquivamento, com o default derivado do callout. Existia
+---duas vezes — no <C-r> do picker e no <leader>oa — e as duas cópias já tinham
+---divergido: uma montava os rótulos de ARCHIVED_TYPES, a outra os tinha
+---hardcoded numa string. Acrescentar um quarto tipo teria consertado só metade.
+---vim.fn.confirm e não vim.ui.select: é bloqueante e não abre uma janela que
+---dispute foco com a do picker.
+---@param id string
+---@param status_num integer|nil
+---@return string|nil tipo nil se cancelado
+function M.prompt_archive_type(id, status_num)
+  local suggested = M.suggest_archive_type(status_num)
+  local labels, default = {}, 1
+  for i, t in ipairs(M.ARCHIVED_TYPES) do
+    labels[i] = ARCHIVED_PROMPT[t] or t
+    if t == suggested then
+      default = i
+    end
+  end
+  local choice =
+    vim.fn.confirm("Arquivar '" .. id .. "' como:", table.concat(labels, "\n") .. "\n&cancelar", default)
+  if choice < 1 or choice > #M.ARCHIVED_TYPES then
+    return nil
+  end
+  return M.ARCHIVED_TYPES[choice]
+end
+
+---Confirma o desarquivamento. Contraparte de M.prompt_archive_type.
+---@param id string
+---@return boolean
+function M.confirm_unarchive(id)
+  return vim.fn.confirm("Desarquivar '" .. id .. "'?", "&Sim\n&Não", 2) == 1
 end
 
 ---Arquiva uma task: move para tasks/<projeto>/archived/<tipo>/, tirando-a do
@@ -1064,7 +1221,7 @@ end
 ---entram em M.cache de propósito: assim o board, o regen e o resto do módulo
 ---seguem enxergando só as tasks ativas, sem um filtro novo em cada leitor.
 ---@param project string
----@return table[]
+---@return freitask.Entry[]
 function M.archived_entries_for(project)
   local out = {}
   for _, path in ipairs(vim.fn.glob(root .. "/" .. project .. "/archived/*/*.md", true, true)) do
@@ -1096,19 +1253,8 @@ end
 ---@param path string
 ---@return string[]
 function M.read_callout(path)
-  if vim.fn.filereadable(path) == 0 then
-    return {}
-  end
-  local lines = vim.fn.readfile(path)
-  local s, e = first_block_range(lines)
-  if not s then
-    return {}
-  end
-  local out = {}
-  for i = s, e do
-    out[#out + 1] = lines[i]
-  end
-  return out
+  local _, _, block = first_block(read_lines(path))
+  return block or {}
 end
 
 ---Extrai o corpo autoral de `## Notas Avulsas` para preservá-lo entre regens.
@@ -1119,7 +1265,7 @@ function M.extract_loose_notes(path)
     return {}
   end
   local out, capturing = {}, false
-  for _, l in ipairs(vim.fn.readfile(path)) do
+  for _, l in ipairs(read_lines(path)) do
     if l:match("^##%s+Notas Avulsas") then
       capturing = true
     elseif capturing and l:match("^##%s+") then
@@ -1147,7 +1293,7 @@ local function frontmatter_date(path)
   if vim.fn.filereadable(path) == 0 then
     return nil
   end
-  local lines = vim.fn.readfile(path)
+  local lines = read_lines(path)
   if lines[1] ~= "---" then
     return nil
   end
@@ -1192,7 +1338,7 @@ function M.rebuild_current(opts)
     end
     local archive = daily_dir .. "/" .. prev .. ".md"
     if vim.fn.filereadable(archive) == 0 then
-      vim.fn.writefile(vim.fn.readfile(path), archive)
+      vim.fn.writefile(read_lines(path), archive)
     end
   end
 
@@ -1243,9 +1389,7 @@ function M.rebuild_current(opts)
 
   vim.fn.writefile(lines, path)
   if buf ~= -1 and vim.api.nvim_buf_is_loaded(buf) then
-    vim.api.nvim_buf_call(buf, function()
-      vim.cmd("silent edit!")
-    end)
+    reload_buf(buf)
   end
 end
 
@@ -1268,7 +1412,7 @@ function M.migrate_format()
   for _, path in ipairs(vim.fn.glob(root .. "/*/*.md", true, true)) do
     local project = split_task_path(path)
     if project then
-      local lines = vim.fn.readfile(path)
+      local lines = read_lines(path)
       local flagged
       if lines[1] == "---" then
         for i = 2, #lines do
@@ -1297,13 +1441,9 @@ function M.migrate_format()
   for _, path in ipairs(paths) do
     local project, id, archived = split_task_path(path)
     if project then
-      local lines = vim.fn.readfile(path)
-      local s, e = first_block_range(lines)
+      local lines = read_lines(path)
+      local s, e, blk = first_block(lines)
       if s then
-        local blk = {}
-        for i = s, e do
-          blk[#blk + 1] = lines[i]
-        end
         local model = M.parse_block(blk)
         if model.id == "" then
           model.id = id -- fallback: id = nome do arquivo
@@ -1340,7 +1480,7 @@ end
 -- agente que só faz `mv` para archived/ causa dano inteiramente reparável.
 
 ---Todos os arquivos de task do vault (ativos + arquivados), já decompostos.
----@return { path: string, project: string, id: string, archived: string|nil }[]
+---@return freitask.TaskRef[]
 local function all_tasks()
   local out = {}
   local globs = { root .. "/*/*.md", root .. "/*/archived/*/*.md" }
@@ -1382,9 +1522,10 @@ end
 ---Conjunto de alvos de wikilink que resolvem para algum arquivo do vault, nas
 ---duas formas que o Obsidian aceita (basename e caminho vault-relative).
 ---@return table<string, boolean>
-local function resolvable_targets()
+---@param notes string[] a varredura do vault, para não repeti-la
+local function resolvable_targets(notes)
   local set = {}
-  for _, p in ipairs(vim.fn.glob(vault .. "/**/*.md", true, true)) do
+  for _, p in ipairs(notes) do
     set[vim.fn.fnamemodify(p, ":t:r")] = true
     set[(p:sub(#vault + 2):gsub("%.md$", ""))] = true
   end
@@ -1395,7 +1536,7 @@ end
 ---derivável. Devolve uma lista de achados, cada um com `fixed` indicando se
 ---foi reparado nesta passagem.
 ---@param opts? { fix?: boolean }
----@return { level: "error"|"warn", kind: string, path: string, msg: string, fixed: boolean }[]
+---@return freitask.Finding[]
 function M.doctor(opts)
   opts = opts or {}
   M.ensure_root()
@@ -1444,15 +1585,11 @@ function M.doctor(opts)
   -- 4. Invariantes deriváveis do caminho: bloco e frontmatter. Tudo aqui é
   -- reparável sem adivinhação, porque o caminho é a fonte de verdade.
   for _, t in ipairs(all_tasks()) do
-    local lines = vim.fn.readfile(t.path)
-    local s, e = first_block_range(lines)
+    local lines = read_lines(t.path)
+    local s, e, blk = first_block(lines)
     if not s then
       add("error", "sem-callout", t.path, "arquivo de task sem bloco de callout")
     else
-      local blk = {}
-      for i = s, e do
-        blk[#blk + 1] = lines[i]
-      end
       local model = M.parse_block(blk)
       local dirty = false
 
@@ -1524,11 +1661,15 @@ function M.doctor(opts)
   -- de alarme falso — um checker em que não se confia é um checker que não se
   -- lê. Já um link com caminho para tasks/ foi gerado por este módulo e
   -- portanto tem obrigação de resolver.
-  local resolvable = resolvable_targets()
-  for _, p in ipairs(vim.fn.glob(vault .. "/**/*.md", true, true)) do
+  -- Uma varredura só do vault serve às duas coisas: montar o conjunto de
+  -- alvos resolvíveis e procurar os links pendurados. Antes eram dois globs
+  -- completos por execução do doctor, sobre o vault inteiro.
+  local notes = vault_notes()
+  local resolvable = resolvable_targets(notes)
+  for _, p in ipairs(notes) do
     if not p:match("^" .. vim.pesc(root) .. "/daily/") then
       local in_fence = false
-      for i, line in ipairs(vim.fn.readfile(p)) do
+      for i, line in ipairs(read_lines(p)) do
         if line:match("^%s*```") then
           in_fence = not in_fence
         elseif not in_fence then
@@ -1560,7 +1701,7 @@ end
 --- Edição por contexto do cursor + form -------------------------------------
 
 ---Resolve a task cujo callout está sob o cursor no buffer atual.
----@return table|nil ctx { source, buf, block_start, block_end, project, task_path, model }
+---@return freitask.Ctx|nil
 function M.resolve_under_cursor()
   M.ensure_root()
   M.load_status()
@@ -1581,11 +1722,7 @@ function M.resolve_under_cursor()
     return nil
   end
 
-  local block = {}
-  for i = s, e do
-    block[#block + 1] = lines[i]
-  end
-  local model = M.parse_block(block)
+  local model = M.parse_block(vim.list_slice(lines, s, e))
   if model.id == "" then
     vim.notify("freitask: callout sem [[id]]", vim.log.levels.WARN)
     return nil
@@ -1679,9 +1816,7 @@ function M.callout_omnifunc(findstart, base)
     end
     return start
   end
-  if not M.status then
-    M.load_status()
-  end
+  ensure_status()
   local out = {}
   local keys = vim.tbl_keys(M.status or {})
   table.sort(keys, function(a, b)
@@ -1701,15 +1836,13 @@ end
 ---status 0), mas aqui recusamos, senão um typo viraria uma task inválida em
 ---silêncio — que é justamente o bug que o status 0 existe para tornar visível.
 ---@param bl string[]
----@param base table modelo original (fallback de project/raw_callout)
----@return table|nil model, string|nil err
+---@param base freitask.Model modelo original (fallback de project/raw_callout)
+---@return freitask.Model|nil model, string|nil err
 local function parse_form(bl, base)
   if #bl < 3 then
     return nil, "form precisa de ao menos 3 linhas (título, id, status)"
   end
-  if not M.status then
-    M.load_status()
-  end
+  ensure_status()
 
   local title = vim.trim(bl[1])
   local id = kebab(vim.trim(bl[2]))
@@ -1754,9 +1887,9 @@ end
 
 ---Abre o form posicional flutuante. Usado tanto pela edição quanto pela
 ---criação — um único formato, um único parser.
----@param model table modelo inicial (na criação, campos vazios + status default)
+---@param model freitask.Model modelo inicial (na criação, campos vazios + status default)
 ---@param opts { title: string }
----@param on_confirm fun(new_model: table)
+---@param on_confirm fun(new_model: freitask.Model)
 function M.edit_task_form(model, opts, on_confirm)
   M.load_status()
   -- Status 0 devolve o tipo digitado, para o erro ficar visível e editável.
@@ -1858,8 +1991,8 @@ end
 ---Aplica um modelo editado: persiste no arquivo-fonte (com rename via
 ---delete+recreate quando o id muda) e reflete na origem (buffer da task ou
 ---bloco em CURRENT.md).
----@param ctx table contexto de resolve_under_cursor / edit_task_file
----@param nm table novo modelo vindo do form
+---@param ctx freitask.Ctx contexto de resolve_under_cursor / edit_task_file
+---@param nm freitask.Model novo modelo vindo do form
 function M.apply_edit(ctx, nm)
   M.load_status()
   if nm.id == "" then
@@ -1897,7 +2030,7 @@ function M.apply_edit(ctx, nm)
       return
     end
     local src = tbuf and vim.api.nvim_buf_get_lines(tbuf, 0, -1, false)
-      or (vim.fn.filereadable(new_path) == 1 and vim.fn.readfile(new_path) or {})
+      or read_lines(new_path)
     local s, e = first_block_range(src)
     local out = s and splice(src, s, e, new_block) or vim.deepcopy(new_block)
     -- `id:` do frontmatter (injetado pelo obsidian.nvim) espelha o nome do
@@ -1905,10 +2038,7 @@ function M.apply_edit(ctx, nm)
     update_frontmatter_key(out, "id", nm.id)
     vim.fn.writefile(out, new_path)
     if tbuf then
-      pcall(vim.api.nvim_buf_set_name, tbuf, new_path)
-      vim.api.nvim_buf_call(tbuf, function()
-        vim.cmd("silent edit!")
-      end)
+      retarget_buf(tbuf, new_path)
     end
     M.remove_cache_entry(old_path)
     M.update_cache_entry(new_path)
@@ -1973,15 +2103,10 @@ end
 function M.edit_task_file(path)
   M.ensure_root()
   M.load_status()
-  local lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
-  local s, e = first_block_range(lines)
+  local s, e, block = first_block(read_lines(path))
   if not s then
     vim.notify("freitask: arquivo de task sem callout", vim.log.levels.WARN)
     return
-  end
-  local block = {}
-  for i = s, e do
-    block[#block + 1] = lines[i]
   end
   local model = M.parse_block(block)
   local project, _, archived = split_task_path(path)
@@ -2117,26 +2242,16 @@ function M.open_tasks(project)
         end
         local e = item.entry
         if e.archived then
-          if vim.fn.confirm("Desarquivar '" .. e.task_id .. "'?", "&Sim\n&Não", 2) ~= 1 then
+          if not M.confirm_unarchive(e.task_id) then
             return
           end
           M.unarchive_task(item.file)
         else
-          -- Default derivado do callout; as iniciais de atalho são distintas
-          -- (o/p/f) porque "done" e "dropped" colidiriam em "d".
-          local suggested = M.suggest_archive_type(e.status_num)
-          local labels, default = { "d&one", "dro&pped", "&failed" }, 1
-          for i, t in ipairs(M.ARCHIVED_TYPES) do
-            if t == suggested then
-              default = i
-            end
-          end
-          local choice =
-            vim.fn.confirm("Arquivar '" .. e.task_id .. "' como:", table.concat(labels, "\n") .. "\n&cancelar", default)
-          if choice < 1 or choice > #M.ARCHIVED_TYPES then
+          local tipo = M.prompt_archive_type(e.task_id, e.status_num)
+          if not tipo then
             return
           end
-          M.archive_task(item.file, M.ARCHIVED_TYPES[choice])
+          M.archive_task(item.file, tipo)
         end
         M.rebuild_current({ quiet = true })
         picker:find()
@@ -2264,23 +2379,16 @@ function M.toggle_archive_current_file()
   end
   local new_path
   if archived then
-    if vim.fn.confirm("Desarquivar '" .. id .. "'?", "&Sim\n&Não", 2) ~= 1 then
+    if not M.confirm_unarchive(id) then
       return
     end
     new_path = M.unarchive_task(path)
   else
-    local suggested = M.suggest_archive_type(M.parse_status_num(path))
-    local default = 1
-    for i, t in ipairs(M.ARCHIVED_TYPES) do
-      if t == suggested then
-        default = i
-      end
-    end
-    local choice = vim.fn.confirm("Arquivar '" .. id .. "' como:", "d&one\ndro&pped\n&failed\n&cancelar", default)
-    if choice < 1 or choice > #M.ARCHIVED_TYPES then
+    local tipo = M.prompt_archive_type(id, M.parse_status_num(path))
+    if not tipo then
       return
     end
-    new_path = M.archive_task(path, M.ARCHIVED_TYPES[choice])
+    new_path = M.archive_task(path, tipo)
   end
   if new_path then
     M.rebuild_current({ quiet = true })
