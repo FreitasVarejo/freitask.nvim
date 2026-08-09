@@ -1,7 +1,7 @@
 -- util.freitask_cli — entrada de linha de comando do freitask.
 --
--- Roda sob `nvim --headless -l`. É um SHIM FINO sobre util.freitask: nenhuma
--- regra é reimplementada aqui. Um segundo motor (em bash ou python) divergiria
+-- Roda sob `nvim --headless -l`. É um SHIM FINO sobre o módulo freitask:
+-- nenhuma regra é reimplementada aqui. Um segundo motor (em bash ou python) divergiria
 -- do Lua em semanas, e aí existiriam duas regras em vez de uma — que é
 -- exatamente o problema que esta CLI existe para resolver.
 --
@@ -12,9 +12,9 @@
 --
 -- Códigos de saída: 0 ok · 1 inconsistências/erro de operação · 2 uso inválido.
 
-local ok, T = pcall(require, "util.freitask")
+local ok, T = pcall(require, "freitask")
 if not ok then
-  io.stderr:write("freitask: não consegui carregar util.freitask\n" .. tostring(T) .. "\n")
+  io.stderr:write("freitask: não consegui carregar o módulo freitask\n" .. tostring(T) .. "\n")
   os.exit(2)
 end
 
