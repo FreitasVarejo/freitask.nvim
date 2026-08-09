@@ -33,9 +33,18 @@
 -- pois sua semântica era "nome", não "estado" — tratá-lo como descrição de
 -- estado inventaria informação.
 --
--- Uma task pode ser arquivada (`archived: true` no frontmatter YAML, via
--- M.archive_task) para sumir do cache/CURRENT.md sem apagar o arquivo, ou
--- deletada de fato (arquivo removido do disco).
+-- Uma task pode ser arquivada (movida para tasks/<projeto>/archived/<tipo>/,
+-- com tipo ∈ done|dropped|failed), desarquivada (de volta para
+-- tasks/<projeto>/) ou deletada de fato (arquivo removido do disco). O CAMINHO
+-- é a única fonte de verdade do arquivamento — não existe flag no frontmatter —
+-- assim como o callout é a única fonte do status. Como archived/ acrescenta
+-- dois níveis, o glob do cache (tasks/*/*.md) já as ignora de graça.
+--
+-- Arquivar, desarquivar e renomear o id são o MESMO evento ("o arquivo mudou de
+-- endereço") e por isso compartilham M.retarget_links, que reescreve os
+-- wikilinks do vault inteiro. Como o Obsidian resolve `[[foo]]` por basename em
+-- qualquer pasta, mudar de pasta só quebra os links path-qualified; renomear o
+-- id quebra também os curtos (e o `id:` do frontmatter).
 --
 -- Este módulo é `require`-ável (`require("util.freitask")`) para que tanto o
 -- plugin do picker (plugins/freitask.lua) quanto os keymaps buffer-local
@@ -44,10 +53,35 @@
 
 local M = {}
 
-local root = vim.fn.expand("~/ObsidianVault/tasks")
+local vault = vim.fn.expand("~/ObsidianVault")
+local root = vault .. "/tasks"
 
 -- Diretórios sob tasks/ que NÃO são projetos.
 local RESERVED = { daily = true, templates = true }
+
+-- Tipos de arquivamento = subdiretórios de tasks/<projeto>/archived/.
+-- São três de propósito: `done` e `failed` são deriváveis do callout (ver
+-- M.suggest_archive_type) e `dropped` é a única decisão que o status não
+-- carrega ("não vou fazer"). Um quarto balde genérico ("misc") viraria o
+-- destino de tudo que se arquiva com pressa, sem distinguir nada; e a
+-- assimetria pesa — criar um diretório depois é trivial, esvaziar um cheio não.
+M.ARCHIVED_TYPES = { "done", "dropped", "failed" }
+
+local ARCHIVED_SET = {}
+for _, t in ipairs(M.ARCHIVED_TYPES) do
+  ARCHIVED_SET[t] = true
+end
+
+-- Glosa em PT-BR de cada tipo, só para a linha de histórico no rodapé. Fica
+-- fora do status.json porque não é um estado que se escolhe: é a tradução do
+-- nome do diretório, que é o dado real.
+local ARCHIVED_LABELS = { done = "feito", dropped = "abandonado", failed = "falhou" }
+
+-- Callouts que sugerem cada tipo no prompt de arquivamento. Só um DEFAULT: o
+-- tipo é escolhido por quem arquiva, senão o caminho viraria uma segunda fonte
+-- de verdade do status, obrigada a concordar com o callout para sempre.
+local DONE_CALLOUTS = { done = true, success = true, check = true, tip = true, hint = true }
+local FAILED_CALLOUTS = { failure = true, fail = true, error = true, danger = true, missing = true, bug = true }
 
 -- Metadados de status padrão, espelhados em tasks/status.json no primeiro uso e
 -- usados como fallback quando o arquivo está ausente ou corrompido. Cobre todos
@@ -160,67 +194,89 @@ local function kebab(s)
   return s
 end
 
---- Frontmatter -----------------------------------------------------------
+--- Caminhos de task ----------------------------------------------------------
 
----Verdadeiro se o arquivo de task tem `archived: true` no frontmatter YAML.
+---Decompõe o caminho de um arquivo de task. Aceita as duas formas:
+---  tasks/<projeto>/<id>.md                    → project, id, nil
+---  tasks/<projeto>/archived/<tipo>/<id>.md    → project, id, tipo
+---Qualquer outra coisa sob tasks/ (projeto reservado, subdiretório
+---desconhecido, tipo de archived inválido, arquivo de conflito do Syncthing)
+---devolve nil — é o guarda único que impede um arquivo fora de padrão de
+---entrar no cache ou no board.
+---@param path string
+---@return string|nil project, string|nil task_id, string|nil archived
+local function split_task_path(path)
+  local project, rest = path:match(".*/tasks/([^/]+)/(.+)%.md$")
+  if not project or RESERVED[project] then
+    return nil
+  end
+  -- `foo.sync-conflict-20260809-123456-ABCDEFG.md`: o Syncthing cria esse
+  -- arquivo ao lado do original quando dois dispositivos editam a mesma task.
+  -- Sem este guarda ele passaria por uma task legítima de id
+  -- "foo.sync-conflict-…" e apareceria no board como um clone fantasma da task
+  -- real — com o agravante de o <C-r> poder arquivar a cópia errada. Ele NÃO é
+  -- escondido: M.doctor o reporta, porque o conflito é informação que você
+  -- precisa resolver, não lixo a varrer para baixo do tapete.
+  if rest:match("%.sync%-conflict%-") then
+    return nil
+  end
+  local tipo, id = rest:match("^archived/([^/]+)/([^/]+)$")
+  if tipo then
+    if not ARCHIVED_SET[tipo] then
+      return nil
+    end
+    return project, id, tipo
+  end
+  if rest:find("/") then
+    return nil -- subdiretório que não é archived/<tipo>: não é uma task
+  end
+  return project, rest, nil
+end
+M.split_task_path = split_task_path
+
+---Caminho absoluto do arquivo de uma task.
+---@param project string
+---@param id string
+---@param archived string|nil tipo de arquivamento, ou nil para task ativa
+---@return string
+local function task_file(project, id, archived)
+  if archived then
+    return string.format("%s/%s/archived/%s/%s.md", root, project, archived, id)
+  end
+  return string.format("%s/%s/%s.md", root, project, id)
+end
+
+---Diretório vault-relative de uma task, usado como alvo do wikilink da linha 2.
+---@param project string
+---@param archived string|nil
+---@return string
+local function vault_dir(project, archived)
+  if archived then
+    return string.format("tasks/%s/archived/%s", project, archived)
+  end
+  return "tasks/" .. project
+end
+
+---Verdadeiro se a task está arquivada. O CAMINHO é a fonte de verdade (não há
+---mais flag `archived: true` no frontmatter — ver M.migrate_format).
 ---@param path string
 ---@return boolean
 function M.is_archived(path)
-  if vim.fn.filereadable(path) == 0 then
-    return false
-  end
-  local lines = vim.fn.readfile(path, "", 20)
-  if lines[1] ~= "---" then
-    return false
-  end
-  for i = 2, #lines do
-    if lines[i] == "---" then
-      break
-    end
-    if lines[i]:match("^archived:%s*true%s*$") then
-      return true
-    end
-  end
-  return false
+  local _, _, archived = split_task_path(path)
+  return archived ~= nil
 end
 
----Define/atualiza uma chave booleana no frontmatter YAML do arquivo, criando
----o frontmatter se ele ainda não existir.
----@param path string
----@param key string
----@param value boolean
-local function set_frontmatter_flag(path, key, value)
-  local lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
-  local val = tostring(value)
-  if lines[1] == "---" then
-    local close
-    for i = 2, #lines do
-      if lines[i] == "---" then
-        close = i
-        break
-      end
-    end
-    if close then
-      local found = false
-      for i = 2, close - 1 do
-        if lines[i]:match("^" .. key .. ":") then
-          lines[i] = key .. ": " .. val
-          found = true
-          break
-        end
-      end
-      if not found then
-        table.insert(lines, close, key .. ": " .. val)
-      end
-      vim.fn.writefile(lines, path)
-      return
-    end
+---Tipo de arquivamento sugerido para um status — só o DEFAULT do prompt.
+---@param status_num integer|nil
+---@return string
+function M.suggest_archive_type(status_num)
+  local callout = M.status_meta(status_num).callout
+  if DONE_CALLOUTS[callout] then
+    return "done"
+  elseif FAILED_CALLOUTS[callout] then
+    return "failed"
   end
-  local out = { "---", key .. ": " .. val, "---", "" }
-  for _, l in ipairs(lines) do
-    out[#out + 1] = l
-  end
-  vim.fn.writefile(out, path)
+  return "dropped"
 end
 
 --- State ---------------------------------------------------------------------
@@ -412,8 +468,11 @@ function M.serialize_block(model)
   end
   -- Link com caminho relativo ao vault + id como alias evita ambiguidade entre
   -- projetos diferentes que tenham tasks com o mesmo id; sem `model.project`
-  -- (ex.: contexto de teste) cai no formato legado `[[id]]`.
-  local link = model.project and string.format("tasks/%s/%s|%s", model.project, model.id or "", model.id or "")
+  -- (ex.: contexto de teste) cai no formato legado `[[id]]`. `model.archived`
+  -- move o alvo para archived/<tipo>/, senão o link de uma task arquivada
+  -- apontaria para um caminho que não existe mais.
+  local link = model.project
+      and string.format("%s/%s|%s", vault_dir(model.project, model.archived), model.id or "", model.id or "")
     or (model.id or "")
   local out = {
     string.format("> [!%s] %s", callout, model.title or ""),
@@ -537,26 +596,15 @@ end
 ---Substitui o par is_archived + read_callout, que abria o mesmo arquivo duas
 ---vezes por task — e o rebuild_current abria uma terceira para reimprimir o
 ---bloco. Guardando o bloco na entry, o regen não toca mais no disco.
+---Não checa mais arquivamento: isso agora é o CAMINHO, resolvido antes de
+---chegar aqui por split_task_path.
 ---@param path string
----@return { archived: boolean, block: string[], status_num: integer }|nil
+---@return { block: string[], status_num: integer }|nil
 local function scan_task(path)
   if vim.fn.filereadable(path) == 0 then
     return nil
   end
   local lines = vim.fn.readfile(path)
-
-  local archived = false
-  if lines[1] == "---" then
-    for i = 2, #lines do
-      if lines[i] == "---" then
-        break
-      end
-      if lines[i]:match("^archived:%s*true%s*$") then
-        archived = true
-        break
-      end
-    end
-  end
 
   local block = {}
   local s, e = first_block_range(lines)
@@ -572,19 +620,20 @@ local function scan_task(path)
   -- Arquivo de task sem callout é um arquivo quebrado: 0 o deixa no topo do
   -- projeto em vez de escondê-lo no meio do Backlog.
   local status_num = (#block > 0) and M.parse_block(block).status_num or 0
-  return { archived = archived, block = block, status_num = status_num }
+  return { block = block, status_num = status_num }
 end
 
----Insere ou atualiza uma task no cache em memória.
+---Insere ou atualiza uma task no cache em memória. Tasks arquivadas nunca
+---entram no cache — logo, nunca aparecem no CURRENT.md.
 ---@param path string
 function M.update_cache_entry(path)
-  local project, task_id = path:match(".*/tasks/([^/]+)/([^/]+)%.md$")
-  if not project or RESERVED[project] then
+  local project, task_id, archived = split_task_path(path)
+  if not project or archived then
     return
   end
   M.cache = M.cache or {}
   local scan = scan_task(path)
-  if not scan or scan.archived then
+  if not scan then
     M.remove_cache_entry(path)
     return
   end
@@ -661,6 +710,142 @@ function M.list_projects()
   return out
 end
 
+--- Referências do vault ------------------------------------------------------
+--
+-- Arquivar, desarquivar e renomear o id são o mesmo evento — "esse arquivo
+-- mudou de endereço" — e por isso passam todos por M.retarget_links.
+--
+-- O Obsidian resolve `[[foo]]` pelo BASENAME, em qualquer pasta do vault. Daí
+-- a assimetria que a tabela abaixo resume, e que explica por que arquivar é
+-- barato do ponto de vista de referências:
+--
+--   operação              [[foo]]      [[tasks/p/foo|foo]]   frontmatter id:
+--   arquivar/desarquivar  intacto      reescrever            intacto
+--   renomear id           reescrever   reescrever            reescrever
+
+---Arquivos markdown do vault elegíveis a conter referências.
+---`tasks/daily/` fica DE FORA de propósito: são snapshots de como o board
+---estava naquele dia; reescrevê-los falsificaria o histórico. `CURRENT.md`
+---também: é regenerado do zero, basta chamar M.rebuild_current depois.
+---@return string[]
+local function ref_candidates()
+  local out = {}
+  for _, p in ipairs(vim.fn.glob(vault .. "/**/*.md", true, true)) do
+    if not p:match("^" .. vim.pesc(root) .. "/daily/") and p ~= root .. "/CURRENT.md" then
+      out[#out + 1] = p
+    end
+  end
+  return out
+end
+
+---Reescreve um wikilink `inner` (o miolo de `[[...]]`) quando ele aponta para
+---a task que mudou de endereço. Devolve nil quando não há o que mudar.
+---Preserva sufixo de heading/bloco (`#Seção`, `^bloco`) e o alias — exceto
+---quando o alias ERA o id antigo, caso em que ele acompanha o rename.
+---@param inner string
+---@param old table { id: string, full: string }
+---@param new table { id: string, full: string }
+---@return string|nil
+local function rewrite_link(inner, old, new)
+  local body, alias = inner:match("^(.-)|(.*)$")
+  if not body then
+    body = inner
+  end
+  local target, sub = body:match("^([^#^]*)([#^].*)$")
+  if not target then
+    target, sub = body, ""
+  end
+  local key = vim.trim(target):gsub("%.md$", "")
+
+  local new_target
+  if key == old.full then
+    new_target = new.full
+  elseif key == old.id and old.id ~= new.id then
+    -- Forma curta: só quebra quando o BASENAME muda; mudança de pasta não
+    -- afeta a resolução do Obsidian, então não tocamos no link.
+    new_target = new.id
+  else
+    return nil
+  end
+
+  local new_alias = alias
+  if alias and vim.trim(alias) == old.id then
+    new_alias = new.id
+  end
+  return new_target .. sub .. (new_alias and ("|" .. new_alias) or "")
+end
+
+---Reescreve, em todo o vault, os wikilinks que apontavam para `old_path` para
+---que apontem para `new_path`. Cobre `[[alvo]]`, `[[alvo|alias]]`, embeds
+---`![[...]]` e sufixos `#heading`/`^bloco`, nas formas curta e path-qualified.
+---Buffers abertos COM alterações não salvas são pulados (e reportados) em vez
+---de sobrescritos — mesma postura do rebuild_current diante de um CURRENT.md
+---sujo.
+---@param old_path string
+---@param new_path string
+---@return integer refs, integer files, string[] skipped
+function M.retarget_links(old_path, new_path)
+  local function descr(p)
+    local rel = p:sub(#vault + 2):gsub("%.md$", "")
+    return { id = vim.fn.fnamemodify(p, ":t:r"), full = rel }
+  end
+  local old, new = descr(old_path), descr(new_path)
+  if old.full == new.full then
+    return 0, 0, {}
+  end
+
+  local refs, files, skipped = 0, 0, {}
+  for _, path in ipairs(ref_candidates()) do
+    if path ~= old_path and path ~= new_path then
+      local buf = loaded_buf(path)
+      local lines = buf and vim.api.nvim_buf_get_lines(buf, 0, -1, false)
+        or (vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {})
+      local hits = 0
+      for i, line in ipairs(lines) do
+        local n = 0
+        -- gsub com função: o retorno é usado verbatim, então um alias com `%`
+        -- não vira referência de captura.
+        local replaced = line:gsub("%[%[(.-)%]%]", function(inner)
+          local nl = rewrite_link(inner, old, new)
+          if not nl then
+            return nil -- mantém o original
+          end
+          n = n + 1
+          return "[[" .. nl .. "]]"
+        end)
+        if n > 0 then
+          lines[i] = replaced
+          hits = hits + n
+        end
+      end
+      if hits > 0 then
+        if buf and vim.bo[buf].modified then
+          skipped[#skipped + 1] = path
+        else
+          vim.fn.writefile(lines, path)
+          if buf then
+            vim.api.nvim_buf_call(buf, function()
+              vim.cmd("silent edit!")
+            end)
+          end
+          refs, files = refs + hits, files + 1
+        end
+      end
+    end
+  end
+
+  if refs > 0 then
+    vim.notify(string.format("freitask: %d referência(s) atualizada(s) em %d arquivo(s)", refs, files))
+  end
+  if #skipped > 0 then
+    vim.notify(
+      "freitask: referências NÃO atualizadas (buffer com alterações não salvas):\n  " .. table.concat(skipped, "\n  "),
+      vim.log.levels.WARN
+    )
+  end
+  return refs, files, skipped
+end
+
 --- File operations -----------------------------------------------------------
 
 ---Template markdown para uma nova task, a partir do modelo vindo do form.
@@ -701,22 +886,208 @@ local function file_replace_callout(path, new_block)
   vim.fn.writefile(out, path)
 end
 
----Arquiva uma task: marca `archived: true` no frontmatter (sem apagar o
----arquivo) e remove do cache, para que ela suma do próximo CURRENT.md.
----@param path string
-function M.archive_task(path)
-  local buf = loaded_buf(path)
-  if buf and vim.bo[buf].modified then
-    vim.notify("freitask: salve o arquivo da task antes de arquivar", vim.log.levels.WARN)
+---Atualiza a chave `key` do frontmatter YAML, se (e só se) ela já existir.
+---Deliberadamente não cria frontmatter: quem o injeta é o obsidian.nvim, e
+---inventá-lo aqui acrescentaria ruído a arquivos que não o têm.
+---@param lines string[]
+---@param key string
+---@param value string
+---@return boolean changed
+local function update_frontmatter_key(lines, key, value)
+  if lines[1] ~= "---" then
+    return false
+  end
+  for i = 2, #lines do
+    if lines[i] == "---" then
+      return false
+    end
+    if lines[i]:match("^" .. key .. ":") then
+      local new = key .. ": " .. value
+      if lines[i] == new then
+        return false
+      end
+      lines[i] = new
+      return true
+    end
+  end
+  return false
+end
+
+---Acrescenta uma entrada ao rodapé `## Histórico` do arquivo (criando a seção
+---se não existir). É um LOG, não uma linha única: arquivar → desarquivar →
+---rearquivar é um ciclo normal, e sobrescrever apagaria justamente a
+---informação interessante (quantas vezes, e quando você mudou de ideia).
+---Muta `lines` in place; quem chama grava.
+---@param lines string[]
+---@param dest string|nil tipo de archived, ou nil para desarquivar
+local function append_history(lines, dest)
+  local entry
+  if dest then
+    entry = string.format(
+      "- %s — arquivada em `archived/%s` (%s)",
+      os.date("%Y-%m-%d"),
+      dest,
+      ARCHIVED_LABELS[dest] or dest
+    )
+  else
+    entry = string.format("- %s — desarquivada, de volta ao board", os.date("%Y-%m-%d"))
+  end
+
+  -- Última ocorrência: se houver mais de um `## Histórico` (edição manual),
+  -- a de baixo é a que o olho lê como rodapé.
+  local hstart
+  for i = #lines, 1, -1 do
+    if lines[i]:match("^##%s+Histórico%s*$") then
+      hstart = i
+      break
+    end
+  end
+
+  if not hstart then
+    while #lines > 0 and vim.trim(lines[#lines]) == "" do
+      table.remove(lines)
+    end
+    vim.list_extend(lines, { "", "## Histórico", "", entry })
     return
   end
-  set_frontmatter_flag(path, "archived", true)
-  M.remove_cache_entry(path)
+
+  -- Insere no FIM da seção (não no fim do arquivo): se o usuário escreveu
+  -- outra `## seção` depois do histórico, a entrada nova continua no lugar
+  -- certo. As linhas em branco finais da seção são puladas.
+  local hend = #lines
+  for i = hstart + 1, #lines do
+    if lines[i]:match("^##%s") then
+      hend = i - 1
+      break
+    end
+  end
+  while hend > hstart and vim.trim(lines[hend]) == "" do
+    hend = hend - 1
+  end
+  table.insert(lines, hend + 1, entry)
+end
+
+---Move o arquivo de uma task entre ativo e arquivado — o motor por trás de
+---M.archive_task e M.unarchive_task, que são só nomes para os dois sentidos.
+---Reescreve o bloco (o wikilink da linha 2 precisa acompanhar a pasta),
+---migra as referências do vault e acerta o cache. NÃO chama rebuild_current:
+---quem chama decide quando regenerar (o picker faz isso uma vez só).
+---@param path string
+---@param dest string|nil tipo de archived, ou nil para desarquivar
+---@return string|nil new_path
+local function move_task(path, dest)
+  local project, id, cur = split_task_path(path)
+  if not project then
+    vim.notify("freitask: não é um arquivo de task: " .. path, vim.log.levels.WARN)
+    return nil
+  end
+  if dest and not ARCHIVED_SET[dest] then
+    vim.notify("freitask: tipo de arquivamento inválido: " .. tostring(dest), vim.log.levels.WARN)
+    return nil
+  end
+  if dest == cur then
+    return path -- já está onde deveria
+  end
+
+  local buf = loaded_buf(path)
+  if buf and vim.bo[buf].modified then
+    vim.notify("freitask: salve o arquivo da task antes de (des)arquivar", vim.log.levels.WARN)
+    return nil
+  end
+
+  local new_path = task_file(project, id, dest)
+  if vim.fn.filereadable(new_path) == 1 then
+    vim.notify("freitask: já existe um arquivo em " .. new_path, vim.log.levels.WARN)
+    return nil
+  end
+  local dir = vim.fn.fnamemodify(new_path, ":h")
+  if vim.fn.isdirectory(dir) == 0 then
+    vim.fn.mkdir(dir, "p")
+  end
+  if vim.fn.rename(path, new_path) ~= 0 then
+    vim.notify("freitask: não consegui mover " .. id, vim.log.levels.ERROR)
+    return nil
+  end
+
+  -- O link da linha 2 é path-qualified, então precisa seguir a pasta nova; e o
+  -- rodapé ganha a entrada de histórico. Um write só para as duas coisas.
+  local lines = vim.fn.readfile(new_path)
+  local s, e = first_block_range(lines)
+  if s then
+    local block = {}
+    for i = s, e do
+      block[#block + 1] = lines[i]
+    end
+    local model = M.parse_block(block)
+    if model.id == "" then
+      model.id = id
+    end
+    model.project, model.archived = project, dest
+    lines = splice(lines, s, e, M.serialize_block(model))
+  end
+  append_history(lines, dest)
+  vim.fn.writefile(lines, new_path)
+
   if buf then
+    pcall(vim.api.nvim_buf_set_name, buf, new_path)
     vim.api.nvim_buf_call(buf, function()
       vim.cmd("silent edit!")
     end)
   end
+
+  M.remove_cache_entry(path)
+  if not dest then
+    M.update_cache_entry(new_path)
+  end
+  M.retarget_links(path, new_path)
+  return new_path
+end
+
+---Arquiva uma task: move para tasks/<projeto>/archived/<tipo>/, tirando-a do
+---cache e do CURRENT.md sem apagar nada.
+---@param path string
+---@param tipo string um de M.ARCHIVED_TYPES
+---@return string|nil new_path
+function M.archive_task(path, tipo)
+  return move_task(path, tipo)
+end
+
+---Desarquiva uma task: move de volta para tasks/<projeto>/, devolvendo-a ao
+---cache — e portanto ao CURRENT.md na próxima regeneração.
+---@param path string
+---@return string|nil new_path
+function M.unarchive_task(path)
+  return move_task(path, nil)
+end
+
+---Lista as tasks arquivadas de um projeto, lidas do disco sob demanda. NÃO
+---entram em M.cache de propósito: assim o board, o regen e o resto do módulo
+---seguem enxergando só as tasks ativas, sem um filtro novo em cada leitor.
+---@param project string
+---@return table[]
+function M.archived_entries_for(project)
+  local out = {}
+  for _, path in ipairs(vim.fn.glob(root .. "/" .. project .. "/archived/*/*.md", true, true)) do
+    local p, id, tipo = split_task_path(path)
+    if p then
+      local scan = scan_task(path)
+      out[#out + 1] = {
+        project = p,
+        task_id = id,
+        archived = tipo,
+        status_num = scan and scan.status_num or 0,
+        block = scan and scan.block or {},
+        path = path,
+      }
+    end
+  end
+  table.sort(out, function(a, b)
+    if a.archived == b.archived then
+      return a.task_id < b.task_id
+    end
+    return a.archived < b.archived
+  end)
+  return out
 end
 
 --- CURRENT.md dashboard ------------------------------------------------------
@@ -888,9 +1259,44 @@ function M.migrate_format()
   M.ensure_root()
   M.load_status()
   local n = 0
+
+  -- Formato legado de arquivamento: `archived: true` no frontmatter. Hoje o
+  -- estado é o CAMINHO, então essas tasks são movidas para archived/dropped/
+  -- (o balde honesto: "parei de tocar" — o flag antigo não registrava por quê)
+  -- e o flag some. Feito ANTES do loop de blocos para que elas já sejam
+  -- reserializadas com o link apontando para a pasta nova.
   for _, path in ipairs(vim.fn.glob(root .. "/*/*.md", true, true)) do
-    local project = path:match(".*/tasks/([^/]+)/[^/]+%.md$")
-    if project and not RESERVED[project] then
+    local project = split_task_path(path)
+    if project then
+      local lines = vim.fn.readfile(path)
+      local flagged
+      if lines[1] == "---" then
+        for i = 2, #lines do
+          if lines[i] == "---" then
+            break
+          end
+          if lines[i]:match("^archived:%s*true%s*$") then
+            flagged = i
+            break
+          end
+        end
+      end
+      if flagged then
+        table.remove(lines, flagged)
+        vim.fn.writefile(lines, path)
+        if move_task(path, "dropped") then
+          n = n + 1
+        end
+      end
+    end
+  end
+
+  -- Normaliza o bloco de todas as tasks, ativas e arquivadas.
+  local paths = vim.fn.glob(root .. "/*/*.md", true, true)
+  vim.list_extend(paths, vim.fn.glob(root .. "/*/archived/*/*.md", true, true))
+  for _, path in ipairs(paths) do
+    local project, id, archived = split_task_path(path)
+    if project then
       local lines = vim.fn.readfile(path)
       local s, e = first_block_range(lines)
       if s then
@@ -900,9 +1306,9 @@ function M.migrate_format()
         end
         local model = M.parse_block(blk)
         if model.id == "" then
-          model.id = vim.fn.fnamemodify(path, ":t:r") -- fallback: id = nome do arquivo
+          model.id = id -- fallback: id = nome do arquivo
         end
-        model.project = project
+        model.project, model.archived = project, archived
         local newblk = M.serialize_block(model)
         if not vim.deep_equal(newblk, blk) then
           vim.fn.writefile(splice(lines, s, e, newblk), path)
@@ -913,6 +1319,242 @@ function M.migrate_format()
     end
   end
   return n
+end
+
+--- Doctor: verificação e reparo ----------------------------------------------
+--
+-- Existe porque o Neovim NÃO é o único escritor do vault: há o Obsidian (aqui e
+-- no celular, via Syncthing) e agentes de IA com acesso a shell. Nenhum deles
+-- pode ser obrigado a chamar as funções deste módulo, então a estratégia não é
+-- impedir o desvio — é torná-lo BARULHENTO e, quando possível, reparável.
+--
+-- A boa notícia é que a maior parte dos invariantes é DERIVÁVEL do caminho do
+-- arquivo (o wikilink da linha 2, o `id:` do frontmatter, o estado de
+-- arquivamento), e portanto não precisa ser obedecida — precisa ser
+-- regenerada. Só duas coisas se perdem de verdade:
+--   1. backlinks externos após um RENAME (nada registra que `foo` se chamava
+--      `bar`; a informação some junto com o link);
+--   2. as entradas de histórico (são fatos sobre o passado).
+-- Note que ARQUIVAR não está nessa lista: o move preserva o basename, o
+-- Obsidian resolve `[[foo]]` por basename e o link da linha 2 é derivável — um
+-- agente que só faz `mv` para archived/ causa dano inteiramente reparável.
+
+---Todos os arquivos de task do vault (ativos + arquivados), já decompostos.
+---@return { path: string, project: string, id: string, archived: string|nil }[]
+local function all_tasks()
+  local out = {}
+  local globs = { root .. "/*/*.md", root .. "/*/archived/*/*.md" }
+  for _, g in ipairs(globs) do
+    for _, path in ipairs(vim.fn.glob(g, true, true)) do
+      local project, id, archived = split_task_path(path)
+      if project then
+        out[#out + 1] = { path = path, project = project, id = id, archived = archived }
+      end
+    end
+  end
+  return out
+end
+
+---Resolve um argumento de linha de comando — caminho ou id — no arquivo da
+---task. Existe para a CLI: obrigar um agente a saber se a task está em
+---`archived/` para poder citá-la seria justamente o tipo de regra que ele vai
+---errar.
+---@param ref string caminho (absoluto/relativo) ou id da task
+---@return string|nil path, string|nil err
+function M.find_task(ref)
+  if vim.fn.filereadable(ref) == 1 then
+    return vim.fn.fnamemodify(ref, ":p")
+  end
+  local hits = {}
+  for _, t in ipairs(all_tasks()) do
+    if t.id == ref then
+      hits[#hits + 1] = t.path
+    end
+  end
+  if #hits == 1 then
+    return hits[1]
+  elseif #hits == 0 then
+    return nil, "task não encontrada: " .. ref
+  end
+  return nil, string.format("id %q é ambíguo (%d arquivos); passe o caminho", ref, #hits)
+end
+
+---Conjunto de alvos de wikilink que resolvem para algum arquivo do vault, nas
+---duas formas que o Obsidian aceita (basename e caminho vault-relative).
+---@return table<string, boolean>
+local function resolvable_targets()
+  local set = {}
+  for _, p in ipairs(vim.fn.glob(vault .. "/**/*.md", true, true)) do
+    set[vim.fn.fnamemodify(p, ":t:r")] = true
+    set[(p:sub(#vault + 2):gsub("%.md$", ""))] = true
+  end
+  return set
+end
+
+---Diagnostica o vault. READ-ONLY por padrão; `opts.fix` repara o que é
+---derivável. Devolve uma lista de achados, cada um com `fixed` indicando se
+---foi reparado nesta passagem.
+---@param opts? { fix?: boolean }
+---@return { level: "error"|"warn", kind: string, path: string, msg: string, fixed: boolean }[]
+function M.doctor(opts)
+  opts = opts or {}
+  M.ensure_root()
+  M.load_status()
+  local found = {}
+  local function add(level, kind, path, msg, fixed)
+    found[#found + 1] = {
+      level = level,
+      kind = kind,
+      path = path:sub(#vault + 2),
+      msg = msg,
+      fixed = fixed or false,
+    }
+  end
+
+  -- 1. Conflitos do Syncthing. Reportados e NUNCA reparados: escolher qual
+  -- cópia vale é decisão editorial, e apagar a errada em silêncio perderia
+  -- trabalho feito no outro dispositivo.
+  for _, p in ipairs(vim.fn.glob(root .. "/**/*.sync-conflict-*.md", true, true)) do
+    add("error", "sync-conflict", p, "conflito do Syncthing — compare com o original e resolva à mão")
+  end
+
+  -- 2. Arquivos sob tasks/<projeto>/ que a ferramenta não enxerga. São
+  -- invisíveis ao board e ao picker, então sumiriam sem barulho nenhum.
+  -- `daily/` e `templates/` são reservados e ficam fora por definição.
+  for _, p in ipairs(vim.fn.glob(root .. "/*/**/*.md", true, true)) do
+    local top = p:match(".*/tasks/([^/]+)/")
+    if not RESERVED[top or ""] and not split_task_path(p) and not p:match("%.sync%-conflict%-") then
+      add("warn", "fora-do-padrao", p, "não casa tasks/<projeto>/[archived/<tipo>/]<id>.md — invisível ao freitask")
+    end
+  end
+
+  -- 3. Ids duplicados entre projetos: tornam `[[id]]` ambíguo, e é o link curto
+  -- que o Obsidian resolve por basename.
+  local by_id = {}
+  for _, t in ipairs(all_tasks()) do
+    by_id[t.id] = by_id[t.id] or {}
+    table.insert(by_id[t.id], t.path)
+  end
+  for id, paths in pairs(by_id) do
+    if #paths > 1 then
+      add("warn", "id-duplicado", paths[1], string.format("id %q existe em %d arquivos — `[[%s]]` fica ambíguo", id, #paths, id))
+    end
+  end
+
+  -- 4. Invariantes deriváveis do caminho: bloco e frontmatter. Tudo aqui é
+  -- reparável sem adivinhação, porque o caminho é a fonte de verdade.
+  for _, t in ipairs(all_tasks()) do
+    local lines = vim.fn.readfile(t.path)
+    local s, e = first_block_range(lines)
+    if not s then
+      add("error", "sem-callout", t.path, "arquivo de task sem bloco de callout")
+    else
+      local blk = {}
+      for i = s, e do
+        blk[#blk + 1] = lines[i]
+      end
+      local model = M.parse_block(blk)
+      local dirty = false
+
+      if model.status_num == 0 then
+        add("warn", "status-0", t.path, string.format("callout %q não existe em status.json", model.raw_callout))
+      end
+
+      -- O NOME DO ARQUIVO vence sempre, e não só quando o link está vazio: se
+      -- alguém renomeou com `mv`, o bloco ainda carrega o id antigo, e
+      -- respeitá-lo faria o --fix deixar o arquivo eternamente dessincronizado
+      -- do próprio caminho — justo o que este check existe para pegar.
+      model.id = t.id
+      model.project, model.archived = t.project, t.archived
+      local want = M.serialize_block(model)
+      if not vim.deep_equal(want, blk) then
+        if opts.fix then
+          lines = splice(lines, s, e, want)
+          dirty = true
+        end
+        add("warn", "bloco-dessincronizado", t.path, "bloco não corresponde ao caminho (link/id)", opts.fix)
+      end
+
+      -- Trabalha numa cópia para que o diagnóstico continue read-only quando
+      -- não há --fix (update_frontmatter_key muta o array que recebe).
+      local probe = vim.deepcopy(lines)
+      if update_frontmatter_key(probe, "id", t.id) then
+        if opts.fix then
+          lines = probe
+          dirty = true
+        end
+        add("warn", "frontmatter-id", t.path, "`id:` do frontmatter ≠ nome do arquivo", opts.fix)
+      end
+
+      -- 5. Arquivada sem registro de arquivamento. O reparo escreve uma linha
+      -- EXPLICITAMENTE marcada como reconstruída: inventar a data real seria
+      -- pior que não ter a linha.
+      if t.archived then
+        local logged = false
+        for _, l in ipairs(lines) do
+          if l:match("^%- %d%d%d%d%-%d%d%-%d%d — arquivada em") then
+            logged = true
+            break
+          end
+        end
+        if not logged then
+          if opts.fix then
+            append_history(lines, t.archived)
+            lines[#lines] = lines[#lines] .. " [reconstruído pelo doctor; data real desconhecida]"
+            dirty = true
+          end
+          add("warn", "historico-ausente", t.path, "está em archived/ sem entrada de histórico", opts.fix)
+        end
+      end
+
+      if dirty then
+        vim.fn.writefile(lines, t.path)
+      end
+    end
+  end
+
+  -- 6. Wikilinks path-qualified pendurados: a impressão digital de um rename
+  -- feito sem M.retarget_links. NÃO é reparável — nada no vault registra que
+  -- `foo` um dia se chamou `bar` —, e é justamente por isso que precisa ser
+  -- reportado.
+  --
+  -- Só links `tasks/...` com caminho entram aqui. Um `[[nota-futura]]` curto
+  -- que não resolve é comportamento NORMAL do Obsidian (o link vira um
+  -- placeholder que cria a nota ao ser clicado), e cobrá-lo encheria o doctor
+  -- de alarme falso — um checker em que não se confia é um checker que não se
+  -- lê. Já um link com caminho para tasks/ foi gerado por este módulo e
+  -- portanto tem obrigação de resolver.
+  local resolvable = resolvable_targets()
+  for _, p in ipairs(vim.fn.glob(vault .. "/**/*.md", true, true)) do
+    if not p:match("^" .. vim.pesc(root) .. "/daily/") then
+      local in_fence = false
+      for i, line in ipairs(vim.fn.readfile(p)) do
+        if line:match("^%s*```") then
+          in_fence = not in_fence
+        elseif not in_fence then
+          -- O Obsidian não renderiza wikilink dentro de código — nem em bloco
+          -- cercado, nem entre crases. Sem espelhar essa regra, qualquer
+          -- documentação que CITE um link (este vault tem um AGENTS.md cheio
+          -- deles) viraria falso positivo, e um checker com alarme falso é um
+          -- checker que se aprende a ignorar.
+          local scan = line:gsub("`[^`]*`", "")
+          for inner in scan:gmatch("%[%[(.-)%]%]") do
+            local target = inner:gsub("|.*$", ""):gsub("[#^].*$", "")
+            target = vim.trim(target):gsub("%.md$", "")
+            if target:match("^tasks/") and not resolvable[target] then
+              add("error", "link-pendurado", p, string.format("linha %d: `[[%s]]` não resolve", i, target))
+            end
+          end
+        end
+      end
+    end
+  end
+
+  if opts.fix then
+    M.build_cache()
+    M.rebuild_current({ quiet = true })
+  end
+  return found
 end
 
 --- Edição por contexto do cursor + form -------------------------------------
@@ -950,7 +1592,7 @@ function M.resolve_under_cursor()
   end
 
   local is_current = path:match("/CURRENT%.md$") ~= nil
-  local project, task_path
+  local project, task_path, archived
   if is_current then
     for i = s, 1, -1 do
       local p = lines[i]:match("^##%s+(.+)$")
@@ -963,10 +1605,14 @@ function M.resolve_under_cursor()
       vim.notify("freitask: não achei o projeto (## ...) acima do callout", vim.log.levels.WARN)
       return nil
     end
-    task_path = root .. "/" .. project .. "/" .. model.id .. ".md"
+    -- Task arquivada nunca aparece no CURRENT.md, logo archived é sempre nil aqui.
+    task_path = task_file(project, model.id, nil)
   else
-    project = path:match(".*/tasks/([^/]+)/[^/]+%.md$")
-    if not project or RESERVED[project] then
+    -- split_task_path devolve (project, id, archived); o id vem do próprio
+    -- caminho e aqui já temos o do bloco, então só o 1º e o 3º interessam.
+    local parts = { split_task_path(path) }
+    project, archived = parts[1], parts[3]
+    if not project then
       vim.notify("freitask: buffer não é um arquivo de task", vim.log.levels.WARN)
       return nil
     end
@@ -979,6 +1625,7 @@ function M.resolve_under_cursor()
     block_start = s,
     block_end = e,
     project = project,
+    archived = archived,
     task_path = task_path,
     model = model,
   }
@@ -1225,14 +1872,16 @@ function M.apply_edit(ctx, nm)
   -- id == nome da branch: renomear o id renomeia a branch (via delete+recreate).
 
   local project = ctx.project
-  local old_path = (ctx.source == "task") and ctx.task_path or (root .. "/" .. project .. "/" .. old_id .. ".md")
-  local new_path = renaming and (root .. "/" .. project .. "/" .. nm.id .. ".md") or old_path
+  -- ctx.archived acompanha o rename: sem ele, renomear o id de uma task
+  -- arquivada a ressuscitaria em tasks/<projeto>/ — e no board — em silêncio.
+  local old_path = (ctx.source == "task") and ctx.task_path or task_file(project, old_id, ctx.archived)
+  local new_path = renaming and task_file(project, nm.id, ctx.archived) or old_path
   if renaming and vim.fn.filereadable(new_path) == 1 then
     vim.notify("freitask: já existe task com id " .. nm.id, vim.log.levels.WARN)
     return
   end
 
-  nm.project = project
+  nm.project, nm.archived = project, ctx.archived
   local new_block = M.serialize_block(nm)
   local tbuf = loaded_buf(old_path)
 
@@ -1251,15 +1900,21 @@ function M.apply_edit(ctx, nm)
       or (vim.fn.filereadable(new_path) == 1 and vim.fn.readfile(new_path) or {})
     local s, e = first_block_range(src)
     local out = s and splice(src, s, e, new_block) or vim.deepcopy(new_block)
+    -- `id:` do frontmatter (injetado pelo obsidian.nvim) espelha o nome do
+    -- arquivo; sem isto ele ficaria apontando para o id antigo depois do rename.
+    update_frontmatter_key(out, "id", nm.id)
     vim.fn.writefile(out, new_path)
     if tbuf then
       pcall(vim.api.nvim_buf_set_name, tbuf, new_path)
       vim.api.nvim_buf_call(tbuf, function()
-        vim.cmd("silent keepjumps write!")
+        vim.cmd("silent edit!")
       end)
     end
     M.remove_cache_entry(old_path)
     M.update_cache_entry(new_path)
+    -- Renomear muda o basename, então quebra TAMBÉM os links curtos `[[id]]`
+    -- espalhados pelo vault — não só os path-qualified.
+    M.retarget_links(old_path, new_path)
   else
     if tbuf then
       local s, e = first_block_range(vim.api.nvim_buf_get_lines(tbuf, 0, -1, false))
@@ -1287,7 +1942,18 @@ function M.apply_edit(ctx, nm)
     end)
   end
 
-  vim.notify("freitask: task atualizada (" .. nm.id .. ")", vim.log.levels.INFO)
+  -- Editar uma task arquivada NÃO a desarquiva, nem mesmo quando o novo callout
+  -- é de task ativa: mover arquivo como efeito colateral de um save é o tipo de
+  -- mágica que come dado. O aviso existe para que o silêncio não seja lido como
+  -- "voltou pro board".
+  if ctx.archived then
+    vim.notify(
+      string.format("freitask: %s atualizada, mas segue em archived/%s (<leader>oa para desarquivar)", nm.id, ctx.archived),
+      vim.log.levels.INFO
+    )
+  else
+    vim.notify("freitask: task atualizada (" .. nm.id .. ")", vim.log.levels.INFO)
+  end
 end
 
 ---Ponto de entrada do keymap: edita o callout sob o cursor.
@@ -1296,7 +1962,8 @@ function M.edit_under_cursor()
   if not ctx then
     return
   end
-  M.edit_task_form(ctx.model, { title = "Editar task" }, function(nm)
+  local title = ctx.archived and ("Editar task (archived/" .. ctx.archived .. ")") or "Editar task"
+  M.edit_task_form(ctx.model, { title = title }, function(nm)
     M.apply_edit(ctx, nm)
   end)
 end
@@ -1317,17 +1984,23 @@ function M.edit_task_file(path)
     block[#block + 1] = lines[i]
   end
   local model = M.parse_block(block)
-  local project = path:match(".*/tasks/([^/]+)/[^/]+%.md$")
+  local project, _, archived = split_task_path(path)
+  if not project then
+    vim.notify("freitask: não é um arquivo de task: " .. path, vim.log.levels.WARN)
+    return
+  end
   local ctx = {
     source = "task",
     buf = vim.fn.bufnr(path),
     block_start = s,
     block_end = e,
     project = project,
+    archived = archived,
     task_path = path,
     model = model,
   }
-  M.edit_task_form(model, { title = "Editar task" }, function(nm)
+  local title = archived and ("Editar task (archived/" .. archived .. ")") or "Editar task"
+  M.edit_task_form(model, { title = title }, function(nm)
     M.apply_edit(ctx, nm)
   end)
 end
@@ -1362,14 +2035,24 @@ end
 function M.open_tasks(project)
   M.ensure_root()
   M.load_status()
+  -- Arquivadas ficam ocultas por default e são lidas do disco só quando este
+  -- toggle liga (M.archived_entries_for) — nunca entram em M.cache.
+  local show_archived = false
   Snacks.picker.pick({
     source = "obsidian_tasks",
-    title = "Tasks: " .. project .. "   ⏎ open · C-t new · C-x del · C-r archive · C-e edit · C-o back · ? help",
+    title = "Tasks: "
+      .. project
+      .. "   ⏎ open · C-t new · C-x del · C-r archive · C-u archived · C-e edit · C-o back · ? help",
     show_empty = true,
     finder = function()
       local items = {}
       for _, e in ipairs(M.entries_for(project)) do
         items[#items + 1] = { text = e.task_id, file = e.path, entry = e }
+      end
+      if show_archived then
+        for _, e in ipairs(M.archived_entries_for(project)) do
+          items[#items + 1] = { text = e.archived .. " " .. e.task_id, file = e.path, entry = e }
+        end
       end
       return items
     end,
@@ -1377,12 +2060,19 @@ function M.open_tasks(project)
       local e = item.entry
       local st = M.status_meta(e.status_num)
       local hl = st.hl_group or "Normal"
-      return {
+      local out = {}
+      if e.archived then
+        -- Prefixo em Comment: a task arquivada aparece visivelmente rebaixada,
+        -- para não competir com o board ativo na leitura da lista.
+        out[#out + 1] = { string.format("[%s] ", e.archived), "Comment" }
+      end
+      vim.list_extend(out, {
         { (st.icon or "") .. " ", hl },
         { st.title or ("Status " .. tostring(e.status_num)), hl },
         { " - ", "SnacksPickerDelim" },
-        { e.task_id, "SnacksPickerLabel" },
-      }
+        { e.task_id, e.archived and "Comment" or "SnacksPickerLabel" },
+      })
+      return out
     end,
     confirm = function(picker, item)
       if not item then
@@ -1416,19 +2106,44 @@ function M.open_tasks(project)
         M.rebuild_current({ quiet = true })
         picker:find()
       end,
-      -- <C-r>: arquiva a task selecionada (marca `archived: true`, mantém o
-      -- arquivo) após confirmação.
+      -- <C-r>: arquiva a task (perguntando o tipo) ou, se ela já estiver
+      -- arquivada, desarquiva — a mesma tecla nos dois sentidos.
+      -- vim.fn.confirm e não vim.ui.select: é bloqueante e não abre uma janela
+      -- que dispute foco com a do picker.
       archive_task = function(picker, item)
         item = item or picker:current()
         if not item then
           return
         end
-        local choice = vim.fn.confirm("Archive task '" .. item.entry.task_id .. "'?", "&Yes\n&No", 2)
-        if choice ~= 1 then
-          return
+        local e = item.entry
+        if e.archived then
+          if vim.fn.confirm("Desarquivar '" .. e.task_id .. "'?", "&Sim\n&Não", 2) ~= 1 then
+            return
+          end
+          M.unarchive_task(item.file)
+        else
+          -- Default derivado do callout; as iniciais de atalho são distintas
+          -- (o/p/f) porque "done" e "dropped" colidiriam em "d".
+          local suggested = M.suggest_archive_type(e.status_num)
+          local labels, default = { "d&one", "dro&pped", "&failed" }, 1
+          for i, t in ipairs(M.ARCHIVED_TYPES) do
+            if t == suggested then
+              default = i
+            end
+          end
+          local choice =
+            vim.fn.confirm("Arquivar '" .. e.task_id .. "' como:", table.concat(labels, "\n") .. "\n&cancelar", default)
+          if choice < 1 or choice > #M.ARCHIVED_TYPES then
+            return
+          end
+          M.archive_task(item.file, M.ARCHIVED_TYPES[choice])
         end
-        M.archive_task(item.file)
         M.rebuild_current({ quiet = true })
+        picker:find()
+      end,
+      -- <C-u>: mostra/esconde as tasks arquivadas do projeto na mesma lista.
+      toggle_archived = function(picker)
+        show_archived = not show_archived
         picker:find()
       end,
       -- <C-e>: edita a task selecionada no form multi-campo.
@@ -1456,7 +2171,8 @@ function M.open_tasks(project)
         keys = {
           ["<c-t>"] = { "new_task", mode = { "i", "n" }, desc = "New task" },
           ["<c-x>"] = { "delete_task", mode = { "i", "n" }, desc = "Delete task" },
-          ["<c-r>"] = { "archive_task", mode = { "i", "n" }, desc = "Archive task" },
+          ["<c-r>"] = { "archive_task", mode = { "i", "n" }, desc = "Archive/unarchive task" },
+          ["<c-u>"] = { "toggle_archived", mode = { "i", "n" }, desc = "Toggle archived" },
           ["<c-e>"] = { "edit_task", mode = { "i", "n" }, desc = "Edit task" },
           ["<c-o>"] = { "back_to_projects", mode = { "i", "n" }, desc = "Back to projects" },
         },
@@ -1534,6 +2250,43 @@ function M.open_projects()
   })
 end
 
+---Arquiva/desarquiva a task do buffer atual — a contraparte do <C-r> do picker
+---para quando você já está dentro do arquivo. Não é campo do form de propósito:
+---mover arquivo é uma ação com confirmação, e uma quarta linha posicional
+---quebraria o contrato "linha 4+ = notas" (uma linha apagada por acidente
+---passaria a mover arquivo de lugar).
+function M.toggle_archive_current_file()
+  local path = vim.api.nvim_buf_get_name(0)
+  local project, id, archived = split_task_path(path)
+  if not project then
+    vim.notify("freitask: buffer não é um arquivo de task", vim.log.levels.WARN)
+    return
+  end
+  local new_path
+  if archived then
+    if vim.fn.confirm("Desarquivar '" .. id .. "'?", "&Sim\n&Não", 2) ~= 1 then
+      return
+    end
+    new_path = M.unarchive_task(path)
+  else
+    local suggested = M.suggest_archive_type(M.parse_status_num(path))
+    local default = 1
+    for i, t in ipairs(M.ARCHIVED_TYPES) do
+      if t == suggested then
+        default = i
+      end
+    end
+    local choice = vim.fn.confirm("Arquivar '" .. id .. "' como:", "d&one\ndro&pped\n&failed\n&cancelar", default)
+    if choice < 1 or choice > #M.ARCHIVED_TYPES then
+      return
+    end
+    new_path = M.archive_task(path, M.ARCHIVED_TYPES[choice])
+  end
+  if new_path then
+    M.rebuild_current({ quiet = true })
+  end
+end
+
 --- Autocmds ------------------------------------------------------------------
 
 ---Mantém o cache fresco e instala o keymap buffer-local de edição por cursor.
@@ -1546,8 +2299,11 @@ function M.setup_autocmd()
     group = grp,
     pattern = root .. "/*/*.md",
     callback = function(args)
-      local project = args.match:match(".*/tasks/([^/]+)/[^/]+%.md$")
-      if not project or RESERVED[project] then
+      -- `*` casa `/` em pattern de autocmd, então isto também dispara para
+      -- arquivos em archived/; split_task_path devolve o tipo e nós pulamos —
+      -- salvar uma task arquivada não deve mexer no board.
+      local project, _, archived = split_task_path(args.match)
+      if not project or archived then
         return
       end
       vim.schedule(function()
@@ -1556,7 +2312,9 @@ function M.setup_autocmd()
     end,
   })
 
-  -- <leader>oe buffer-local: em CURRENT.md e em qualquer arquivo de task.
+  -- <leader>oe buffer-local: em CURRENT.md e em qualquer arquivo de task
+  -- (inclusive arquivadas — `*` casa `/`). <leader>oa só faz sentido num
+  -- arquivo de task, então é registrado condicionalmente.
   vim.api.nvim_create_autocmd("BufEnter", {
     group = grp,
     pattern = { root .. "/*.md", root .. "/*/*.md" },
@@ -1565,6 +2323,12 @@ function M.setup_autocmd()
         buffer = args.buf,
         desc = "Editar callout sob cursor",
       })
+      if split_task_path(vim.api.nvim_buf_get_name(args.buf)) then
+        vim.keymap.set("n", "<leader>oa", M.toggle_archive_current_file, {
+          buffer = args.buf,
+          desc = "Arquivar/desarquivar task",
+        })
+      end
     end,
   })
 end
