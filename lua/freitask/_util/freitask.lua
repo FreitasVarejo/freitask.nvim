@@ -2333,4 +2333,30 @@ function M.setup_autocmd()
   })
 end
 
+--- Superfície de teste -------------------------------------------------------
+--
+-- As funções puras deste módulo (parser, serializer, derivação de id, reescrita
+-- de link) são locais de propósito: não fazem parte da API. Mas são justamente
+-- as que precisam de teste, porque são as que erram em silêncio — um link
+-- reescrito errado só aparece semanas depois, quando você clica nele.
+--
+-- Esta tabela é TEMPORÁRIA: quando o módulo for dividido (ver
+-- docs/freitask-internals.md), cada uma dessas funções vira função pública do
+-- seu módulo (`path.kebab`, `md.first_block_range`, `links.rewrite_link`) e
+-- este bloco some junto com o arquivo monolítico.
+M.__test = {
+  DEFAULT_STATUS_JSON = DEFAULT_STATUS_JSON,
+  kebab = kebab,
+  strip_quote = strip_quote,
+  is_status_text = is_status_text,
+  content_start = content_start,
+  first_block_range = first_block_range,
+  block_around = block_around,
+  splice = splice,
+  rewrite_link = rewrite_link,
+  append_history = append_history,
+  update_frontmatter_key = update_frontmatter_key,
+  vault_dir = vault_dir,
+}
+
 return M
