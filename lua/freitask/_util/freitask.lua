@@ -1,4 +1,4 @@
--- util.tasks — núcleo do task-manager baseado em Obsidian.
+-- util.freitask — núcleo do freitask baseado em Obsidian.
 --
 -- Opera exclusivamente sob ~/ObsidianVault/tasks/. Cada projeto é um
 -- subdiretório (id kebab-case) e cada task é um arquivo markdown cujo bloco
@@ -37,8 +37,8 @@
 -- M.archive_task) para sumir do cache/CURRENT.md sem apagar o arquivo, ou
 -- deletada de fato (arquivo removido do disco).
 --
--- Este módulo é `require`-ável (`require("util.tasks")`) para que tanto o
--- plugin do picker (plugins/task-manager.lua) quanto os keymaps buffer-local
+-- Este módulo é `require`-ável (`require("util.freitask")`) para que tanto o
+-- plugin do picker (plugins/freitask.lua) quanto os keymaps buffer-local
 -- de edição por cursor possam consumi-lo. Toca apenas arquivos + Snacks +
 -- vim.ui, portanto NÃO usa a API do obsidian.nvim (configurado à parte).
 
@@ -250,7 +250,7 @@ function M.load_status()
       M.status = decoded
       return
     end
-    vim.notify("task-manager: não consegui parsear status.json, usando defaults", vim.log.levels.WARN)
+    vim.notify("freitask: não consegui parsear status.json, usando defaults", vim.log.levels.WARN)
   end
   M.status = vim.json.decode(DEFAULT_STATUS_JSON)
 end
@@ -707,7 +707,7 @@ end
 function M.archive_task(path)
   local buf = loaded_buf(path)
   if buf and vim.bo[buf].modified then
-    vim.notify("task-manager: salve o arquivo da task antes de arquivar", vim.log.levels.WARN)
+    vim.notify("freitask: salve o arquivo da task antes de arquivar", vim.log.levels.WARN)
     return
   end
   set_frontmatter_flag(path, "archived", true)
@@ -807,7 +807,7 @@ function M.rebuild_current(opts)
   local buf = vim.fn.bufnr(path)
   if buf ~= -1 and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
     if not opts.quiet then
-      vim.notify("task-manager: CURRENT.md tem alterações não salvas; regen pulado", vim.log.levels.WARN)
+      vim.notify("freitask: CURRENT.md tem alterações não salvas; regen pulado", vim.log.levels.WARN)
     end
     return
   end
@@ -929,13 +929,13 @@ function M.resolve_under_cursor()
 
   local s, e = block_around(lines, lnum)
   if not s then
-    vim.notify("task-manager: cursor não está sobre um callout", vim.log.levels.WARN)
+    vim.notify("freitask: cursor não está sobre um callout", vim.log.levels.WARN)
     return nil
   end
   -- permissivo como o parser: uma task com tipo inválido (status 0) precisa
   -- continuar abrindo no form, senão o estado quebrado seria inconsertável.
   if not lines[s]:match(">%s*%[![^%]]*%]") then
-    vim.notify("task-manager: bloco sob o cursor não é um callout de task", vim.log.levels.WARN)
+    vim.notify("freitask: bloco sob o cursor não é um callout de task", vim.log.levels.WARN)
     return nil
   end
 
@@ -945,7 +945,7 @@ function M.resolve_under_cursor()
   end
   local model = M.parse_block(block)
   if model.id == "" then
-    vim.notify("task-manager: callout sem [[id]]", vim.log.levels.WARN)
+    vim.notify("freitask: callout sem [[id]]", vim.log.levels.WARN)
     return nil
   end
 
@@ -960,14 +960,14 @@ function M.resolve_under_cursor()
       end
     end
     if not project then
-      vim.notify("task-manager: não achei o projeto (## ...) acima do callout", vim.log.levels.WARN)
+      vim.notify("freitask: não achei o projeto (## ...) acima do callout", vim.log.levels.WARN)
       return nil
     end
     task_path = root .. "/" .. project .. "/" .. model.id .. ".md"
   else
     project = path:match(".*/tasks/([^/]+)/[^/]+%.md$")
     if not project or RESERVED[project] then
-      vim.notify("task-manager: buffer não é um arquivo de task", vim.log.levels.WARN)
+      vim.notify("freitask: buffer não é um arquivo de task", vim.log.levels.WARN)
       return nil
     end
     task_path = path
@@ -1133,7 +1133,7 @@ function M.edit_task_form(model, opts, on_confirm)
   vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].bufhidden = "wipe"
   vim.bo[buf].filetype = "markdown"
-  vim.bo[buf].omnifunc = "v:lua.require'util.tasks'.callout_omnifunc"
+  vim.bo[buf].omnifunc = "v:lua.require'util.freitask'.callout_omnifunc"
 
   local width = 66
   local height = math.max(#lines + 2, 8)
@@ -1168,7 +1168,7 @@ function M.edit_task_form(model, opts, on_confirm)
     local nm, err = parse_form(bl, model)
     if not nm then
       -- não fecha: o buffer fica aberto com o texto para corrigir.
-      vim.notify("task-manager: " .. err, vim.log.levels.WARN)
+      vim.notify("freitask: " .. err, vim.log.levels.WARN)
       return
     end
     close()
@@ -1216,7 +1216,7 @@ end
 function M.apply_edit(ctx, nm)
   M.load_status()
   if nm.id == "" then
-    vim.notify("task-manager: id inválido", vim.log.levels.WARN)
+    vim.notify("freitask: id inválido", vim.log.levels.WARN)
     return
   end
 
@@ -1228,7 +1228,7 @@ function M.apply_edit(ctx, nm)
   local old_path = (ctx.source == "task") and ctx.task_path or (root .. "/" .. project .. "/" .. old_id .. ".md")
   local new_path = renaming and (root .. "/" .. project .. "/" .. nm.id .. ".md") or old_path
   if renaming and vim.fn.filereadable(new_path) == 1 then
-    vim.notify("task-manager: já existe task com id " .. nm.id, vim.log.levels.WARN)
+    vim.notify("freitask: já existe task com id " .. nm.id, vim.log.levels.WARN)
     return
   end
 
@@ -1238,13 +1238,13 @@ function M.apply_edit(ctx, nm)
 
   if renaming then
     if tbuf and vim.bo[tbuf].modified then
-      vim.notify("task-manager: salve o arquivo da task antes de renomear o id", vim.log.levels.WARN)
+      vim.notify("freitask: salve o arquivo da task antes de renomear o id", vim.log.levels.WARN)
       return
     end
     -- rename de verdade, em vez de escrever-o-novo + apagar-o-velho: se a
     -- escrita falhar no meio, o arquivo antigo não chega a ser destruído.
     if vim.fn.filereadable(old_path) == 1 and vim.fn.rename(old_path, new_path) ~= 0 then
-      vim.notify("task-manager: não consegui renomear para " .. nm.id, vim.log.levels.ERROR)
+      vim.notify("freitask: não consegui renomear para " .. nm.id, vim.log.levels.ERROR)
       return
     end
     local src = tbuf and vim.api.nvim_buf_get_lines(tbuf, 0, -1, false)
@@ -1287,7 +1287,7 @@ function M.apply_edit(ctx, nm)
     end)
   end
 
-  vim.notify("task-manager: task atualizada (" .. nm.id .. ")", vim.log.levels.INFO)
+  vim.notify("freitask: task atualizada (" .. nm.id .. ")", vim.log.levels.INFO)
 end
 
 ---Ponto de entrada do keymap: edita o callout sob o cursor.
@@ -1309,7 +1309,7 @@ function M.edit_task_file(path)
   local lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
   local s, e = first_block_range(lines)
   if not s then
-    vim.notify("task-manager: arquivo de task sem callout", vim.log.levels.WARN)
+    vim.notify("freitask: arquivo de task sem callout", vim.log.levels.WARN)
     return
   end
   local block = {}
@@ -1343,7 +1343,7 @@ function M.create_task_form(project)
   M.edit_task_form(seed, { title = "Nova task em " .. project }, function(nm)
     local path = root .. "/" .. project .. "/" .. nm.id .. ".md"
     if vim.fn.filereadable(path) == 1 then
-      vim.notify("task-manager: task já existe: " .. nm.id, vim.log.levels.WARN)
+      vim.notify("freitask: task já existe: " .. nm.id, vim.log.levels.WARN)
       return
     end
     nm.project = project
@@ -1507,7 +1507,7 @@ function M.open_projects()
           end
           local id = kebab(input)
           if id == "" then
-            vim.notify("task-manager: nome de projeto inválido", vim.log.levels.WARN)
+            vim.notify("freitask: nome de projeto inválido", vim.log.levels.WARN)
             return
           end
           vim.fn.mkdir(root .. "/" .. id, "p")
@@ -1538,7 +1538,7 @@ end
 
 ---Mantém o cache fresco e instala o keymap buffer-local de edição por cursor.
 function M.setup_autocmd()
-  local grp = vim.api.nvim_create_augroup("obsidian_task_manager", { clear = true })
+  local grp = vim.api.nvim_create_augroup("freitask", { clear = true })
 
   -- Ao salvar uma task, regenera o CURRENT.md (silenciosamente) para que novas
   -- tasks/mudanças de status apareçam sozinhas no painel.

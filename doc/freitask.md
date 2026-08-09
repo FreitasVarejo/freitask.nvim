@@ -1,10 +1,10 @@
-# Task Manager & Daily Notes (Obsidian)
+# Freitask & Daily Notes (Obsidian)
 
 Como registrar tarefas e o planejamento diário neste setup — pensado tanto para
 o usuário quanto para **agentes de IA** que precisem ler/criar notas sem quebrar
 as convenções.
 
-Implementação: `nvim/lua/util/tasks.lua` (núcleo) + `nvim/lua/plugins/task-manager.lua`
+Implementação: `nvim/lua/util/freitask.lua` (núcleo) + `nvim/lua/plugins/freitask.lua`
 (spec do plugin). Opera **exclusivamente** sob `~/ObsidianVault/tasks/`.
 
 ---
@@ -211,7 +211,7 @@ mas diferem no que sobra em disco:
 
 ## Para agentes de IA — como criar/editar tarefas sem quebrar nada
 
-1. **Criar tarefa**: prefira `require("util.tasks").template(model)` a montar
+1. **Criar tarefa**: prefira `require("util.freitask").template(model)` a montar
    o markdown na mão — `model` é `{ status_num, raw_callout, title, id, desc,
    extras, project }`, os mesmos campos que `parse_block` devolve. `id` deve
    ser kebab-case (`M.template` não faz isso por você; use `kebab()` interno ou
@@ -232,7 +232,7 @@ mas diferem no que sobra em disco:
    as linhas seguintes (impedimentos/notas) ao editar — são texto livre do
    usuário, e sobrevivem tal como estão.
 5. **Reaproveite o parser canônico** em vez de regex ad-hoc:
-   `require("util.tasks").parse_block(linhas)` →
+   `require("util.freitask").parse_block(linhas)` →
    `{ status_num, raw_callout, title, id, desc, extras }`, e
    `serialize_block(model)` de volta (`model.project` precisa estar setado
    para o link sair com caminho). `raw_callout` é o tipo cru digitado —
@@ -251,7 +251,7 @@ mas diferem no que sobra em disco:
 
 ## Manutenção / verificação
 
-- `nvim/lua/util/tasks.lua` concentra parser, serializer, resolver de cursor,
+- `nvim/lua/util/freitask.lua` concentra parser, serializer, resolver de cursor,
   form e geração do painel. `parse_block`/`serialize_block` são a fonte única do
   formato — mudanças de formato começam aí.
 - `M.migrate_format()` converte arquivos de formatos antigos para o atual
@@ -267,6 +267,6 @@ mas diferem no que sobra em disco:
   `scan_task` a abrir o arquivo de novo em outro lugar.
 - Validação headless (sem framework de teste; o repo é config):
   ```bash
-  luacheck nvim/lua/util/tasks.lua
-  nvim --headless -c 'lua assert(require("util.tasks").parse_block)' -c 'qa!'
+  luacheck nvim/lua/util/freitask.lua
+  nvim --headless -c 'lua assert(require("util.freitask").parse_block)' -c 'qa!'
   ```
