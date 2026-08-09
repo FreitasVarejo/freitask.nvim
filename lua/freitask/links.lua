@@ -1,16 +1,6 @@
 -- freitask.links — reescrita dos wikilinks do vault.
 --
--- Arquivar, desarquivar e renomear o id são o MESMO evento ("esse arquivo
--- mudou de endereço") e por isso passam todos por M.retarget_links.
-
-local C = require("freitask.config")
-local fs = require("freitask.fs")
-
-local M = {}
-
---- Referências do vault ------------------------------------------------------
---
--- Arquivar, desarquivar e renomear o id são o mesmo evento — "esse arquivo
+-- Arquivar, desarquivar e renomear o id são o MESMO evento — "esse arquivo
 -- mudou de endereço" — e por isso passam todos por M.retarget_links.
 --
 -- O Obsidian resolve `[[foo]]` pelo BASENAME, em qualquer pasta do vault. Daí
@@ -20,6 +10,11 @@ local M = {}
 --   operação              [[foo]]      [[tasks/p/foo|foo]]   frontmatter id:
 --   arquivar/desarquivar  intacto      reescrever            intacto
 --   renomear id           reescrever   reescrever            reescrever
+
+local C = require("freitask.config")
+local fs = require("freitask.fs")
+
+local M = {}
 
 ---Arquivos markdown do vault elegíveis a conter referências.
 ---`tasks/daily/` fica DE FORA de propósito: são snapshots de como o board

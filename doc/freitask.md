@@ -4,8 +4,10 @@ Como registrar tarefas e o planejamento diário neste setup — pensado tanto pa
 o usuário quanto para **agentes de IA** que precisem ler/criar notas sem quebrar
 as convenções.
 
-Implementação: `nvim/lua/util/freitask.lua` (núcleo) + `nvim/lua/plugins/freitask.lua`
-(spec do plugin). Opera **exclusivamente** sob `~/ObsidianVault/tasks/`.
+Implementação: `nvim/lua/freitask/` (o módulo, dividido por responsabilidade) +
+`nvim/lua/plugins/freitask.lua` (spec do plugin). Opera **exclusivamente** sob
+`~/ObsidianVault/tasks/`. Para o mapa dos módulos e como testar, ver
+[`freitask-internals.md`](freitask-internals.md).
 
 ---
 
@@ -320,7 +322,7 @@ inválido. Com `--json`, tanto `list` quanto `doctor` emitem estrutura
 parseável — é o contrato para agentes.
 
 Implementação: `vault/.local/bin/freitask` (shim bash) →
-`nvim/lua/util/freitask_cli.lua` (shim Lua) → `util.freitask`. **Nenhuma regra
+`nvim/lua/util/freitask_cli.lua` (shim Lua) → o módulo `freitask`. **Nenhuma regra
 é reimplementada em nenhuma das camadas**; um segundo motor em bash ou python
 divergiria do Lua em semanas, e aí existiriam duas regras em vez de uma.
 
@@ -409,7 +411,7 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 > dados — é a pasta para a qual um agente externo é apontado. Esta seção é a
 > versão longa.
 
-1. **Criar tarefa**: prefira `require("util.freitask").template(model)` a montar
+1. **Criar tarefa**: prefira `require("freitask").template(model)` a montar
    o markdown na mão — `model` é `{ status_num, raw_callout, title, id, desc,
    extras, project }`, os mesmos campos que `parse_block` devolve. `id` deve
    ser kebab-case (`M.template` não faz isso por você; use `kebab()` interno ou
@@ -430,7 +432,7 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
    as linhas seguintes (impedimentos/notas) ao editar — são texto livre do
    usuário, e sobrevivem tal como estão.
 5. **Reaproveite o parser canônico** em vez de regex ad-hoc:
-   `require("util.freitask").parse_block(linhas)` →
+   `require("freitask").parse_block(linhas)` →
    `{ status_num, raw_callout, title, id, desc, extras }`, e
    `serialize_block(model)` de volta (`model.project` precisa estar setado
    para o link sair com caminho). `raw_callout` é o tipo cru digitado —
@@ -460,19 +462,21 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 
 ## Manutenção / verificação
 
-- `nvim/lua/util/freitask.lua` concentra parser, serializer, resolver de cursor,
-  form, geração do painel, movimentação de arquivos e o `doctor`.
-  `parse_block`/`serialize_block` são a fonte única do formato — mudanças de
-  formato começam aí. `nvim/lua/util/freitask_cli.lua` e
-  `vault/.local/bin/freitask` são shims sem lógica: **não** acrescente regra
-  neles, senão passam a existir duas versões da mesma regra.
-- `M.retarget_links` é chamada por `M.archive_task`, `M.unarchive_task` e
-  `M.apply_edit` (rename). Qualquer caminho novo que mova ou renomeie um
+- O código vive em `nvim/lua/freitask/`, um módulo por responsabilidade — ver
+  [`freitask-internals.md`](freitask-internals.md) para o mapa, as regras de
+  dependência e o roteiro de verificação. `freitask.model`
+  (`parse_block`/`serialize_block`) é a fonte única do formato: mudanças de
+  formato começam aí. `nvim/lua/util/freitask.lua` (fachada),
+  `nvim/lua/util/freitask_cli.lua` e `vault/.local/bin/freitask` são shims sem
+  lógica: **não** acrescente regra neles, senão passam a existir duas versões
+  da mesma regra.
+- `links.retarget_links` é chamada por `task.archive_task`,
+  `task.unarchive_task` e `edit.apply_edit` (rename). Qualquer caminho novo que mova ou renomeie um
   arquivo de task precisa chamá-la também — é o único ponto que conserta as
   referências do vault.
-- `M.migrate_format()` converte arquivos de formatos antigos para o atual
+- `doctor.migrate_format()` converte arquivos de formatos antigos para o atual
   (idempotente); rode-o após qualquer mudança de formato, seguido de
-  `M.rebuild_current()`. Também migra o **formato legado de arquivamento**
+  `board.rebuild_current()`. Também migra o **formato legado de arquivamento**
   (`archived: true` no frontmatter): move essas tarefas para
   `archived/dropped/` — o balde honesto, já que o flag antigo não registrava
   o porquê — e remove a linha. Reconhece tanto o vocabulário atual de `status.json`
@@ -480,21 +484,24 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
   "Backlog", "In Progress") — se `status.json` for reestruturado de novo,
   cheque se essa tabela precisa crescer, senão a migração vira texto-livre
   permanente em vez de status.
-- `M.split_task_path` é o **guarda único** de "isto é um arquivo de task?" —
+- `path.split_task_path` é o **guarda único** de "isto é um arquivo de task?" —
   cache, autocmds, form e picker passam por ele. Ao acrescentar um formato de
   caminho, mude-o lá e não com um `match` novo no ponto de uso.
-- O cache (`M.cache`) guarda o **bloco bruto** de cada task (`entry.block`),
+- O cache (`cache.cache`) guarda o **bloco bruto** de cada task (`entry.block`),
   lido uma única vez por `scan_task`; `rebuild_current` reimprime a partir daí
   em vez de reler os arquivos. Ao adicionar campos ao cache, prefira estender
   `scan_task` a abrir o arquivo de novo em outro lugar.
-- Validação (sem framework de teste; o repo é config):
+- Validação:
   ```bash
-  luacheck nvim/lua/util/freitask.lua nvim/lua/util/freitask_cli.lua
+  nvim/tests/run.sh        # a suíte (funções puras: parser, links, kebab…)
+  cd nvim && luacheck lua/freitask lua/util lua/plugins/freitask.lua tests
   shellcheck -x -P SCRIPTDIR vault/hooks/*.sh vault/.local/bin/*
-  nvim --headless -c 'lua assert(require("util.freitask").doctor)' -c 'qa!'
   freitask doctor          # integridade dos DADOS (o resto checa o CÓDIGO)
   ./healthcheck.sh         # inclui o doctor via vault/hooks/check.sh
   ```
+  As operações de **escrita** e a UI não têm teste automatizado; o roteiro
+  manual (vault descartável via `$HOME`) está em
+  [`freitask-internals.md`](freitask-internals.md).
 - O `doctor` é a rede de segurança contra escritores que não passam por este
   módulo (Obsidian, celular, agentes). Ao acrescentar um invariante ao formato,
   acrescente **junto** o check correspondente — um invariante que só existe na
