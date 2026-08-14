@@ -58,6 +58,10 @@ end
 local USAGE = [[
 freitask — gestão de tasks do vault do Obsidian
 
+  freitask current
+      Abre o CURRENT.md no Neovim interativo (tratado pelo shim em bash,
+      antes de chegar aqui).
+
   freitask doctor [--fix] [--json] [--quiet]
       Verifica a integridade do vault. Read-only por padrão; --fix repara o
       que é derivável do caminho (nunca inventa datas nem resolve conflitos).
