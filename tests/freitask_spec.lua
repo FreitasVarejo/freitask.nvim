@@ -1,4 +1,4 @@
--- Testes das funções PURAS do util.freitask.
+-- Testes das funções PURAS do freitask.
 --
 -- Só entra aqui o que não toca disco: parser/serializer do bloco, derivação de
 -- id, decomposição de caminho, reescrita de wikilink, manipulação de linhas.

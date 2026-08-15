@@ -5,7 +5,7 @@
 # usuário, pelo mesmo motivo que a CLI do freitask não depende (ver
 # vault/.local/bin/freitask). Os módulos testados só tocam arquivos e vim.fn.
 #
-# Uso: nvim/tests/run.sh [padrão]   — o padrão filtra por nome de arquivo.
+# Uso: tests/run.sh [padrão]   — o padrão filtra por nome de arquivo.
 
 set -euo pipefail
 

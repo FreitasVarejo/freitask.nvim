@@ -4,9 +4,10 @@ Documento para quem vai **mexer no código**. Para o formato das tarefas, o
 fluxo de uso e o contrato com agentes de IA, ver [`freitask.md`](freitask.md) —
 este aqui não repete nada de lá.
 
-Tudo vive em `nvim/lua/freitask/`. `nvim/lua/util/freitask.lua` é uma fachada de
-uma linha que existe só para não quebrar quem já apontava para o caminho antigo
-(principalmente a CLI, chamada de fora do Neovim).
+Tudo vive em `lua/freitask/`. Este repositório é um plugin de Neovim comum: a
+raiz entra no `runtimepath` e `require("freitask")` resolve a partir de `lua/`.
+Quem consome é o dotfiles (spec do lazy.nvim) e a CLI `freitask`, chamada de
+fora do Neovim.
 
 ---
 
@@ -80,11 +81,11 @@ config ──┬── fs ────┬── path ──┬── model ─�
 ## Testes
 
 ```bash
-nvim/tests/run.sh          # a suíte inteira
-nvim/tests/run.sh freitask # filtra por nome de arquivo
+tests/run.sh          # a suíte inteira
+tests/run.sh freitask # filtra por nome de arquivo
 ```
 
-`nvim/tests/runner.lua` é um harness de ~80 linhas rodando sob `nvim --clean -l`
+`tests/runner.lua` é um harness de ~80 linhas rodando sob `nvim --clean -l`
 — sem busted, sem plenary. A suíte testa um módulo que só toca arquivos e
 `vim.fn`; uma dependência externa aqui seria um passo de setup que ninguém
 lembra de fazer antes de mexer no parser.
@@ -107,8 +108,9 @@ SB=$(mktemp -d); mkdir -p "$SB/ObsidianVault/tasks/p"
 printf -- '---\nid: t1\n---\n\n> [!todo] Um\n> [[tasks/p/t1|t1]]\n' > "$SB/ObsidianVault/tasks/p/t1.md"
 echo 'ref [[t1]] e [[tasks/p/t1|t1]]' > "$SB/ObsidianVault/n.md"
 
-run() { HOME="$SB" nvim --clean --cmd "set runtimepath+=$HOME/dotfiles/nvim" \
-  -l ~/dotfiles/nvim/lua/util/freitask_cli.lua "$@"; }
+REPO=~/projects/freitask.nvim
+run() { HOME="$SB" nvim --clean --cmd "set runtimepath+=$REPO" \
+  -l "$REPO/lua/freitask/cli.lua" "$@"; }
 run archive t1 done && run unarchive t1 && run rename t1 t2 && run doctor
 ```
 
@@ -117,8 +119,8 @@ frontmatter, o log em `## Histórico` e o `CURRENT.md`.
 
 ## Ao mexer
 
-1. `nvim/tests/run.sh`
-2. `cd nvim && luacheck lua/freitask lua/util lua/plugins/freitask.lua tests`
+1. `tests/run.sh`
+2. `luacheck lua tests`
 3. `freitask doctor` no vault real (read-only; deve sair verde)
 
 O luacheck **não** pega `mod.foo` apontando para uma função que não existe —

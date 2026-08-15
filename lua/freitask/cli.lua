@@ -1,4 +1,4 @@
--- util.freitask_cli — entrada de linha de comando do freitask.
+-- freitask.cli — entrada de linha de comando do freitask.
 --
 -- Roda sob `nvim --headless -l`. É um SHIM FINO sobre o módulo freitask:
 -- nenhuma regra é reimplementada aqui. Um segundo motor (em bash ou python) divergiria
@@ -91,7 +91,16 @@ if cmd == "doctor" then
       say("freitask: vault consistente.")
     else
       for _, f in ipairs(found) do
-        say(string.format("%-6s %-22s %s\n         %s%s", f.level, f.kind, f.path, f.msg, f.fixed and "  [reparado]" or ""))
+        say(
+          string.format(
+            "%-6s %-22s %s\n         %s%s",
+            f.level,
+            f.kind,
+            f.path,
+            f.msg,
+            f.fixed and "  [reparado]" or ""
+          )
+        )
       end
       local pend = 0
       for _, f in ipairs(found) do
@@ -189,7 +198,13 @@ if cmd == "list" then
     if flags.archived then
       for _, e in ipairs(T.archived_entries_for(p)) do
         rows[#rows + 1] =
-          { project = p, id = e.task_id, status = T.status_meta(e.status_num).title, archived = e.archived, path = e.path }
+          {
+            project = p,
+            id = e.task_id,
+            status = T.status_meta(e.status_num).title,
+            archived = e.archived,
+            path = e.path,
+          }
       end
     end
   end
@@ -198,7 +213,13 @@ if cmd == "list" then
   else
     for _, r in ipairs(rows) do
       say(
-        string.format("%-14s %-34s %-12s %s", r.project, r.id, r.status, r.archived ~= vim.NIL and ("[" .. r.archived .. "]") or "")
+        string.format(
+          "%-14s %-34s %-12s %s",
+          r.project,
+          r.id,
+          r.status,
+          r.archived ~= vim.NIL and ("[" .. r.archived .. "]") or ""
+        )
       )
     end
   end

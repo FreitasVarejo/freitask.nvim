@@ -157,7 +157,12 @@ function M.doctor(opts)
   end
   for id, paths in pairs(by_id) do
     if #paths > 1 then
-      add("warn", "id-duplicado", paths[1], string.format("id %q existe em %d arquivos — `[[%s]]` fica ambíguo", id, #paths, id))
+      add(
+        "warn",
+        "id-duplicado",
+        paths[1],
+        string.format("id %q existe em %d arquivos — `[[%s]]` fica ambíguo", id, #paths, id)
+      )
     end
   end
 

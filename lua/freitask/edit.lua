@@ -179,7 +179,11 @@ function M.apply_edit(ctx, nm)
   -- "voltou pro board".
   if ctx.archived then
     vim.notify(
-      string.format("freitask: %s atualizada, mas segue em archived/%s (<leader>oa para desarquivar)", nm.id, ctx.archived),
+      string.format(
+        "freitask: %s atualizada, mas segue em archived/%s (<leader>oa para desarquivar)",
+        nm.id,
+        ctx.archived
+      ),
       vim.log.levels.INFO
     )
   else

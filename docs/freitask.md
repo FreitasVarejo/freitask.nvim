@@ -4,8 +4,9 @@ Como registrar tarefas e o planejamento diário neste setup — pensado tanto pa
 o usuário quanto para **agentes de IA** que precisem ler/criar notas sem quebrar
 as convenções.
 
-Implementação: `nvim/lua/freitask/` (o módulo, dividido por responsabilidade) +
-`nvim/lua/plugins/freitask.lua` (spec do plugin). Opera **exclusivamente** sob
+Implementação: `lua/freitask/` (o módulo, dividido por responsabilidade), neste
+repositório; o dotfiles só carrega o plugin via spec do lazy.nvim
+(`nvim/lua/plugins/freitask.lua`). Opera **exclusivamente** sob
 `~/ObsidianVault/tasks/`. Para o mapa dos módulos e como testar, ver
 [`freitask-internals.md`](freitask-internals.md).
 
@@ -322,7 +323,7 @@ inválido. Com `--json`, tanto `list` quanto `doctor` emitem estrutura
 parseável — é o contrato para agentes.
 
 Implementação: `vault/.local/bin/freitask` (shim bash) →
-`nvim/lua/util/freitask_cli.lua` (shim Lua) → o módulo `freitask`. **Nenhuma regra
+`lua/freitask/cli.lua` (shim Lua) → o módulo `freitask`. **Nenhuma regra
 é reimplementada em nenhuma das camadas**; um segundo motor em bash ou python
 divergiria do Lua em semanas, e aí existiriam duas regras em vez de uma.
 
@@ -462,14 +463,13 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 
 ## Manutenção / verificação
 
-- O código vive em `nvim/lua/freitask/`, um módulo por responsabilidade — ver
+- O código vive em `lua/freitask/`, um módulo por responsabilidade — ver
   [`freitask-internals.md`](freitask-internals.md) para o mapa, as regras de
   dependência e o roteiro de verificação. `freitask.model`
   (`parse_block`/`serialize_block`) é a fonte única do formato: mudanças de
-  formato começam aí. `nvim/lua/util/freitask.lua` (fachada),
-  `nvim/lua/util/freitask_cli.lua` e `vault/.local/bin/freitask` são shims sem
-  lógica: **não** acrescente regra neles, senão passam a existir duas versões
-  da mesma regra.
+  formato começam aí. `lua/freitask/cli.lua` e o executável
+  `vault/.local/bin/freitask` (no dotfiles) são shims sem lógica: **não**
+  acrescente regra neles, senão passam a existir duas versões da mesma regra.
 - `links.retarget_links` é chamada por `task.archive_task`,
   `task.unarchive_task` e `edit.apply_edit` (rename). Qualquer caminho novo que mova ou renomeie um
   arquivo de task precisa chamá-la também — é o único ponto que conserta as
@@ -493,9 +493,9 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
   `scan_task` a abrir o arquivo de novo em outro lugar.
 - Validação:
   ```bash
-  nvim/tests/run.sh        # a suíte (funções puras: parser, links, kebab…)
-  cd nvim && luacheck lua/freitask lua/util lua/plugins/freitask.lua tests
-  shellcheck -x -P SCRIPTDIR vault/hooks/*.sh vault/.local/bin/*
+  tests/run.sh        # a suíte (funções puras: parser, links, kebab…)
+  luacheck lua tests
+  shellcheck -x tests/run.sh
   freitask doctor          # integridade dos DADOS (o resto checa o CÓDIGO)
   ./healthcheck.sh         # inclui o doctor via vault/hooks/check.sh
   ```

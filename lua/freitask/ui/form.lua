@@ -211,7 +211,10 @@ function M.edit_task_form(model, opts, on_confirm)
     end)
     local choices = {}
     for _, n in ipairs(keys) do
-      choices[#choices + 1] = { callout = status.status[n].callout, label = n .. " - " .. (status.status[n].title or "") }
+      choices[#choices + 1] = {
+        callout = status.status[n].callout,
+        label = n .. " - " .. (status.status[n].title or ""),
+      }
     end
     vim.ui.select(choices, {
       prompt = "Status:",

@@ -5,7 +5,7 @@
 -- vim.fn. O custo aqui é ~80 linhas; o custo lá é um passo de setup que
 -- ninguém lembra de fazer antes de mexer no parser.
 --
--- Uso: nvim/tests/run.sh [padrão]   (padrão filtra por nome de arquivo)
+-- Uso: tests/run.sh [padrão]   (padrão filtra por nome de arquivo)
 -- Saída: uma linha por falha + resumo. Código de saída 1 se algo falhou.
 
 local M = { passed = 0, failed = 0, failures = {} }
