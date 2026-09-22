@@ -27,26 +27,29 @@ config ──┬── fs ────┬── path ──┬── model ─�
 requerido por `cache` e `doctor`. Fora do desenho só para não redesenhá-lo —
 a regra de "só requer quem está à esquerda" vale para ele igual.
 
-| Módulo | Linhas | Responsabilidade | Não é responsabilidade dele |
-| --- | ---: | --- | --- |
-| `config` | 124 | Caminhos, tipos de arquivamento, `status.json` default, tabelas de callout. Sem lógica, sem estado. | Decidir qualquer coisa. |
-| `types` | 73 | Só `---@class`: `Model`, `Entry`, `Ctx`, `StatusMeta`, `Finding`, `TaskRef`. | Ter código. |
-| `fs` | 64 | Ler arquivo, recarregar/reapontar buffer, varrer o vault. | Saber o que é uma task. |
-| `status` | 87 | O vocabulário de status lido do `status.json`, e o mapa reverso callout → número. | Saber o status de uma *task* — isso é o callout dela. |
-| `path` | 146 | Tudo que se deriva de um **caminho**: projeto, id, arquivamento, `kebab`. | Ler arquivo. |
-| `md` | 337 | Linhas de markdown: blockquote, frontmatter, seção `##`, splice. | Saber o que é uma task. |
-| `model` | 162 | **Parser e serializer do bloco.** Puro: linhas entram, `freitask.Model` sai. | Tocar disco, notificar, conhecer buffer. |
-| `cache` | 195 | O índice em memória das tasks **ativas**, com o bloco de cada uma. | Enxergar arquivadas (elas são lidas do disco sob demanda). |
-| `links` | 140 | Reescrever os wikilinks do vault quando um arquivo muda de endereço. | Decidir que ele mudou. |
-| `meta` | 161 | O eixo de EXECUÇÃO no frontmatter (`dono`/`desde`/`dominio`) e a aritmética de data que o sustenta. | Saber a FASE — isso é o callout. |
-| `task` | 318 | Operações sobre o **arquivo** de uma task: criar, mover, localizar por id. | Regenerar o board — quem chama decide quando. |
-| `board` | 151 | O `CURRENT.md`. | Ser fonte de verdade de coisa alguma. |
-| `doctor` | 388 | Verificação, reparo e migração de formato. | Adivinhar (não inventa data nem resolve conflito). |
-| `ui/form` | 247 | O buffer flutuante: desenhar, completar, parsear de volta. | Saber o que fazer com o modelo. |
-| `edit` | 260 | Resolver **o que** editar e persistir o resultado. | Desenhar janela. |
-| `ui/picker` | 227 | O picker de dois níveis, no Snacks. | Ter regra de task nenhuma. |
-| `autocmd` | 90 | O que dispara sozinho: regen ao salvar, keymaps buffer-local. | — |
-| `init` | 88 | A API pública: os submódulos + a superfície plana de 38 nomes. | Ter lógica. |
+Tamanho de módulo não está aqui de propósito: contagem em contrato apodrece
+(ADR 0009 e 0014 no vault). Quando precisar, `wc -l lua/freitask/*.lua`.
+
+| Módulo | Responsabilidade | Não é responsabilidade dele |
+| --- | --- | --- |
+| `config` | Caminhos, tipos de arquivamento, `status.json` default, tabelas de callout. Sem lógica, sem estado. | Decidir qualquer coisa. |
+| `types` | Só `---@class`: `Model`, `Entry`, `Ctx`, `StatusMeta`, `Finding`, `TaskRef`. | Ter código. |
+| `fs` | Ler arquivo, recarregar/reapontar buffer, varrer o vault. | Saber o que é uma task. |
+| `status` | O vocabulário de status lido do `status.json`, e o mapa reverso callout → número. | Saber o status de uma *task* — isso é o callout dela. |
+| `path` | Tudo que se deriva de um **caminho**: projeto, id, arquivamento, `kebab`. | Ler arquivo. |
+| `md` | Linhas de markdown: blockquote, frontmatter, seção `##`, splice. | Saber o que é uma task. |
+| `model` | **Parser e serializer do bloco.** Puro: linhas entram, `freitask.Model` sai. | Tocar disco, notificar, conhecer buffer. |
+| `cache` | O índice em memória das tasks **ativas**, com o bloco de cada uma. | Enxergar arquivadas (elas são lidas do disco sob demanda). |
+| `links` | Reescrever os wikilinks do vault quando um arquivo muda de endereço. | Decidir que ele mudou. |
+| `meta` | O eixo de EXECUÇÃO no frontmatter (`dono`/`desde`/`dominio`) e a aritmética de data que o sustenta. | Saber a FASE — isso é o callout. |
+| `task` | Operações sobre o **arquivo** de uma task: criar, mover, localizar por id. | Regenerar o board — quem chama decide quando. |
+| `board` | O `CURRENT.md`. | Ser fonte de verdade de coisa alguma. |
+| `doctor` | Verificação, reparo e migração de formato. | Adivinhar (não inventa data nem resolve conflito). |
+| `ui/form` | O buffer flutuante: desenhar, completar, parsear de volta. | Saber o que fazer com o modelo. |
+| `edit` | Resolver **o que** editar e persistir o resultado. | Desenhar janela. |
+| `ui/picker` | O picker de dois níveis, no Snacks. | Ter regra de task nenhuma. |
+| `autocmd` | O que dispara sozinho: regen ao salvar, keymaps buffer-local. | — |
+| `init` | A API pública: os submódulos + a superfície plana (as atribuições `M.<nome> =` no fim do arquivo). | Ter lógica. |
 
 ---
 

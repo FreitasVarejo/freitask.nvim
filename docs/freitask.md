@@ -97,6 +97,15 @@ paralelo: quem implementa congela o contrato, e refino que chegue no meio vira
 **task nova**, nunca edição da que está em voo. Refino de A e implementação de
 B convivem livres se os `dominio` não se cruzam.
 
+**A escrita é manual, de propósito.** Não há `freitask claim` nem `release`, e
+não vai haver: quem pega uma task escreve os três campos no frontmatter à mão, e
+quem larga os apaga. O que é automático é a **vigilância** — o `doctor` reporta
+`garra-fantasma`, `colisao-de-dominio` e `dono-em-arquivada`, e o `--fix` só sabe
+remover campo de task arquivada; garra fantasma ele nunca repara sozinho, porque
+decidir que um dono desistiu não é dedução. A decisão de não crescer a CLI aqui
+está na ADR 0016 do vault, e o efeito colateral bom é que o agente sem shell
+(claude.ai pelo MCP) participa do eixo exatamente como o agente com shell.
+
 ### Status 0 — callout sem tipo reconhecido
 
 Se a linha 1 tem um `[!tipo]` que não existe em `status.json` (typo, tipo
