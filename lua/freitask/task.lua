@@ -80,10 +80,8 @@ end
 ---vale a pena.
 ---@param project string
 ---@param model freitask.Model o id vem em model.id
----@param opts? { create_project?: boolean }
 ---@return string|nil path, string|nil err
-function M.create_task(project, model, opts)
-  opts = opts or {}
+function M.create_task(project, model)
   status.ensure()
   local id = vim.trim(model.id or "")
   local ok, err = M.validate_new(project, id)
@@ -91,20 +89,13 @@ function M.create_task(project, model, opts)
     return nil, err
   end
 
-  -- Um projeto é um diretório sob projects/ que tem tasks/ dentro — a presença
-  -- da pasta é o registro, não uma lista. Daí o guarda: sem ele, `freitask new
-  -- dotfile ...` criaria um projeto novo a partir de um typo, e um projeto
-  -- fantasma com uma task dentro é mais caro de achar do que de evitar.
+  -- Projeto que não existe é CRIADO, sem flag. Um projeto é um diretório sob
+  -- projects/ com tasks/ dentro — a presença da pasta é o registro, e exigir
+  -- confirmação para criar a pasta seria inventar um cadastro de projetos que
+  -- o layout não tem. O risco do typo (`freitask new dotfile ...`) existe, mas
+  -- o estrago é uma pasta vazia ao lado, visível na primeira listagem e barata
+  -- de desfazer — enquanto a flag seria atrito em todo projeto novo legítimo.
   local dir = path_.task_file(project, id):match("^(.*)/[^/]+$")
-  if vim.fn.isdirectory(dir) == 0 and not opts.create_project then
-    return nil,
-      string.format(
-        "projeto %q não existe (%s). Projetos: %s\n  -> criar assim mesmo: --new-project",
-        project,
-        dir,
-        table.concat(cache.list_projects(), ", ")
-      )
-  end
 
   -- Arquivada conta como existente: o id é o nome da branch, e ressuscitar um
   -- id arquivado em silêncio daria duas tasks com a mesma branch.
@@ -152,6 +143,35 @@ function M.file_replace_callout(path, new_block)
   vim.fn.writefile(out, path)
 end
 
+---A fase depois de (des)arquivar. Puro.
+---
+---`archive <id> done` movia o arquivo e deixava o callout como estava, e o
+---`doctor` logo em seguida acusava `callout-vs-pasta` na task que a própria
+---CLI acabara de arquivar — a ferramenta produzindo o estado que ela mesma
+---reclama. Agora a fase acompanha a pasta.
+---
+---Só `done` tem regra, nos dois sentidos, porque só ele tem callout: `dropped`
+---e `failed` são destinos de arquivamento sem fase correspondente (abandonar
+---não é uma fase do trabalho), e o `doctor` também só checa `archived/done/`.
+---Ao desarquivar, `done` vira `check` (Pronta): é a fase ativa mais próxima, e
+---deixar `done` numa task ativa poria "Arquivada" no board de uma task que não
+---está — exatamente o tipo de mentira que arquivar-é-o-caminho existe para
+---evitar.
+---@param status_num integer|nil
+---@param dest string|nil tipo de archived, ou nil para ativa
+---@return integer|nil
+function M.status_after_move(status_num, dest)
+  status.ensure()
+  local rev = status.by_callout()
+  if dest == "done" then
+    return rev["done"] or status_num
+  end
+  if not dest and status_num == rev["done"] then
+    return rev["check"] or status_num
+  end
+  return status_num
+end
+
 ---Move o arquivo de uma task entre ativo e arquivado — o motor por trás de
 ---M.archive_task e M.unarchive_task, que são só nomes para os dois sentidos.
 ---Reescreve o bloco (o wikilink da linha 2 precisa acompanhar a pasta),
@@ -194,8 +214,9 @@ local function move_task(path, dest)
     return nil
   end
 
-  -- O link da linha 2 é path-qualified, então precisa seguir a pasta nova; e o
-  -- rodapé ganha a entrada de histórico. Um write só para as duas coisas.
+  -- O link da linha 2 é path-qualified, então precisa seguir a pasta nova; o
+  -- callout acompanha a pasta nos dois sentidos; e o rodapé ganha a entrada de
+  -- histórico. Um write só para as três coisas.
   local lines = fs.read_lines(new_path)
   local s, e, block = md.first_block(lines)
   if s then
@@ -204,6 +225,7 @@ local function move_task(path, dest)
       model.id = id
     end
     model.project, model.archived = project, dest
+    model.status_num = M.status_after_move(model.status_num, dest)
     lines = md.splice(lines, s, e, model_.serialize_block(model))
   end
   md.append_history(lines, dest)

@@ -246,7 +246,11 @@ save seria fácil de disparar sem querer. Use `<leader>oa` / `<C-r>`.
 
 ### Arquivar / desarquivar / deletar
 
-**Arquivar move o arquivo** para `projects/<projeto>/tasks/archived/<tipo>/<id>.md`. O
+**Arquivar move o arquivo** para `projects/<projeto>/tasks/archived/<tipo>/<id>.md`,
+e **a fase acompanha a pasta**: arquivar como `done` grava o callout `done`, e
+desarquivar uma task `done` a devolve como `check` (Pronta). Só `done` tem essa
+regra, porque só ele tem callout — `dropped` e `failed` são destinos sem fase
+correspondente. O
 **caminho é a única fonte de verdade** do arquivamento — não existe flag no
 frontmatter, do mesmo jeito que o status vem só do callout. Como `archived/`
 acrescenta dois níveis, o glob do cache (`tasks/*/*.md`) já as ignora sem
@@ -462,7 +466,7 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 
 1. **Criar tarefa**: `freitask new <projeto> <id> "<título>" [--desc "<estado>"]`.
    É o caminho único onde há shell — ele valida (id kebab-case, projeto não
-   reservado, id livre inclusive em `archived/`), serializa o bloco pelo mesmo
+   reservado, id livre inclusive em `archived/`; projeto novo é criado), serializa o bloco pelo mesmo
    código que o Neovim usa e **regenera o `CURRENT.md`**. Montar o markdown na
    mão deixa o painel para trás, que era o sintoma antigo: task criada por
    arquivo não aparecia no board até alguém salvar outra task no Neovim.

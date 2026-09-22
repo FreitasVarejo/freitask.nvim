@@ -635,3 +635,33 @@ describe("template", function()
     eq(1, back.status_num)
   end)
 end)
+
+describe("status_after_move", function()
+  local DONE, CHECK, TODO = 7, 6, 1
+
+  it("arquivar como done grava a fase done", function()
+    -- Regressão: `archive <id> done` movia o arquivo e deixava o callout, e o
+    -- doctor acusava callout-vs-pasta logo depois — a CLI produzindo o estado
+    -- que ela mesma reclama.
+    eq(DONE, task.status_after_move(TODO, "done"))
+    eq(DONE, task.status_after_move(CHECK, "done"))
+  end)
+
+  it("dropped e failed não mexem na fase", function()
+    -- Não têm callout: abandonar não é uma fase do trabalho, e o doctor só
+    -- cobra coerência em archived/done/.
+    eq(TODO, task.status_after_move(TODO, "dropped"))
+    eq(TODO, task.status_after_move(TODO, "failed"))
+    eq(DONE, task.status_after_move(DONE, "dropped"))
+  end)
+
+  it("desarquivar devolve done como check", function()
+    -- `done` numa task ativa poria "Arquivada" no board de algo que não está.
+    eq(CHECK, task.status_after_move(DONE, nil))
+  end)
+
+  it("desarquivar não mexe em fase que não seja done", function()
+    eq(TODO, task.status_after_move(TODO, nil))
+    eq(CHECK, task.status_after_move(CHECK, nil))
+  end)
+end)

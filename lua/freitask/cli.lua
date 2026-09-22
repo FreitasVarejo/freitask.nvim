@@ -90,13 +90,14 @@ freitask — gestão de tasks do vault do Obsidian
   freitask rename    <id|caminho> <novo-id>
       Movem/renomeiam mantendo os invariantes: wikilink da linha 2, `id:` do
       frontmatter, referências do vault inteiro e o log em `## Histórico`.
+      `archive <id> done` também grava o callout `done`, e desarquivar uma
+      task `done` a devolve como `check` (Pronta).
 
-  freitask new <projeto> <id> "<título>" [--desc "<estado>"] [--new-project]
+  freitask new <projeto> <id> "<título>" [--desc "<estado>"]
       Cria uma task em projects/<projeto>/tasks/<id>.md e regenera o painel.
       O <id> é o nome do arquivo E o da branch git: precisa vir em kebab-case,
-      e não é corrigido em silêncio. Recusa projeto reservado, id já existente
-      (inclusive arquivado) e projeto que não existe — este último só com
-      --new-project, para que um typo não vire projeto novo.
+      e não é corrigido em silêncio. Recusa projeto reservado e id já existente
+      (inclusive arquivado). Projeto que ainda não existe é criado.
 
   freitask rebuild
       Regenera o CURRENT.md sem tocar em task nenhuma. É o que falta depois que
@@ -233,7 +234,7 @@ if cmd == "new" then
     id = id,
     desc = type(flags.desc) == "string" and flags.desc or "",
     extras = {},
-  }, { create_project = flags["new-project"] == true })
+  })
   if not path then
     die(err, 1)
   end
