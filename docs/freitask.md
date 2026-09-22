@@ -7,24 +7,28 @@ as convenções.
 Implementação: `lua/freitask/` (o módulo, dividido por responsabilidade), neste
 repositório; o dotfiles só carrega o plugin via spec do lazy.nvim
 (`nvim/lua/plugins/freitask.lua`). Opera **exclusivamente** sob
-`~/ObsidianVault/tasks/`. Para o mapa dos módulos e como testar, ver
+`~/ObsidianVault/projects/<projeto>/tasks/`. Para o mapa dos módulos e como
+testar, ver
 [`freitask-internals.md`](freitask-internals.md).
 
 ---
 
 ## Modelo mental
 
-- **Um arquivo por tarefa**: `~/ObsidianVault/tasks/<projeto>/<id>.md` — ou
-  `~/ObsidianVault/tasks/<projeto>/archived/<tipo>/<id>.md` se arquivada.
-- **Projeto = subdiretório** de `tasks/` (id kebab-case, ex.: `bjju-web`).
+- **Um arquivo por tarefa**: `~/ObsidianVault/projects/<projeto>/tasks/<id>.md`
+  — ou `~/ObsidianVault/projects/<projeto>/tasks/archived/<tipo>/<id>.md` se
+  arquivada.
+- **Projeto = subdiretório de `projects/` que tem um `tasks/` dentro** (id
+  kebab-case, ex.: `bjju-web`). A presença da pasta é o registro: não há lista
+  de projetos em lugar nenhum. As tasks moram junto da spec e das `decisoes/`
+  do mesmo projeto, e não numa árvore própria longe do porquê que as justifica.
 - **`id` da tarefa = nome do arquivo = nome da branch git.** Não existe campo
   "branch" separado — os dois são a mesma coisa (sem prefixo `feat/`).
 - **`CURRENT.md`** é o painel diário, **gerado automaticamente** — não edite as
   seções de projeto à mão (só a seção `## Notas Avulsas` é preservada).
-- **`status.json`** define os status (número → callout/título/ícone/cor).
-  **`tasks/STATUS.md`** é uma folha de consulta gerada à mão (não é uma task)
-  com todos os status na ordem do board, cada um como um callout renderizado —
-  útil pra lembrar rápido a aparência/ordem sem abrir `status.json`.
+- **`status.json`** define os status (número → callout/título/ícone/cor). Mora
+  em `.freitask/`, que é configuração e não conteúdo — pasta oculta para o
+  Obsidian não a listar junto das notas.
 
 Diretórios **reservados** (não são projetos): `daily/` (arquivo diário) e
 `templates/`. Dentro de um projeto, `archived/` também não é um projeto — é
@@ -38,7 +42,7 @@ O topo de cada arquivo de tarefa é um *callout* do Obsidian de 2 a N linhas:
 
 ```markdown
 > [!todo] Título da task
-> [[tasks/bjju-web/id-da-task|id-da-task]]
+> [[projects/bjju-web/tasks/id-da-task|id-da-task]]
 > _Aguardando aprovação do Fábio_
 > impedimento: falta acesso à VPN
 ```
@@ -46,7 +50,7 @@ O topo de cada arquivo de tarefa é um *callout* do Obsidian de 2 a N linhas:
 | Linha | Conteúdo | Papel |
 | ----- | -------- | ----- |
 | 1 | `> [!<callout>] <título>` | O **tipo do callout** (`todo`, `example`, …) dá ícone/cor **e é a ÚNICA fonte de verdade do status** — não há número redundante em nenhum outro lugar. O título vai em texto simples aqui (sem negrito — o `[!callout]` já destaca a linha). Se o tipo não existir em `status.json`, a task cai em **status 0** (ver seção própria abaixo) — continua editável, só perde ícone/cor. |
-| 2 | `> [[tasks/<projeto>/<id>\|<id>]]` | Link do Obsidian para a própria nota, com caminho relativo ao vault (evita ambiguidade entre projetos com o mesmo id) e o `id` como alias; o `id` também é o nome da branch. |
+| 2 | `> [[projects/<projeto>/tasks/<id>\|<id>]]` | Link do Obsidian para a própria nota, com caminho relativo ao vault (evita ambiguidade entre projetos com o mesmo id) e o `id` como alias; o `id` também é o nome da branch. |
 | 3 (opcional) | `> _descrição do estado_` | **Só existe se envolta em itálico** (`_..._`) — é o que identifica a linha como descrição, não a posição. Texto curto e independente do status em si (ex.: "aguardando revisão de X"), digitado a cada edição. **Omitida por completo se vazia** — nunca grave um `>` vazio no meio do bloco: isso faria a nota seguinte ser lida como descrição no próximo parse. |
 | 4+ | `> qualquer texto` | Notas/impedimentos, texto livre. **Preservado na íntegra** ao editar. Uma linha em itálico aqui (depois de já haver alguma nota) continua sendo nota, não descrição — o marcador só conta na primeira linha livre do bloco. |
 
@@ -111,7 +115,7 @@ Um callout do Obsidian que não é fase (um `[!note]` ou `[!quote]` no corpo da
 nota) **não** cai aqui: o status vem só do primeiro bloco, e o resto do arquivo
 o freitask nem olha.
 
-### Status (`~/ObsidianVault/tasks/status.json`)
+### Status (`~/ObsidianVault/.freitask/status.json`)
 
 Cobre todos os tipos de callout suportados pelo
 [render-markdown.nvim](https://github.com/MeanderingProgrammer/render-markdown.nvim/wiki/Callouts),
@@ -170,7 +174,7 @@ weekday: Monday
 ## bjju-web
 
 > [!todo] Criar jiujitsu unicamp
-> [[tasks/bjju-web/criar-jiujitsu-unicamp|criar-jiujitsu-unicamp]]
+> [[projects/bjju-web/tasks/criar-jiujitsu-unicamp|criar-jiujitsu-unicamp]]
 > _Ajustando formulário de inscrição_
 ```
 
@@ -179,7 +183,7 @@ weekday: Monday
   aparecem sozinhas. Se o `CURRENT.md` estiver com edições não salvas, a regen é
   pulada (sem sobrescrever seu trabalho).
 - **Arquivo diário**: ao regenerar num dia novo, o painel do dia anterior é
-  snapshotado em `tasks/daily/YYYY-MM-DD.md` antes de ser recarimbado com a data
+  snapshotado em `daily/YYYY-MM-DD.md` antes de ser recarimbado com a data
   de hoje.
 - **`## Notas Avulsas`** é a única seção editável à mão que sobrevive à regen.
 
@@ -242,7 +246,7 @@ save seria fácil de disparar sem querer. Use `<leader>oa` / `<C-r>`.
 
 ### Arquivar / desarquivar / deletar
 
-**Arquivar move o arquivo** para `tasks/<projeto>/archived/<tipo>/<id>.md`. O
+**Arquivar move o arquivo** para `projects/<projeto>/tasks/archived/<tipo>/<id>.md`. O
 **caminho é a única fonte de verdade** do arquivamento — não existe flag no
 frontmatter, do mesmo jeito que o status vem só do callout. Como `archived/`
 acrescenta dois níveis, o glob do cache (`tasks/*/*.md`) já as ignora sem
@@ -316,14 +320,14 @@ alias, exceto quando ele **era** o id antigo (aí acompanha o rename).
 O Obsidian resolve `[[foo]]` pelo **basename**, em qualquer pasta do vault.
 Daí a assimetria — e é por isso que arquivar sai barato:
 
-| operação | `[[foo]]` | `[[tasks/p/foo\|foo]]` | frontmatter `id:` |
+| operação | `[[foo]]` | `[[projects/p/tasks/foo\|foo]]` | frontmatter `id:` |
 | --- | --- | --- | --- |
 | arquivar / desarquivar | intacto | reescrito | intacto |
 | renomear id | reescrito | reescrito | reescrito |
 
 Ficam **de fora** da varredura, de propósito:
 
-- `tasks/daily/*.md` — são snapshots de como o board estava naquele dia;
+- `daily/*.md` — são snapshots de como o board estava naquele dia;
   reescrevê-los falsificaria o histórico.
 - `tasks/CURRENT.md` — é regenerado do zero; basta o `rebuild_current` seguinte.
 
@@ -456,18 +460,26 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 > dados — é a pasta para a qual um agente externo é apontado. Esta seção é a
 > versão longa.
 
-1. **Criar tarefa**: prefira `require("freitask").template(model)` a montar
-   o markdown na mão — `model` é `{ status_num, raw_callout, title, id, desc,
-   extras, project }`, os mesmos campos que `parse_block` devolve. `id` deve
-   ser kebab-case (`M.template` não faz isso por você; use `kebab()` interno ou
-   deixe o form derivar do título). O projeto (diretório) precisa existir.
+1. **Criar tarefa**: `freitask new <projeto> <id> "<título>" [--desc "<estado>"]`.
+   É o caminho único onde há shell — ele valida (id kebab-case, projeto não
+   reservado, id livre inclusive em `archived/`), serializa o bloco pelo mesmo
+   código que o Neovim usa e **regenera o `CURRENT.md`**. Montar o markdown na
+   mão deixa o painel para trás, que era o sintoma antigo: task criada por
+   arquivo não aparecia no board até alguém salvar outra task no Neovim.
+   Dentro do Neovim o caminho é o form (`<C-t>` no picker), que chama o mesmo
+   motor. De dentro do Lua, `require("freitask").create_task(project, model)` —
+   `model` é `{ status_num, raw_callout, title, id, desc, extras }`, os mesmos
+   campos que `parse_block` devolve.
+   Sem shell (o claude.ai pelo conector MCP), escrever o arquivo à mão segue
+   sendo a única opção: siga o formato do bloco à risca e peça ao dono um
+   `freitask rebuild` — é para isso que esse comando existe.
 2. **Status é derivado EXCLUSIVAMENTE do tipo do callout da linha 1** — para
    mudar o status, troque o callout (`[!todo]`→`[!success]`). Se o tipo não
    existir em `status.json`, a task vira status 0 (ver seção "Status 0"
    acima) em vez de falhar — mas isso normalmente indica um typo, não é o
    caminho recomendado para setar status de propósito.
 3. **`id` == nome da branch** (sem `feat/`). O link da linha 2 é
-   `[[tasks/<projeto>/<id>|<id>]]` (caminho vault-relative como alvo, `id` como
+   `[[projects/<projeto>/tasks/<id>|<id>]]` (caminho vault-relative como alvo, `id` como
    alias) — não invente uma linha `Branch:` separada, e não use `[[id]]` sem
    caminho para tarefas novas (evita colisão entre projetos com o mesmo id).
 4. **A descrição do estado (linha 3) só existe se estiver em itálico**

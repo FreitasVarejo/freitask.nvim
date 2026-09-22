@@ -41,16 +41,35 @@ local function die(msg, code)
 end
 
 ---Extrai as flags `--x` de args, devolvendo os posicionais e um set de flags.
-local function parse_flags(from)
+---
+---`value_flags` lista as que CONSOMEM o argumento seguinte (`--desc "texto"`);
+---o resto é booleana. A lista é explícita, e não "toda flag consome o
+---próximo", porque `freitask list --json` engoliria um posicional em silêncio.
+---`--x=valor` funciona para qualquer uma, e é o que um script deve preferir.
+---@param from integer
+---@param value_flags? table<string, boolean>
+---@return string[] pos, table<string, string|boolean> flags
+local function parse_flags(from, value_flags)
+  value_flags = value_flags or {}
   local pos, flags = {}, {}
-  for i = from, #args do
+  local i = from
+  while i <= #args do
     local a = args[i]
-    local f = a:match("^%-%-(.+)$")
-    if f then
-      flags[f] = true
+    local k, v = a:match("^%-%-([^=]+)=(.*)$")
+    if k then
+      flags[k] = v
     else
-      pos[#pos + 1] = a
+      local f = a:match("^%-%-(.+)$")
+      if f and value_flags[f] then
+        i = i + 1
+        flags[f] = args[i] or die("falta o valor de --" .. f)
+      elseif f then
+        flags[f] = true
+      else
+        pos[#pos + 1] = a
+      end
     end
+    i = i + 1
   end
   return pos, flags
 end
@@ -72,11 +91,23 @@ freitask — gestão de tasks do vault do Obsidian
       Movem/renomeiam mantendo os invariantes: wikilink da linha 2, `id:` do
       frontmatter, referências do vault inteiro e o log em `## Histórico`.
 
+  freitask new <projeto> <id> "<título>" [--desc "<estado>"] [--new-project]
+      Cria uma task em projects/<projeto>/tasks/<id>.md e regenera o painel.
+      O <id> é o nome do arquivo E o da branch git: precisa vir em kebab-case,
+      e não é corrigido em silêncio. Recusa projeto reservado, id já existente
+      (inclusive arquivado) e projeto que não existe — este último só com
+      --new-project, para que um typo não vire projeto novo.
+
+  freitask rebuild
+      Regenera o CURRENT.md sem tocar em task nenhuma. É o que falta depois que
+      um agente sem shell (o claude.ai pelo MCP) criou o arquivo na mão.
+
   freitask list [--json] [--archived]
       Lista as tasks.
 
 NUNCA mova nem renomeie um arquivo de task com `mv`: as referências do vault
-ficam penduradas e o histórico não é escrito. Use os comandos acima.
+ficam penduradas e o histórico não é escrito. E prefira `new` a escrever o
+markdown na mão: o bloco é serializado pelo mesmo código que o Neovim usa.
 ]]
 
 --- doctor --------------------------------------------------------------------
@@ -181,6 +212,45 @@ if cmd == "rename" then
   end
   T.rebuild_current({ quiet = true })
   say(expected)
+  quit(0)
+end
+
+--- new ----------------------------------------------------------------------
+if cmd == "new" then
+  local pos, flags = parse_flags(2, { desc = true })
+  local project = pos[1] or die("falta o projeto")
+  local id = pos[2] or die("falta o id")
+  local title = pos[3] or die("falta o título")
+
+  T.ensure_root()
+  T.load_status()
+  T.build_cache() -- create_task consulta o cache para listar projetos no erro
+
+  local path, err = T.create_task(project, {
+    status_num = 1, -- toda task nasce em `todo`; a fase é escolha de quem trabalha
+    raw_callout = "",
+    title = title,
+    id = id,
+    desc = type(flags.desc) == "string" and flags.desc or "",
+    extras = {},
+  }, { create_project = flags["new-project"] == true })
+  if not path then
+    die(err, 1)
+  end
+
+  -- Aqui SIM regenera: era exatamente isto que faltava quando a task nascia de
+  -- um arquivo escrito à mão, e o painel ficava dias para trás.
+  T.rebuild_current({ quiet = true })
+  say(path)
+  quit(0)
+end
+
+--- rebuild ------------------------------------------------------------------
+if cmd == "rebuild" then
+  parse_flags(2)
+  T.ensure_root()
+  T.rebuild_current({ quiet = true })
+  say(T.config.current)
   quit(0)
 end
 

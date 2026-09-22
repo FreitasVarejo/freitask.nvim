@@ -20,6 +20,7 @@ local path = require("freitask.path")
 local status = require("freitask.status")
 local links = require("freitask.links")
 local meta = require("freitask.meta")
+local task = require("freitask.task")
 
 status.status = vim.json.decode(C.DEFAULT_STATUS_JSON)
 
@@ -565,5 +566,72 @@ describe("meta", function()
 
   it("identifica o agente como <maquina>/<ferramenta>", function()
     truthy(meta.whoami("claude-code"):match("^[^/]+/claude%-code$"))
+  end)
+end)
+
+describe("validate_new", function()
+  it("recusa projeto reservado", function()
+    local ok, err = task.validate_new("daily", "x")
+    falsy(ok)
+    truthy(err:match("reservado"))
+    falsy((task.validate_new("templates", "x")))
+  end)
+
+  it("recusa projeto vazio ou com barra", function()
+    falsy((task.validate_new("", "x")))
+    falsy((task.validate_new("a/b", "x")))
+  end)
+
+  it("recusa id que não é kebab, sem corrigir em silêncio", function()
+    -- O id é o nome do ARQUIVO e o da BRANCH git. Gravar "minha-task" quando
+    -- pediram "Minha Task" faria a branch nascer com outro nome que o arquivo.
+    local ok, err = task.validate_new("dotfiles", "meu id")
+    falsy(ok)
+    truthy(err:match("kebab"))
+    truthy(err:match("meu%-id"), "a mensagem sugere o id corrigido")
+    falsy((task.validate_new("dotfiles", "Maiúscula")))
+    falsy((task.validate_new("dotfiles", "")))
+  end)
+
+  it("aceita kebab com dígito e acento já dobrado", function()
+    truthy((task.validate_new("dotfiles", "vault-lint-2")))
+    truthy((task.validate_new("dotfiles", path.kebab("Configuração da API"))))
+  end)
+end)
+
+describe("template", function()
+  it("é o bloco e uma linha em branco, sem estrutura fixa", function()
+    -- Regressão: emitia também `## Notas Soltas` e `### [<projeto>]`, eco do
+    -- formato do CURRENT.md vazado para dentro da task. Nenhuma task do vault
+    -- tem essas seções.
+    local out = task.template({
+      status_num = 1,
+      title = "Exemplo",
+      id = "exemplo",
+      desc = "",
+      extras = {},
+      project = "dotfiles",
+    })
+    eq({
+      "> [!todo] Exemplo",
+      "> [[projects/dotfiles/tasks/exemplo|exemplo]]",
+      "",
+    }, out)
+  end)
+
+  it("volta pelo parser com o mesmo modelo", function()
+    local out = task.template({
+      status_num = 1,
+      title = "Exemplo",
+      id = "exemplo",
+      desc = "estado",
+      extras = {},
+      project = "dotfiles",
+    })
+    local back = model.parse_block({ out[1], out[2], out[3] })
+    eq("Exemplo", back.title)
+    eq("exemplo", back.id)
+    eq("estado", back.desc)
+    eq(1, back.status_num)
   end)
 end)

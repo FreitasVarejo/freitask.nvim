@@ -243,15 +243,15 @@ function M.create_task_form(project)
   status.load_status()
   local seed = { status_num = 1, title = "", id = "", desc = "", extras = {}, project = project }
   form.edit_task_form(seed, { title = "Nova task em " .. project }, function(nm)
-    local path = path_.task_file(project, nm.id)
-    if vim.fn.filereadable(path) == 1 then
-      vim.notify("freitask: task já existe: " .. nm.id, vim.log.levels.WARN)
+    -- A escrita mora em task.create_task, não aqui: era este bloco que fazia a
+    -- criação existir só para quem tem janela do Neovim, e por isso todo agente
+    -- montava o markdown na mão. Agora form e CLI compartilham o motor, e as
+    -- validações (id kebab, projeto reservado, id já arquivado) valem nos dois.
+    local path, err = task.create_task(project, nm)
+    if not path then
+      vim.notify("freitask: " .. err, vim.log.levels.WARN)
       return
     end
-    nm.project = project
-    local out = task.template(nm)
-    vim.fn.writefile(out, path)
-    cache.update_cache_entry(path)
     board.rebuild_current({ quiet = true })
     vim.cmd.edit(vim.fn.fnameescape(path))
   end)

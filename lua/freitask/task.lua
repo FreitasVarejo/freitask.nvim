@@ -16,20 +16,120 @@ local status = require("freitask.status")
 
 local M = {}
 
----Template markdown para uma nova task, a partir do modelo vindo do form.
+---Template markdown para uma nova task: o bloco, e nada mais.
+---
+---Ele emitia também `## Notas Soltas` e `### [<projeto>]` com um checkbox
+---vazio. Era eco do formato do CURRENT.md (que tem `## Notas Avulsas` e uma
+---seção `## <projeto>`) vazado para dentro da task — e nenhuma das tasks do
+---vault tem essas seções, porque quem cria pelo form apaga as duas antes de
+---escrever. Estrutura fixa que todo mundo apaga não é template, é atrito.
+---
+---Abaixo do bloco, o arquivo é texto livre. É o que `parse_block` espera e o
+---que toda task existente tem.
 ---@param model freitask.Model
 ---@return string[]
 function M.template(model)
   status.ensure()
-  local project = model.project
   local out = vim.deepcopy(model_.serialize_block(model))
   out[#out + 1] = ""
-  out[#out + 1] = "## Notas Soltas"
-  out[#out + 1] = "- "
-  out[#out + 1] = ""
-  out[#out + 1] = "### [" .. project .. "]"
-  out[#out + 1] = "- [ ] "
   return out
+end
+
+---Valida projeto e id de uma task nova, sem tocar no disco — a parte com as
+---regras, separada para poder ser testada sem vault.
+---
+---Não valida se o arquivo já existe: isso é disco, e mora em M.create_task.
+---@param project string
+---@param id string
+---@return boolean ok, string|nil err
+function M.validate_new(project, id)
+  project = vim.trim(project or "")
+  id = vim.trim(id or "")
+
+  if project == "" then
+    return false, "falta o projeto"
+  end
+  if project:find("/") then
+    return false, "projeto não pode conter '/': " .. project
+  end
+  if C.RESERVED[project] then
+    -- `daily` e `templates` não são projetos; ver o comentário em config.
+    return false, string.format("%q é um diretório reservado, não um projeto", project)
+  end
+  if id == "" then
+    return false, "falta o id"
+  end
+  -- kebab(id) == id em vez de "corrija para mim": o id é o nome do ARQUIVO e o
+  -- da BRANCH git. Aceitar "Minha Task" e gravar "minha-task" em silêncio faria
+  -- o agente criar a branch com o nome que ele pediu, não com o que existe.
+  local k = path_.kebab(id)
+  if k ~= id then
+    return false, string.format("id precisa ser kebab-case: %q (seria %q)", id, k)
+  end
+  return true
+end
+
+---Cria o arquivo de uma task nova e devolve o caminho.
+---
+---MOTOR ÚNICO de criação: o form e a CLI passam por aqui. Antes a escrita
+---morava dentro de `edit.create_task_form`, alcançável só por quem tivesse um
+---Neovim com janela — e era justamente por isso que todo agente montava o
+---markdown na mão.
+---
+---Como o resto de `task`, NÃO regenera o CURRENT.md: quem chama é que sabe se
+---vale a pena.
+---@param project string
+---@param model freitask.Model o id vem em model.id
+---@param opts? { create_project?: boolean }
+---@return string|nil path, string|nil err
+function M.create_task(project, model, opts)
+  opts = opts or {}
+  status.ensure()
+  local id = vim.trim(model.id or "")
+  local ok, err = M.validate_new(project, id)
+  if not ok then
+    return nil, err
+  end
+
+  -- Um projeto é um diretório sob projects/ que tem tasks/ dentro — a presença
+  -- da pasta é o registro, não uma lista. Daí o guarda: sem ele, `freitask new
+  -- dotfile ...` criaria um projeto novo a partir de um typo, e um projeto
+  -- fantasma com uma task dentro é mais caro de achar do que de evitar.
+  local dir = path_.task_file(project, id):match("^(.*)/[^/]+$")
+  if vim.fn.isdirectory(dir) == 0 and not opts.create_project then
+    return nil,
+      string.format(
+        "projeto %q não existe (%s). Projetos: %s\n  -> criar assim mesmo: --new-project",
+        project,
+        dir,
+        table.concat(cache.list_projects(), ", ")
+      )
+  end
+
+  -- Arquivada conta como existente: o id é o nome da branch, e ressuscitar um
+  -- id arquivado em silêncio daria duas tasks com a mesma branch.
+  local active = path_.task_file(project, id)
+  local taken = { active }
+  for _, t in ipairs(C.ARCHIVED_TYPES) do
+    taken[#taken + 1] = path_.task_file(project, id, t)
+  end
+  for _, candidate in ipairs(taken) do
+    if vim.fn.filereadable(candidate) == 1 then
+      return nil, "já existe uma task com esse id: " .. candidate
+    end
+  end
+
+  if vim.fn.isdirectory(dir) == 0 and vim.fn.mkdir(dir, "p") == 0 then
+    return nil, "não consegui criar o diretório " .. dir
+  end
+
+  local nm = vim.deepcopy(model)
+  nm.id, nm.project, nm.archived = id, project, nil
+  if vim.fn.writefile(M.template(nm), active) ~= 0 then
+    return nil, "não consegui escrever " .. active
+  end
+  cache.update_cache_entry(active)
+  return active
 end
 
 ---Reescreve o bloco de callout de um arquivo no disco (substituindo o primeiro

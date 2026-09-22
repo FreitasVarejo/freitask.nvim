@@ -15,7 +15,7 @@ Com [lazy.nvim](https://github.com/folke/lazy.nvim), a partir de um clone local:
 
 ```lua
 {
-  dir = vim.fn.expand("~/projects/freitask.nvim"),
+  dir = vim.fn.expand("~/dev/freitask.nvim"),
   dependencies = { "folke/snacks.nvim" },
   keys = {
     { "<leader>ob", function() require("freitask").open_projects() end, desc = "Freitask" },
@@ -26,7 +26,7 @@ Com [lazy.nvim](https://github.com/folke/lazy.nvim), a partir de um clone local:
 }
 ```
 
-O módulo assume o vault em `~/ObsidianVault/tasks/` (ver `lua/freitask/config.lua`).
+O módulo assume o vault em `~/ObsidianVault/projects/<projeto>/tasks/` (ver `lua/freitask/config.lua`).
 
 ## CLI
 

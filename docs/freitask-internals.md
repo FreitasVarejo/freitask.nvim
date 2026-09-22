@@ -23,25 +23,30 @@ config ──┬── fs ────┬── path ──┬── model ─�
                                                                            └────────────────────┴── autocmd
 ```
 
+`meta` entrou depois e ocupa a mesma faixa de `model` e `links`: requer `md`, é
+requerido por `cache` e `doctor`. Fora do desenho só para não redesenhá-lo —
+a regra de "só requer quem está à esquerda" vale para ele igual.
+
 | Módulo | Linhas | Responsabilidade | Não é responsabilidade dele |
 | --- | ---: | --- | --- |
-| `config` | 99 | Caminhos, tipos de arquivamento, `status.json` default, tabelas de callout. Sem lógica, sem estado. | Decidir qualquer coisa. |
-| `types` | 64 | Só `---@class`: `Model`, `Entry`, `Ctx`, `StatusMeta`, `Finding`, `TaskRef`. | Ter código. |
+| `config` | 124 | Caminhos, tipos de arquivamento, `status.json` default, tabelas de callout. Sem lógica, sem estado. | Decidir qualquer coisa. |
+| `types` | 73 | Só `---@class`: `Model`, `Entry`, `Ctx`, `StatusMeta`, `Finding`, `TaskRef`. | Ter código. |
 | `fs` | 64 | Ler arquivo, recarregar/reapontar buffer, varrer o vault. | Saber o que é uma task. |
-| `status` | 84 | O vocabulário de status lido do `status.json`, e o mapa reverso callout → número. | Saber o status de uma *task* — isso é o callout dela. |
+| `status` | 87 | O vocabulário de status lido do `status.json`, e o mapa reverso callout → número. | Saber o status de uma *task* — isso é o callout dela. |
 | `path` | 146 | Tudo que se deriva de um **caminho**: projeto, id, arquivamento, `kebab`. | Ler arquivo. |
-| `md` | 196 | Linhas de markdown: blockquote, frontmatter, seção `##`, splice. | Saber o que é uma task. |
+| `md` | 337 | Linhas de markdown: blockquote, frontmatter, seção `##`, splice. | Saber o que é uma task. |
 | `model` | 162 | **Parser e serializer do bloco.** Puro: linhas entram, `freitask.Model` sai. | Tocar disco, notificar, conhecer buffer. |
-| `cache` | 185 | O índice em memória das tasks **ativas**, com o bloco de cada uma. | Enxergar arquivadas (elas são lidas do disco sob demanda). |
-| `links` | 145 | Reescrever os wikilinks do vault quando um arquivo muda de endereço. | Decidir que ele mudou. |
-| `task` | 218 | Operações sobre o **arquivo** de uma task: criar, mover, localizar por id. | Regenerar o board — quem chama decide quando. |
+| `cache` | 195 | O índice em memória das tasks **ativas**, com o bloco de cada uma. | Enxergar arquivadas (elas são lidas do disco sob demanda). |
+| `links` | 140 | Reescrever os wikilinks do vault quando um arquivo muda de endereço. | Decidir que ele mudou. |
+| `meta` | 161 | O eixo de EXECUÇÃO no frontmatter (`dono`/`desde`/`dominio`) e a aritmética de data que o sustenta. | Saber a FASE — isso é o callout. |
+| `task` | 318 | Operações sobre o **arquivo** de uma task: criar, mover, localizar por id. | Regenerar o board — quem chama decide quando. |
 | `board` | 151 | O `CURRENT.md`. | Ser fonte de verdade de coisa alguma. |
-| `doctor` | 280 | Verificação, reparo e migração de formato. | Adivinhar (não inventa data nem resolve conflito). |
-| `ui/form` | 244 | O buffer flutuante: desenhar, completar, parsear de volta. | Saber o que fazer com o modelo. |
-| `edit` | 257 | Resolver **o que** editar e persistir o resultado. | Desenhar janela. |
+| `doctor` | 388 | Verificação, reparo e migração de formato. | Adivinhar (não inventa data nem resolve conflito). |
+| `ui/form` | 247 | O buffer flutuante: desenhar, completar, parsear de volta. | Saber o que fazer com o modelo. |
+| `edit` | 260 | Resolver **o que** editar e persistir o resultado. | Desenhar janela. |
 | `ui/picker` | 227 | O picker de dois níveis, no Snacks. | Ter regra de task nenhuma. |
 | `autocmd` | 90 | O que dispara sozinho: regen ao salvar, keymaps buffer-local. | — |
-| `init` | 86 | A API pública: os submódulos + a superfície plana de 38 nomes. | Ter lógica. |
+| `init` | 88 | A API pública: os submódulos + a superfície plana de 38 nomes. | Ter lógica. |
 
 ---
 
@@ -95,7 +100,11 @@ Cobertura em `freitask_spec.lua`: as funções **puras** — `path.kebab`,
 `model.is_status_text`, `model.parse_block` (formato atual, legado e status 0),
 `model.serialize_block`, o round-trip entre os dois, `md.first_block_range`,
 `md.block_around`, `md.splice`, `md.append_history`,
-`md.update_frontmatter_key` e `links.rewrite_link`.
+`md.update_frontmatter_key`, `links.rewrite_link`, o eixo de execução de
+`meta` e, da criação, `task.validate_new` e `task.template` — a validação foi
+separada da escrita justamente para caber aqui: as regras de um id novo (kebab,
+projeto reservado) são a parte interessante, e `create_task` fica só com o
+disco.
 
 O que **não** está coberto por teste automatizado, e portanto precisa de
 verificação manual quando você mexer: as operações de escrita (`task.move_task`,
@@ -104,14 +113,14 @@ primeiras, o caminho mais rápido é um vault descartável — o módulo deriva 
 de `~`, então basta trocar `$HOME`:
 
 ```bash
-SB=$(mktemp -d); mkdir -p "$SB/ObsidianVault/tasks/p"
-printf -- '---\nid: t1\n---\n\n> [!todo] Um\n> [[tasks/p/t1|t1]]\n' > "$SB/ObsidianVault/tasks/p/t1.md"
-echo 'ref [[t1]] e [[tasks/p/t1|t1]]' > "$SB/ObsidianVault/n.md"
+SB=$(mktemp -d); mkdir -p "$SB/ObsidianVault/projects/p/tasks"
+echo 'ref [[t1]] e [[projects/p/tasks/t1|t1]]' > "$SB/ObsidianVault/n.md"
 
-REPO=~/projects/freitask.nvim
+REPO=~/dev/freitask.nvim
 run() { HOME="$SB" nvim --clean --cmd "set runtimepath+=$REPO" \
   -l "$REPO/lua/freitask/cli.lua" "$@"; }
-run archive t1 done && run unarchive t1 && run rename t1 t2 && run doctor
+run new p t1 "Um" && run archive t1 done && run unarchive t1 \
+  && run rename t1 t2 && run doctor
 ```
 
 Confira, depois: os dois formatos de wikilink em `n.md`, o `id:` do
