@@ -1,4 +1,4 @@
--- freitask.status — o vocabulário de status, lido de tasks/status.json.
+-- freitask.status — o vocabulário de status, lido de .freitask/status.json.
 --
 -- Guarda o único estado global além do cache: `M.status`, o mapa
 -- número → metadados. O status de uma task NÃO mora aqui — ele é derivado do
@@ -23,22 +23,25 @@ function M.status_meta(num)
   return (M.status and M.status[tostring(num)]) or C.STATUS_INVALID
 end
 
----Garante que a raiz de tasks e o status.json existem.
+---Garante que projects/ e o status.json existem.
 function M.ensure_root()
-  if vim.fn.isdirectory(C.root) == 0 then
-    vim.fn.mkdir(C.root, "p")
+  if vim.fn.isdirectory(C.projects) == 0 then
+    vim.fn.mkdir(C.projects, "p")
   end
-  local sj = C.root .. "/status.json"
-  if vim.fn.filereadable(sj) == 0 then
-    vim.fn.writefile(vim.split(C.DEFAULT_STATUS_JSON, "\n"), sj)
+  local dir = vim.fn.fnamemodify(C.status_file, ":h")
+  if vim.fn.isdirectory(dir) == 0 then
+    vim.fn.mkdir(dir, "p")
+  end
+  if vim.fn.filereadable(C.status_file) == 0 then
+    vim.fn.writefile(vim.split(C.DEFAULT_STATUS_JSON, "\n"), C.status_file)
   end
 end
 
----Carrega metadados de status de tasks/status.json (cai no default). É uma
+---Carrega metadados de status de .freitask/status.json (cai no default). É uma
 ---releitura FORÇADA de propósito: os pontos de entrada a chamam para que uma
 ---edição do status.json valha na hora, sem reiniciar o Neovim.
 function M.load_status()
-  local sj = C.root .. "/status.json"
+  local sj = C.status_file
   if vim.fn.filereadable(sj) == 1 then
     local ok, decoded = pcall(function()
       return vim.json.decode(table.concat(vim.fn.readfile(sj), "\n"))

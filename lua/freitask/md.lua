@@ -112,6 +112,147 @@ function M.block_around(lines, lnum)
   return s, e
 end
 
+--- Frontmatter ---------------------------------------------------------------
+--
+-- O parser é de propósito BURRO: só pares `chave: valor` no primeiro nível. É
+-- todo o YAML que este vault usa, e um parser completo aqui seria uma segunda
+-- implementação de YAML para manter — com a garantia de divergir da do Obsidian
+-- justamente nos casos raros. Chave que ele não entende ele PRESERVA (nunca
+-- reescreve a linha), que é o que importa para não perder dado em round-trip.
+
+---Aspas só quando o valor não sobreviveria como escalar YAML cru.
+---@param v string
+---@return string
+local function yaml_scalar(v)
+  if v == "" or v:match("^[%s%[%]{}#&%*!|>'\"%%@`]") or v:match("%s$") or v:find(": ") then
+    return '"' .. v:gsub('\\', '\\\\'):gsub('"', '\\"') .. '"'
+  end
+  return v
+end
+
+---Tira as aspas de um escalar YAML, se houver.
+---@param v string
+---@return string
+local function yaml_unquote(v)
+  local inner = v:match('^"(.*)"$')
+  if inner then
+    return (inner:gsub('\\"', '"'):gsub('\\\\', '\\'))
+  end
+  return (v:match("^'(.*)'$") or v)
+end
+
+---Lê o frontmatter YAML: mapa chave→valor e a faixa de linhas que ele ocupa.
+---Sem frontmatter devolve mapa vazio e nils.
+---@param lines string[]
+---@return table<string, string> map, integer|nil s, integer|nil e
+function M.frontmatter(lines)
+  if lines[1] ~= "---" then
+    return {}, nil, nil
+  end
+  for i = 2, #lines do
+    if lines[i] == "---" then
+      local map = {}
+      for j = 2, i - 1 do
+        local k, v = lines[j]:match("^([%w_%-]+):%s*(.*)$")
+        if k then
+          map[k] = yaml_unquote(vim.trim(v))
+        end
+      end
+      return map, 1, i
+    end
+  end
+  return {}, nil, nil -- `---` de abertura sem fechamento: não é frontmatter
+end
+
+---Aplica `updates` ao frontmatter YAML. `false` como valor REMOVE a chave.
+---Cria o bloco quando não existe e o remove por inteiro quando fica vazio —
+---ao contrário de M.update_frontmatter_key, que deliberadamente nunca cria.
+---A diferença tem razão de ser: aquela existe para o doctor CORRIGIR um `id:`
+---que alguém já escreveu, e inventar frontmatter ali encheria de ruído arquivos
+---que não o têm. Esta existe para o eixo de execução, cujos campos só podem
+---morar no frontmatter — então criar o bloco é o trabalho, não um efeito
+---colateral. Muta `lines` in place; quem chama grava.
+---@param lines string[]
+---@param updates table<string, string|false>
+---@return boolean changed
+function M.set_frontmatter(lines, updates)
+  local map, s, e = M.frontmatter(lines)
+  local changed = false
+
+  -- Sem bloco: só cria se houver algo de fato a escrever.
+  if not s then
+    local add = {}
+    for _, k in ipairs(vim.tbl_keys(updates)) do
+      if updates[k] ~= false then
+        add[#add + 1] = k
+      end
+    end
+    if #add == 0 then
+      return false
+    end
+    table.sort(add)
+    local blk = { "---" }
+    for _, k in ipairs(add) do
+      blk[#blk + 1] = k .. ": " .. yaml_scalar(tostring(updates[k]))
+    end
+    blk[#blk + 1] = "---"
+    -- Linha em branco só se a primeira linha de conteúdo já não for uma: sem
+    -- ela o bloco encostaria no callout e o Obsidian juntaria os dois.
+    if lines[1] and vim.trim(lines[1]) ~= "" then
+      blk[#blk + 1] = ""
+    end
+    for i = #blk, 1, -1 do
+      table.insert(lines, 1, blk[i])
+    end
+    return true
+  end
+
+  -- Bloco existente: reescreve no lugar, preservando ordem e chaves alheias.
+  for i = e - 1, s + 1, -1 do
+    local k = lines[i]:match("^([%w_%-]+):")
+    if k and updates[k] ~= nil then
+      if updates[k] == false then
+        table.remove(lines, i)
+        e = e - 1
+        changed = true
+      else
+        local want = k .. ": " .. yaml_scalar(tostring(updates[k]))
+        if lines[i] ~= want then
+          lines[i] = want
+          changed = true
+        end
+      end
+    end
+  end
+
+  -- Chaves novas entram no fim do bloco, em ordem estável.
+  local add = {}
+  for _, k in ipairs(vim.tbl_keys(updates)) do
+    if updates[k] ~= false and map[k] == nil then
+      add[#add + 1] = k
+    end
+  end
+  table.sort(add)
+  for _, k in ipairs(add) do
+    table.insert(lines, e, k .. ": " .. yaml_scalar(tostring(updates[k])))
+    e = e + 1
+    changed = true
+  end
+
+  -- Bloco vazio é ruído: o Obsidian o mostra como um painel de propriedades em
+  -- branco. Some junto com a linha vazia que o seguia.
+  if e == s + 1 then
+    if vim.trim(lines[e + 1] or "x") == "" then
+      table.remove(lines, e + 1)
+    end
+    table.remove(lines, e)
+    table.remove(lines, s)
+    changed = true
+  end
+
+  return changed
+end
+
 ---Atualiza a chave `key` do frontmatter YAML, se (e só se) ela já existir.
 ---Deliberadamente não cria frontmatter: quem o injeta é o obsidian.nvim, e
 ---inventá-lo aqui acrescentaria ruído a arquivos que não o têm.

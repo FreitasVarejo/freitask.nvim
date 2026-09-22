@@ -11,6 +11,7 @@ local board = require("freitask.board")
 local cache = require("freitask.cache")
 local fs = require("freitask.fs")
 local md = require("freitask.md")
+local meta_ = require("freitask.meta")
 local model_ = require("freitask.model")
 local path_ = require("freitask.path")
 local status = require("freitask.status")
@@ -30,7 +31,7 @@ local M = {}
 -- regenerada. Só duas coisas se perdem de verdade:
 --   1. backlinks externos após um RENAME (nada registra que `foo` se chamava
 
----Migra todos os arquivos de task para o formato atual (`[[tasks/<projeto>/<id>|id]]`
+---Migra todos os arquivos de task para o formato atual (`[[projects/<projeto>/tasks/<id>|id]]`
 ---com caminho + alias, e a linha 3 livre como "nome" em vez de status-texto).
 ---Cobre tanto o formato legado (`> **Título** - [[id]]` + `> Branch:`) quanto o
 ---formato intermediário (`> N - Título` na linha 3). Idempotente. Retorna a
@@ -46,7 +47,7 @@ function M.migrate_format()
   -- (o balde honesto: "parei de tocar" — o flag antigo não registrava por quê)
   -- e o flag some. Feito ANTES do loop de blocos para que elas já sejam
   -- reserializadas com o link apontando para a pasta nova.
-  for _, path in ipairs(vim.fn.glob(C.root .. "/*/*.md", true, true)) do
+  for _, path in ipairs(vim.fn.glob(C.projects .. "/*/tasks/*.md", true, true)) do
     local project = path_.split_task_path(path)
     if project then
       local lines = fs.read_lines(path)
@@ -73,8 +74,8 @@ function M.migrate_format()
   end
 
   -- Normaliza o bloco de todas as tasks, ativas e arquivadas.
-  local paths = vim.fn.glob(C.root .. "/*/*.md", true, true)
-  vim.list_extend(paths, vim.fn.glob(C.root .. "/*/archived/*/*.md", true, true))
+  local paths = vim.fn.glob(C.projects .. "/*/tasks/*.md", true, true)
+  vim.list_extend(paths, vim.fn.glob(C.projects .. "/*/tasks/archived/*/*.md", true, true))
   for _, path in ipairs(paths) do
     local project, id, archived = path_.split_task_path(path)
     if project then
@@ -134,17 +135,22 @@ function M.doctor(opts)
   -- 1. Conflitos do Syncthing. Reportados e NUNCA reparados: escolher qual
   -- cópia vale é decisão editorial, e apagar a errada em silêncio perderia
   -- trabalho feito no outro dispositivo.
-  for _, p in ipairs(vim.fn.glob(C.root .. "/**/*.sync-conflict-*.md", true, true)) do
+  for _, p in ipairs(vim.fn.glob(C.projects .. "/*/tasks/**/*.sync-conflict-*.md", true, true)) do
     add("error", "sync-conflict", p, "conflito do Syncthing — compare com o original e resolva à mão")
   end
 
-  -- 2. Arquivos sob tasks/<projeto>/ que a ferramenta não enxerga. São
-  -- invisíveis ao board e ao picker, então sumiriam sem barulho nenhum.
-  -- `daily/` e `templates/` são reservados e ficam fora por definição.
-  for _, p in ipairs(vim.fn.glob(C.root .. "/*/**/*.md", true, true)) do
-    local top = p:match(".*/tasks/([^/]+)/")
-    if not C.RESERVED[top or ""] and not path_.split_task_path(p) and not p:match("%.sync%-conflict%-") then
-      add("warn", "fora-do-padrao", p, "não casa tasks/<projeto>/[archived/<tipo>/]<id>.md — invisível ao freitask")
+  -- 2. Arquivos sob projects/<projeto>/tasks/ que a ferramenta não enxerga. São
+  -- invisíveis ao board e ao picker, então sumiriam sem barulho nenhum. O resto
+  -- de `projects/<projeto>/` (spec, decisoes/, dominio/…) fica fora por
+  -- construção: o glob só entra em `tasks/`.
+  for _, p in ipairs(vim.fn.glob(C.projects .. "/*/tasks/**/*.md", true, true)) do
+    if not path_.split_task_path(p) and not p:match("%.sync%-conflict%-") then
+      add(
+        "warn",
+        "fora-do-padrao",
+        p,
+        "não casa projects/<projeto>/tasks/[archived/<tipo>/]<id>.md — invisível ao freitask"
+      )
     end
   end
 
@@ -165,6 +171,11 @@ function M.doctor(opts)
       )
     end
   end
+
+  -- Reivindicações das tasks ATIVAS, colhidas no laço abaixo para a checagem
+  -- de colisão que vem depois dele — e não numa varredura própria, porque o
+  -- laço já abre todo arquivo de task do vault uma vez.
+  local claims = {}
 
   -- 4. Invariantes deriváveis do caminho: bloco e frontmatter. Tudo aqui é
   -- reparável sem adivinhação, porque o caminho é a fonte de verdade.
@@ -188,12 +199,35 @@ function M.doctor(opts)
       model.id = t.id
       model.project, model.archived = t.project, t.archived
       local want = model_.serialize_block(model)
+      local reserialize = false
       if not vim.deep_equal(want, blk) then
-        if opts.fix then
-          lines = md.splice(lines, s, e, want)
-          dirty = true
-        end
+        reserialize = opts.fix
         add("warn", "bloco-dessincronizado", t.path, "bloco não corresponde ao caminho (link/id)", opts.fix)
+      end
+
+      -- Callout que contradiz a pasta de arquivamento. Só vale para `done`:
+      -- desde que o vocabulário encolheu, o status 7 significa literalmente
+      -- "Arquivada", e um arquivo em archived/done/ dizendo "Não iniciada" é
+      -- contradição, não nuance. Em `dropped` e `failed` a fase em que a task
+      -- estava quando foi largada é INFORMAÇÃO ("estava bloqueada quando
+      -- desisti") e segue preservada de propósito — os dois eixos só se amarram
+      -- na ponta em que um deles deixou de ter outra leitura possível.
+      -- Avaliado DEPOIS do check acima para que as duas causas não se confundam
+      -- no relatório.
+      local done_num = status.by_callout()["done"]
+      if t.archived == "done" and done_num and model.status_num ~= done_num then
+        if opts.fix then
+          model.status_num = done_num
+          want = model_.serialize_block(model)
+          reserialize = true
+        end
+        local raw = (model.raw_callout ~= "" and model.raw_callout) or "?"
+        add("warn", "callout-vs-pasta", t.path, string.format("está em archived/done/ com callout %q", raw), opts.fix)
+      end
+
+      if reserialize then
+        lines = md.splice(lines, s, e, want)
+        dirty = true
       end
 
       -- Trabalha numa cópia para que o diagnóstico continue read-only quando
@@ -228,22 +262,91 @@ function M.doctor(opts)
         end
       end
 
+      -- 6. O eixo de execução. Fica por ÚLTIMO no laço porque set_frontmatter
+      -- insere e remove linhas, invalidando o `s`/`e` que o splice do bloco
+      -- usa; daqui para baixo ninguém mais os toca.
+      local mt = meta_.read(lines)
+
+      if t.archived then
+        -- Posse em task arquivada não tem leitura possível: ninguém "está
+        -- mexendo" no que saiu do board. Reparável sem adivinhação.
+        if mt.dono or mt.desde or mt.dominio then
+          if opts.fix then
+            meta_.write(lines, {})
+            dirty = true
+          end
+          add("warn", "dono-em-arquivada", t.path, "task arquivada com eixo de execução preenchido", opts.fix)
+        end
+      else
+        -- Garra fantasma: NUNCA reparada. Soltar em silêncio a garra de outro
+        -- agente é pior que o fantasma — se ele estiver vivo, dois agentes
+        -- passam a achar que a task é sua, que é exatamente o acidente que este
+        -- eixo existe para evitar. O doctor aponta; quem solta é gente.
+        if meta_.stale(mt) then
+          add(
+            "warn",
+            "garra-fantasma",
+            t.path,
+            string.format("reivindicada por %s em %s — mais de 24h", mt.dono, mt.desde or "(sem carimbo)")
+          )
+        end
+        if mt.dono and mt.dominio then
+          claims[#claims + 1] = { dono = mt.dono, dominio = mt.dominio, path = t.path }
+        end
+      end
+
       if dirty then
         vim.fn.writefile(lines, t.path)
       end
     end
   end
 
-  -- 6. Wikilinks path-qualified pendurados: a impressão digital de um rename
+  -- 7. Colisão de domínio: duas tasks ativas, DONOS DIFERENTES, mesmo rótulo de
+  -- `dominio`. É o check pelo qual todo o eixo de execução existe — o acidente
+  -- que ele persegue não é dois agentes editando o mesmo arquivo (isso o git
+  -- resolve), é dois agentes decidindo a mesma coisa de formas incompatíveis.
+  --
+  -- Mesmo dono em duas tasks do mesmo domínio NÃO é colisão: é um agente
+  -- tocando duas frentes do mesmo assunto, que é normal e não surpreende.
+  --
+  -- Comparação EXATA de rótulo, sem aproximação: "schema de tasks" e "schema
+  -- das tasks" passam batido. Aceito de propósito — casar por aproximação daria
+  -- alarme falso entre domínios legitimamente vizinhos, e um checker com alarme
+  -- falso é um checker que se aprende a ignorar. O rótulo é texto livre
+  -- enquanto ninguém sabe quais são os domínios reais; quando eles aparecerem,
+  -- vira lista fechada e o problema some na origem.
+  local by_dominio = {}
+  for _, c in ipairs(claims) do
+    by_dominio[c.dominio] = by_dominio[c.dominio] or {}
+    table.insert(by_dominio[c.dominio], c)
+  end
+  for dominio, cs in pairs(by_dominio) do
+    local donos = {}
+    for _, c in ipairs(cs) do
+      donos[c.dono] = true
+    end
+    if vim.tbl_count(donos) > 1 then
+      local nomes = vim.tbl_keys(donos)
+      table.sort(nomes)
+      add(
+        "warn",
+        "colisao-de-dominio",
+        cs[1].path,
+        string.format("domínio %q reivindicado por %s em %d tasks", dominio, table.concat(nomes, " e "), #cs)
+      )
+    end
+  end
+
+  -- 8. Wikilinks path-qualified pendurados: a impressão digital de um rename
   -- feito sem M.retarget_links. NÃO é reparável — nada no vault registra que
   -- `foo` um dia se chamou `bar` —, e é justamente por isso que precisa ser
   -- reportado.
   --
-  -- Só links `tasks/...` com caminho entram aqui. Um `[[nota-futura]]` curto
+  -- Só links `projects/<p>/tasks/...` com caminho entram aqui. Um `[[nota-futura]]` curto
   -- que não resolve é comportamento NORMAL do Obsidian (o link vira um
   -- placeholder que cria a nota ao ser clicado), e cobrá-lo encheria o doctor
   -- de alarme falso — um checker em que não se confia é um checker que não se
-  -- lê. Já um link com caminho para tasks/ foi gerado por este módulo e
+  -- lê. Já um link com caminho para uma pasta de tasks foi gerado por este módulo e
   -- portanto tem obrigação de resolver.
   -- Uma varredura só do vault serve às duas coisas: montar o conjunto de
   -- alvos resolvíveis e procurar os links pendurados. Antes eram dois globs
@@ -251,7 +354,7 @@ function M.doctor(opts)
   local notes = fs.vault_notes()
   local resolvable = resolvable_targets(notes)
   for _, p in ipairs(notes) do
-    if not p:match("^" .. vim.pesc(C.root) .. "/daily/") then
+    if not p:match("^" .. vim.pesc(C.daily) .. "/") then
       local in_fence = false
       for i, line in ipairs(fs.read_lines(p)) do
         if line:match("^%s*```") then
@@ -266,7 +369,7 @@ function M.doctor(opts)
           for inner in scan:gmatch("%[%[(.-)%]%]") do
             local target = inner:gsub("|.*$", ""):gsub("[#^].*$", "")
             target = vim.trim(target):gsub("%.md$", "")
-            if target:match("^tasks/") and not resolvable[target] then
+            if target:match("^projects/[^/]+/tasks/") and not resolvable[target] then
               add("error", "link-pendurado", p, string.format("linha %d: `[[%s]]` não resolve", i, target))
             end
           end

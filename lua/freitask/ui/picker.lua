@@ -200,7 +200,7 @@ function M.open_projects()
             vim.notify("freitask: nome de projeto inválido", vim.log.levels.WARN)
             return
           end
-          vim.fn.mkdir(C.root .. "/" .. id, "p")
+          vim.fn.mkdir(C.projects .. "/" .. id .. "/tasks", "p")
           picker:find()
         end)
       end,
@@ -209,7 +209,7 @@ function M.open_projects()
         picker:close()
         vim.schedule(function()
           board.rebuild_current()
-          vim.cmd.edit(vim.fn.fnameescape(C.root .. "/CURRENT.md"))
+          vim.cmd.edit(vim.fn.fnameescape(C.current))
         end)
       end,
     },

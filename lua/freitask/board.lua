@@ -2,7 +2,7 @@
 --
 -- Gerado do zero a cada regen, exceto a seção `## Notas Avulsas`, que é
 -- autoral e por isso é extraída e recolocada. Antes de sobrescrever um board
--- de ontem, arquiva-o em tasks/daily/<data>.md: aquilo vira histórico, e
+-- de ontem, arquiva-o em daily/<data>.md: aquilo vira histórico, e
 -- histórico não se reescreve (por isso daily/ fica fora do retarget_links).
 
 local C = require("freitask.config")
@@ -64,10 +64,10 @@ local function frontmatter_date(path)
   return nil
 end
 
----Regenera tasks/CURRENT.md como o "board de hoje": frontmatter date/weekday,
+---Regenera o CURRENT.md da raiz do vault como o "board de hoje": frontmatter date/weekday,
 ---título de planning diário, `## Notas Avulsas` preservadas e uma seção
 ---`## <project>` por projeto. Antes de sobrescrever, se o board vigente for de
----um dia anterior, arquiva-o em tasks/daily/<data>.md. Recusa sobrescrever um
+---um dia anterior, arquiva-o em daily/<data>.md. Recusa sobrescrever um
 ---CURRENT.md com edições não salvas.
 ---@param opts? { quiet?: boolean } quiet suprime o aviso de "regen pulado"
 function M.rebuild_current(opts)
@@ -75,7 +75,7 @@ function M.rebuild_current(opts)
   status.ensure_root()
   status.load_status()
   cache.build_cache()
-  local path = C.root .. "/CURRENT.md"
+  local path = C.current
   local buf = vim.fn.bufnr(path)
   if buf ~= -1 and vim.api.nvim_buf_is_loaded(buf) and vim.bo[buf].modified then
     if not opts.quiet then
@@ -87,7 +87,7 @@ function M.rebuild_current(opts)
   local today = os.date("%Y-%m-%d")
   local prev = frontmatter_date(path)
   if prev and prev < today then
-    local daily_dir = C.root .. "/daily"
+    local daily_dir = C.daily
     if vim.fn.isdirectory(daily_dir) == 0 then
       vim.fn.mkdir(daily_dir, "p")
     end

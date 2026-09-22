@@ -154,7 +154,7 @@ function M.confirm_unarchive(id)
   return vim.fn.confirm("Desarquivar '" .. id .. "'?", "&Sim\n&Não", 2) == 1
 end
 
----Arquiva uma task: move para tasks/<projeto>/archived/<tipo>/, tirando-a do
+---Arquiva uma task: move para projects/<projeto>/tasks/archived/<tipo>/, tirando-a do
 ---cache e do CURRENT.md sem apagar nada.
 ---@param path string
 ---@param tipo string um de C.ARCHIVED_TYPES
@@ -163,7 +163,7 @@ function M.archive_task(path, tipo)
   return move_task(path, tipo)
 end
 
----Desarquiva uma task: move de volta para tasks/<projeto>/, devolvendo-a ao
+---Desarquiva uma task: move de volta para projects/<projeto>/tasks/, devolvendo-a ao
 ---cache — e portanto ao CURRENT.md na próxima regeneração.
 ---@param path string
 ---@return string|nil new_path

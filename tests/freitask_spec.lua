@@ -19,6 +19,7 @@ local model = require("freitask.model")
 local path = require("freitask.path")
 local status = require("freitask.status")
 local links = require("freitask.links")
+local meta = require("freitask.meta")
 
 status.status = vim.json.decode(C.DEFAULT_STATUS_JSON)
 
@@ -56,41 +57,41 @@ end)
 
 describe("split_task_path", function()
   it("decompõe uma task ativa", function()
-    local p, id, arch = path.split_task_path(VAULT .. "/tasks/bjju-web/fazer-x.md")
+    local p, id, arch = path.split_task_path(VAULT .. "/projects/bjju-web/tasks/fazer-x.md")
     eq("bjju-web", p)
     eq("fazer-x", id)
     eq(nil, arch)
   end)
 
   it("decompõe uma task arquivada", function()
-    local p, id, arch = path.split_task_path(VAULT .. "/tasks/bjju-web/archived/done/fazer-x.md")
+    local p, id, arch = path.split_task_path(VAULT .. "/projects/bjju-web/tasks/archived/done/fazer-x.md")
     eq("bjju-web", p)
     eq("fazer-x", id)
     eq("done", arch)
   end)
 
   it("recusa tipo de arquivamento desconhecido", function()
-    falsy(path.split_task_path(VAULT .. "/tasks/bjju-web/archived/talvez/fazer-x.md"))
+    falsy(path.split_task_path(VAULT .. "/projects/bjju-web/tasks/archived/talvez/fazer-x.md"))
   end)
 
   it("recusa diretórios reservados", function()
-    falsy(path.split_task_path(VAULT .. "/tasks/daily/2026-08-09.md"))
-    falsy(path.split_task_path(VAULT .. "/tasks/templates/task.md"))
+    falsy(path.split_task_path(VAULT .. "/projects/daily/tasks/2026-08-09.md"))
+    falsy(path.split_task_path(VAULT .. "/projects/templates/tasks/task.md"))
   end)
 
   it("recusa arquivo de conflito do Syncthing", function()
-    falsy(path.split_task_path(VAULT .. "/tasks/bjju-web/x.sync-conflict-20260809-123456-ABCDEFG.md"))
+    falsy(path.split_task_path(VAULT .. "/projects/bjju-web/tasks/x.sync-conflict-20260809-123456-ABCDEFG.md"))
   end)
 
   it("recusa subdiretório que não é archived/<tipo>", function()
-    falsy(path.split_task_path(VAULT .. "/tasks/bjju-web/notas/x.md"))
+    falsy(path.split_task_path(VAULT .. "/projects/bjju-web/tasks/notas/x.md"))
   end)
 end)
 
 describe("status_meta", function()
   it("resolve um status válido", function()
     eq("todo", status.status_meta(1).callout)
-    eq("Todo", status.status_meta(1).title)
+    eq("Não iniciada", status.status_meta(1).title)
   end)
 
   it("cai no sentinela para 0 e nil", function()
@@ -102,7 +103,7 @@ end)
 
 describe("is_status_text", function()
   it("reconhece um título vigente do status.json", function()
-    local ok, num = model.is_status_text("1 - Todo")
+    local ok, num = model.is_status_text("1 - Não iniciada")
     truthy(ok)
     eq(1, num)
   end)
@@ -113,14 +114,14 @@ describe("is_status_text", function()
     eq(1, num)
     local ok2, num2 = model.is_status_text("3 - Blocked")
     truthy(ok2)
-    eq(13, num2, "Blocked legado mapeia para o callout warning de hoje")
+    eq(5, num2, "Blocked legado mapeia para o callout warning de hoje")
   end)
 
   it("usa a chave ATUAL do título, não o dígito escrito na linha", function()
-    -- "99 - Done" tem dígito inválido, mas o título casa a entrada 25.
-    local ok, num = model.is_status_text("99 - Done")
+    -- "99 - Arquivada" tem dígito inválido, mas o título casa a entrada 7.
+    local ok, num = model.is_status_text("99 - Arquivada")
     truthy(ok)
-    eq(25, num)
+    eq(7, num)
   end)
 
   it("não come uma nota que só parece status", function()
@@ -133,7 +134,7 @@ describe("parse_block", function()
   it("lê o formato atual completo", function()
     local m = model.parse_block({
       "> [!todo] Título da task",
-      "> [[tasks/bjju-web/fazer-x|fazer-x]]",
+      "> [[projects/bjju-web/tasks/fazer-x|fazer-x]]",
       "> _Em análise do Fábio_",
       "> impedimento: falta VPN",
     })
@@ -148,7 +149,7 @@ describe("parse_block", function()
   it("omite a descrição quando a linha 3 não está em itálico", function()
     local m = model.parse_block({
       "> [!todo] T",
-      "> [[tasks/p/x|x]]",
+      "> [[projects/p/tasks/x|x]]",
       "> uma nota qualquer",
     })
     eq("", m.desc)
@@ -158,7 +159,7 @@ describe("parse_block", function()
   it("não promove itálico a descrição depois de já haver nota", function()
     local m = model.parse_block({
       "> [!todo] T",
-      "> [[tasks/p/x|x]]",
+      "> [[projects/p/tasks/x|x]]",
       "> nota primeiro",
       "> _isso continua nota_",
     })
@@ -169,7 +170,7 @@ describe("parse_block", function()
   it("dá status 0 e preserva o tipo digitado quando o callout é desconhecido", function()
     local m = model.parse_block({
       "> [!questão] Título preservado",
-      "> [[tasks/p/x|x]]",
+      "> [[projects/p/tasks/x|x]]",
     })
     eq(0, m.status_num)
     eq("questão", m.raw_callout)
@@ -193,7 +194,7 @@ describe("parse_block", function()
   it("extrai o id do alvo do wikilink, não do alias", function()
     local m = model.parse_block({
       "> [!todo] T",
-      "> [[tasks/p/archived/done/x|rótulo qualquer]]",
+      "> [[projects/p/tasks/archived/done/x|rótulo qualquer]]",
     })
     eq("x", m.id)
   end)
@@ -203,15 +204,15 @@ describe("serialize_block", function()
   it("emite o link path-qualified quando há project", function()
     eq({
       "> [!todo] Título",
-      "> [[tasks/p/x|x]]",
+      "> [[projects/p/tasks/x|x]]",
     }, model.serialize_block({ status_num = 1, title = "Título", id = "x", project = "p" }))
   end)
 
   it("aponta para archived/<tipo> quando a task está arquivada", function()
     eq({
       "> [!done] Título",
-      "> [[tasks/p/archived/done/x|x]]",
-    }, model.serialize_block({ status_num = 25, title = "Título", id = "x", project = "p", archived = "done" }))
+      "> [[projects/p/tasks/archived/done/x|x]]",
+    }, model.serialize_block({ status_num = 7, title = "Título", id = "x", project = "p", archived = "done" }))
   end)
 
   it("omite a linha de descrição quando ela está vazia", function()
@@ -237,7 +238,7 @@ describe("serialize_block", function()
       project = "p",
       extras = { "nota", "", "  " },
     })
-    eq({ "> [!todo] T", "> [[tasks/p/x|x]]", "> nota" }, out)
+    eq({ "> [!todo] T", "> [[projects/p/tasks/x|x]]", "> nota" }, out)
   end)
 end)
 
@@ -245,7 +246,7 @@ describe("round-trip parse/serialize", function()
   it("é idempotente para um bloco canônico", function()
     local original = {
       "> [!example] Título da task",
-      "> [[tasks/bjju-web/fazer-x|fazer-x]]",
+      "> [[projects/bjju-web/tasks/fazer-x|fazer-x]]",
       "> _aguardando revisão_",
       "> impedimento: VPN",
       "> segunda nota",
@@ -263,11 +264,11 @@ describe("round-trip parse/serialize", function()
       "> Branch: minha-task",
     })
     m.project = "p"
-    eq({ "> [!todo] Minha task", "> [[tasks/p/minha-task|minha-task]]" }, model.serialize_block(m))
+    eq({ "> [!todo] Minha task", "> [[projects/p/tasks/minha-task|minha-task]]" }, model.serialize_block(m))
   end)
 
   it("sobrevive ao round-trip com status 0", function()
-    local blk = { "> [!questão] T", "> [[tasks/p/x|x]]" }
+    local blk = { "> [!questão] T", "> [[projects/p/tasks/x|x]]" }
     local m = model.parse_block(blk)
     m.project = "p"
     local out = model.serialize_block(m)
@@ -323,28 +324,28 @@ describe("splice", function()
 end)
 
 describe("rewrite_link", function()
-  local moved_old = { id = "x", full = "tasks/p/x" }
-  local moved_new = { id = "x", full = "tasks/p/archived/done/x" }
-  local renamed_old = { id = "a", full = "tasks/p/a" }
-  local renamed_new = { id = "b", full = "tasks/p/b" }
+  local moved_old = { id = "x", full = "projects/p/tasks/x" }
+  local moved_new = { id = "x", full = "projects/p/tasks/archived/done/x" }
+  local renamed_old = { id = "a", full = "projects/p/tasks/a" }
+  local renamed_new = { id = "b", full = "projects/p/tasks/b" }
 
   it("ao mover, reescreve só o link path-qualified", function()
-    eq("tasks/p/archived/done/x|x", links.rewrite_link("tasks/p/x|x", moved_old, moved_new))
+    eq("projects/p/tasks/archived/done/x|x", links.rewrite_link("projects/p/tasks/x|x", moved_old, moved_new))
     eq(nil, links.rewrite_link("x", moved_old, moved_new), "o Obsidian resolve o link curto por basename")
   end)
 
   it("ao renomear, reescreve as duas formas", function()
     eq("b", links.rewrite_link("a", renamed_old, renamed_new))
-    eq("tasks/p/b|b", links.rewrite_link("tasks/p/a|a", renamed_old, renamed_new))
+    eq("projects/p/tasks/b|b", links.rewrite_link("projects/p/tasks/a|a", renamed_old, renamed_new))
   end)
 
   it("preserva um alias que não era o id", function()
-    eq("tasks/p/b|Meu Título", links.rewrite_link("tasks/p/a|Meu Título", renamed_old, renamed_new))
+    eq("projects/p/tasks/b|Meu Título", links.rewrite_link("projects/p/tasks/a|Meu Título", renamed_old, renamed_new))
   end)
 
   it("preserva sufixo de heading e de bloco", function()
-    eq("tasks/p/b#Seção", links.rewrite_link("tasks/p/a#Seção", renamed_old, renamed_new))
-    eq("tasks/p/b^bloco|b", links.rewrite_link("tasks/p/a^bloco|a", renamed_old, renamed_new))
+    eq("projects/p/tasks/b#Seção", links.rewrite_link("projects/p/tasks/a#Seção", renamed_old, renamed_new))
+    eq("projects/p/tasks/b^bloco|b", links.rewrite_link("projects/p/tasks/a^bloco|a", renamed_old, renamed_new))
   end)
 
   it("tolera o sufixo .md no alvo", function()
@@ -353,7 +354,7 @@ describe("rewrite_link", function()
 
   it("devolve nil para link que aponta para outra coisa", function()
     eq(nil, links.rewrite_link("outra-nota", renamed_old, renamed_new))
-    eq(nil, links.rewrite_link("tasks/outro/a|a", renamed_old, renamed_new))
+    eq(nil, links.rewrite_link("projects/outro/tasks/a|a", renamed_old, renamed_new))
   end)
 end)
 
@@ -420,13 +421,19 @@ end)
 
 describe("suggest_archive_type", function()
   it("deriva done dos callouts de conclusão", function()
-    eq("done", path.suggest_archive_type(25))
-    eq("done", path.suggest_archive_type(23))
+    eq("done", path.suggest_archive_type(7)) -- done
+    eq("done", path.suggest_archive_type(6)) -- check
   end)
 
-  it("deriva failed dos callouts de erro", function()
-    eq("failed", path.suggest_archive_type(16))
-    eq("failed", path.suggest_archive_type(15))
+  it("não deriva failed de fase nenhuma: `failed` se escolhe à mão", function()
+    -- Nenhuma das seis fases significa "falhou" — `warning` é BLOQUEADA, que é
+    -- outra coisa: quem travou não fracassou. Com FAILED_CALLOUTS vazio, o
+    -- prompt passa a sugerir `dropped` e quem quiser `failed` digita. O teste
+    -- fica como registro da escolha: se um dia uma fase de falha entrar no
+    -- vocabulário, é ele que falha primeiro e cobra a atualização.
+    for _, num in ipairs({ 1, 2, 3, 4, 5 }) do
+      eq("dropped", path.suggest_archive_type(num))
+    end
   end)
 
   it("cai em dropped para o resto, inclusive status 0", function()
@@ -438,7 +445,125 @@ end)
 
 describe("is_archived", function()
   it("lê o estado do CAMINHO", function()
-    truthy(path.is_archived(VAULT .. "/tasks/p/archived/done/x.md"))
-    falsy(path.is_archived(VAULT .. "/tasks/p/x.md"))
+    truthy(path.is_archived(VAULT .. "/projects/p/tasks/archived/done/x.md"))
+    falsy(path.is_archived(VAULT .. "/projects/p/tasks/x.md"))
+  end)
+end)
+
+describe("frontmatter", function()
+  it("lê pares no primeiro nível e devolve a faixa", function()
+    local map, a, b = md.frontmatter({ "---", "dono: fedora/nvim", "dominio: schema", "---", "", "> [!todo] x" })
+    eq("fedora/nvim", map.dono)
+    eq("schema", map.dominio)
+    eq(1, a)
+    eq(4, b)
+  end)
+
+  it("devolve vazio sem frontmatter e sem fechamento", function()
+    eq({}, (md.frontmatter({ "> [!todo] x" })))
+    eq({}, (md.frontmatter({ "---", "dono: x" })))
+  end)
+
+  it("tira as aspas do escalar", function()
+    local map = md.frontmatter({ "---", 'dominio: "a: b"', "---" })
+    eq("a: b", map.dominio)
+  end)
+end)
+
+describe("set_frontmatter", function()
+  it("cria o bloco quando não existe, com linha em branco antes do conteúdo", function()
+    local lines = { "> [!todo] x" }
+    truthy(md.set_frontmatter(lines, { dono = "fedora/nvim" }))
+    eq({ "---", "dono: fedora/nvim", "---", "", "> [!todo] x" }, lines)
+  end)
+
+  it("não cria bloco quando só há remoções", function()
+    local lines = { "> [!todo] x" }
+    falsy(md.set_frontmatter(lines, { dono = false }))
+    eq({ "> [!todo] x" }, lines)
+  end)
+
+  it("preserva chaves alheias e a ordem ao atualizar", function()
+    local lines = { "---", "id: x", "dono: a", "tags: [p]", "---", "" }
+    truthy(md.set_frontmatter(lines, { dono = "b" }))
+    eq({ "---", "id: x", "dono: b", "tags: [p]", "---", "" }, lines)
+  end)
+
+  it("acrescenta chave nova no fim do bloco", function()
+    local lines = { "---", "id: x", "---" }
+    truthy(md.set_frontmatter(lines, { dominio = "schema" }))
+    eq({ "---", "id: x", "dominio: schema", "---" }, lines)
+  end)
+
+  it("remove com false e apaga o bloco inteiro quando ele esvazia", function()
+    local lines = { "---", "dono: a", "---", "", "> [!todo] x" }
+    truthy(md.set_frontmatter(lines, { dono = false }))
+    eq({ "> [!todo] x" }, lines)
+  end)
+
+  it("põe aspas só quando o escalar cru não sobreviveria", function()
+    local lines = { "---", "id: x", "---" }
+    md.set_frontmatter(lines, { a = "a: b", b = "simples com espaço", c = "[nao-lista]" })
+    eq('a: "a: b"', lines[3])
+    eq("b: simples com espaço", lines[4])
+    eq('c: "[nao-lista]"', lines[5])
+  end)
+
+  it("sobrevive ao round-trip do que escreveu", function()
+    local lines = { "> [!todo] x" }
+    md.set_frontmatter(lines, { dominio = "a: b", dono = "fedora/claude-code" })
+    local map = md.frontmatter(lines)
+    eq("a: b", map.dominio)
+    eq("fedora/claude-code", map.dono)
+  end)
+end)
+
+describe("meta", function()
+  it("lê só as três chaves do eixo, ignorando o resto", function()
+    local mt = meta.read({ "---", "id: x", "dono: fedora/nvim", "desde: 2026-09-22T10:00:00-03:00", "---" })
+    eq("fedora/nvim", mt.dono)
+    eq("2026-09-22T10:00:00-03:00", mt.desde)
+    eq(nil, mt.dominio)
+    eq(nil, mt.id)
+  end)
+
+  it("trata campo vazio como ausente", function()
+    eq(nil, meta.read({ "---", "dono:", "---" }).dono)
+  end)
+
+  it("escreve o estado INTEIRO: campo ausente é removido", function()
+    local lines = { "---", "dono: a", "dominio: d", "---", "", "> x" }
+    meta.write(lines, { dono = "b" })
+    local mt = meta.read(lines)
+    eq("b", mt.dono)
+    eq(nil, mt.dominio, "dominio some porque não veio na tabela")
+  end)
+
+  it("converte ISO-8601 com offset para o mesmo instante", function()
+    eq(meta.epoch("2026-09-22T00:00:00Z"), meta.epoch("2026-09-21T21:00:00-03:00"))
+    eq(meta.epoch("2026-09-22T00:00:00Z"), meta.epoch("2026-09-22T03:00:00+03:00"))
+    eq(3600, meta.epoch("2026-09-22T01:00:00Z") - meta.epoch("2026-09-22T00:00:00Z"))
+  end)
+
+  it("devolve nil para carimbo ilegível", function()
+    eq(nil, meta.epoch("ontem"))
+    eq(nil, meta.epoch(nil))
+  end)
+
+  it("emite carimbo ISO com offset de dois-pontos", function()
+    truthy(meta.now():match("^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d[+-]%d%d:%d%d$"))
+  end)
+
+  it("só acusa fantasma quando há garra velha", function()
+    local now = meta.epoch("2026-09-22T12:00:00Z")
+    falsy(meta.stale({}, now), "sem dono não há garra")
+    falsy(meta.stale({ dono = "a", desde = "2026-09-22T11:00:00Z" }, now), "1h é garra viva")
+    falsy(meta.stale({ dono = "a", desde = "2026-09-21T13:00:00Z" }, now), "23h ainda vale")
+    truthy(meta.stale({ dono = "a", desde = "2026-09-21T11:00:00Z" }, now), "25h é fantasma")
+    truthy(meta.stale({ dono = "a" }, now), "garra sem carimbo nunca expiraria sozinha")
+  end)
+
+  it("identifica o agente como <maquina>/<ferramenta>", function()
+    truthy(meta.whoami("claude-code"):match("^[^/]+/claude%-code$"))
   end)
 end)

@@ -7,7 +7,6 @@
 -- de confirmar: uma linha apagada por acidente desloca os campos posicionais e
 -- chegaria aqui como um rename que ninguém pediu.
 
-local C = require("freitask.config")
 local board = require("freitask.board")
 local cache = require("freitask.cache")
 local form = require("freitask.ui.form")
@@ -107,7 +106,7 @@ function M.apply_edit(ctx, nm)
 
   local project = ctx.project
   -- ctx.archived acompanha o rename: sem ele, renomear o id de uma task
-  -- arquivada a ressuscitaria em tasks/<projeto>/ — e no board — em silêncio.
+  -- arquivada a ressuscitaria em projects/<projeto>/tasks/ — e no board — em silêncio.
   local old_path = (ctx.source == "task") and ctx.task_path or path_.task_file(project, old_id, ctx.archived)
   local new_path = renaming and path_.task_file(project, nm.id, ctx.archived) or old_path
   if renaming and vim.fn.filereadable(new_path) == 1 then
@@ -244,7 +243,7 @@ function M.create_task_form(project)
   status.load_status()
   local seed = { status_num = 1, title = "", id = "", desc = "", extras = {}, project = project }
   form.edit_task_form(seed, { title = "Nova task em " .. project }, function(nm)
-    local path = C.root .. "/" .. project .. "/" .. nm.id .. ".md"
+    local path = path_.task_file(project, nm.id)
     if vim.fn.filereadable(path) == 1 then
       vim.notify("freitask: task já existe: " .. nm.id, vim.log.levels.WARN)
       return

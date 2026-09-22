@@ -51,7 +51,7 @@ function M.setup_autocmd()
   -- tasks/mudanças de status apareçam sozinhas no painel.
   vim.api.nvim_create_autocmd("BufWritePost", {
     group = grp,
-    pattern = C.root .. "/*/*.md",
+    pattern = C.projects .. "/*/tasks/*.md",
     callback = function(args)
       -- `*` casa `/` em pattern de autocmd, então isto também dispara para
       -- arquivos em archived/; split_task_path devolve o tipo e nós pulamos —
@@ -71,7 +71,7 @@ function M.setup_autocmd()
   -- arquivo de task, então é registrado condicionalmente.
   vim.api.nvim_create_autocmd("BufEnter", {
     group = grp,
-    pattern = { C.root .. "/*.md", C.root .. "/*/*.md" },
+    pattern = { C.current, C.projects .. "/*/tasks/*.md" },
     callback = function(args)
       vim.keymap.set("n", "<leader>oe", edit.edit_under_cursor, {
         buffer = args.buf,

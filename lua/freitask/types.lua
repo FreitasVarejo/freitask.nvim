@@ -25,6 +25,14 @@
 ---@field project string|nil sem ele, o link sai no formato legado `[[id]]`
 ---@field archived string|nil tipo de arquivamento; move o alvo do link
 
+---O eixo de EXECUÇÃO de uma task, lido do frontmatter. Ortogonal ao status:
+---o callout diz em que FASE o trabalho está, isto diz QUEM o ocupa. Todos os
+---campos são opcionais; sem `dono` a task está livre. Ver freitask.meta.
+---@class freitask.Meta
+---@field dono string|nil "<maquina>/<ferramenta>", ex.: "fedora/claude-code"
+---@field desde string|nil carimbo ISO-8601 com offset de quando a garra foi cravada
+---@field dominio string|nil rótulo livre da autoridade reivindicada
+
 ---Uma task no cache em memória. `block` é guardado para que o regen do
 ---CURRENT.md não precise reabrir o arquivo.
 ---@class freitask.Entry
@@ -34,6 +42,7 @@
 ---@field block string[]
 ---@field path string
 ---@field archived string|nil
+---@field meta freitask.Meta
 
 ---Contexto de uma edição em curso: de onde o bloco veio e para onde volta.
 ---@class freitask.Ctx

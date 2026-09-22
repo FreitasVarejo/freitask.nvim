@@ -7,7 +7,7 @@
 -- a assimetria que a tabela abaixo resume, e que explica por que arquivar é
 -- barato do ponto de vista de referências:
 --
---   operação              [[foo]]      [[tasks/p/foo|foo]]   frontmatter id:
+--   operação              [[foo]]      [[projects/p/tasks/foo|foo]]   frontmatter id:
 --   arquivar/desarquivar  intacto      reescrever            intacto
 --   renomear id           reescrever   reescrever            reescrever
 
@@ -17,14 +17,14 @@ local fs = require("freitask.fs")
 local M = {}
 
 ---Arquivos markdown do vault elegíveis a conter referências.
----`tasks/daily/` fica DE FORA de propósito: são snapshots de como o board
+---`daily/` fica DE FORA de propósito: são snapshots de como o board
 ---estava naquele dia; reescrevê-los falsificaria o histórico. `CURRENT.md`
 ---também: é regenerado do zero, basta chamar M.rebuild_current depois.
 ---@return string[]
 function M.ref_candidates()
   local out = {}
   for _, p in ipairs(fs.vault_notes()) do
-    if not p:match("^" .. vim.pesc(C.root) .. "/daily/") and p ~= C.root .. "/CURRENT.md" then
+    if not p:match("^" .. vim.pesc(C.daily) .. "/") and p ~= C.current then
       out[#out + 1] = p
     end
   end

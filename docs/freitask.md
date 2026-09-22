@@ -55,8 +55,43 @@ que a ferramenta **nunca** reescreve. A única coisa que ela escreve fora do
 bloco é o rodapé `## Histórico`, ao arquivar/desarquivar — e ainda assim só
 acrescentando uma linha (ver "Arquivar / desarquivar / deletar").
 
-**Frontmatter YAML** (`--- id/aliases/tags ---`) que o obsidian.nvim injeta ao
-salvar é tolerado: a detecção do callout pula o frontmatter automaticamente.
+**Frontmatter YAML** é pulado pela detecção do callout, e hoje carrega o eixo
+de execução (abaixo). Chaves que o freitask não conhece — as que o obsidian.nvim
+injeta, como `aliases`/`tags` — são **preservadas verbatim**: ele nunca reescreve
+linha que não seja sua.
+
+### Eixo de execução (`dono`, `desde`, `dominio`)
+
+Três campos **opcionais** no frontmatter. São ortogonais ao status: o callout
+diz em que **fase** o trabalho está, estes dizem **quem o ocupa**.
+
+```yaml
+---
+dono: fedora/claude-code
+desde: 2026-09-22T14:30:00-03:00
+dominio: schema de tasks
+---
+```
+
+| campo | o que é |
+| --- | --- |
+| `dono` | `<maquina>/<ferramenta>`. Ausente = **task livre**, qualquer um pega. |
+| `desde` | ISO-8601 com offset. Garra com mais de **24h** vira `garra-fantasma` no doctor. |
+| `dominio` | Rótulo de texto livre da **autoridade** reivindicada — não um caminho de arquivo. |
+
+Moram no frontmatter, e não no bloco, por dois motivos: é metadado consultável
+(o Obsidian indexa propriedade, não texto de blockquote), e o bloco é
+reserializado inteiro pelo doctor a partir do **caminho** — posse não é
+derivável de caminho nenhum e seria regenerada para fora.
+
+`dominio` é rótulo conceitual e **não** glob de arquivos porque a colisão que
+importa não é dois agentes editando o mesmo arquivo (isso o git resolve): é
+dois agentes decidindo a mesma coisa de formas incompatíveis.
+
+**Regra de exclusão.** Refino e implementação **da mesma task** nunca rodam em
+paralelo: quem implementa congela o contrato, e refino que chegue no meio vira
+**task nova**, nunca edição da que está em voo. Refino de A e implementação de
+B convivem livres se os `dominio` não se cruzam.
 
 ### Status 0 — callout sem tipo reconhecido
 
@@ -72,8 +107,9 @@ arquivo (não é substituído nem apagado), para que:
 - no board, a task ordene **antes de tudo no seu projeto** (0 é o menor
   `status_num`), com ícone/hl de erro — sinal de "conserte isso".
 
-Não confundir com `quote`/`cite` (26/27): esses são status **válidos e
-deliberados**, para material de referência, e ordenam por último normalmente.
+Um callout do Obsidian que não é fase (um `[!note]` ou `[!quote]` no corpo da
+nota) **não** cai aqui: o status vem só do primeiro bloco, e o resto do arquivo
+o freitask nem olha.
 
 ### Status (`~/ObsidianVault/tasks/status.json`)
 
@@ -82,35 +118,29 @@ Cobre todos os tipos de callout suportados pelo
 ordenados como uma narrativa de workflow (a ordem/número só define a
 **ordenação** das tasks no board — o status em si vem do nome do callout):
 
-| nº | callout | título |
-| -- | ------- | ------ |
-| 1 | `todo` | Todo |
-| 2 | `note` | Note |
-| 3 | `info` | Info |
-| 4 | `abstract` | Abstract |
-| 5 | `summary` | Summary |
-| 6 | `tldr` | TL;DR |
-| 7 | `example` | Example |
-| 8 | `important` | Important |
-| 9 | `question` | Question |
-| 10 | `help` | Help |
-| 11 | `faq` | FAQ |
-| 12 | `attention` | Attention |
-| 13 | `warning` | Warning |
-| 14 | `caution` | Caution |
-| 15 | `bug` | Bug |
-| 16 | `failure` | Failure |
-| 17 | `fail` | Fail |
-| 18 | `missing` | Missing |
-| 19 | `danger` | Danger |
-| 20 | `error` | Error |
-| 21 | `tip` | Tip |
-| 22 | `hint` | Hint |
-| 23 | `success` | Success |
-| 24 | `check` | Check |
-| 25 | `done` | Done |
-| 26 | `quote` | Quote |
-| 27 | `cite` | Cite |
+| nº | callout | título | significa |
+| -- | ------- | ------ | --------- |
+| 1 | `todo` | Não iniciada | ninguém começou |
+| 2 | `abstract` | Refinando | o desenho está sendo feito; o contrato ainda se move |
+| 3 | `example` | Em implementação | o contrato está congelado e alguém está escrevendo código |
+| 4 | `question` | Em homologação | escrito, em teste/validação |
+| 5 | `warning` | Bloqueada | travada por algo externo; **o porquê vai na linha 4+ do bloco** |
+| 6 | `check` | Pronta | acabou, falta arquivar |
+| 7 | `done` | Arquivada | é o que `archive` grava |
+
+São **seis fases mais `done`**, e não os 27 callouts que o render-markdown
+suporta. O vocabulário largo não estava sendo escolhido — 36 tasks ativas,
+todas em `todo` — e status que ninguém escolhe não informa nada: a
+diferenciação real terminava na frase em itálico, que é texto livre e não se
+consulta. Seis é o que um agente precisa distinguir para não atropelar outro.
+
+Os nomes honram o vocabulário **antigo** deste plugin (`LEGACY_STATUS_TITLES`):
+`example` já era "In Progress", `question` já era "Review", `warning` já era
+"Blocked".
+
+Sair do `status.json` **não** tira um callout do Obsidian: `note`, `quote` e os
+demais seguem renderizando no corpo das notas. Este arquivo governa só como o
+freitask lê o **primeiro bloco** de uma task.
 
 Tasks novas (`M.template`) começam em `1` (`todo`).
 
@@ -357,6 +387,20 @@ agente que só faz `mv` para `archived/` causa dano **inteiramente reparável**.
 | `fora-do-padrao` — invisível ao freitask | warn | não |
 | `id-duplicado` — `[[id]]` fica ambíguo | warn | não |
 | `status-0` — callout fora do `status.json` | warn | não |
+| `callout-vs-pasta` — em `archived/done/` com callout ≠ `done` | warn | sim |
+| `dono-em-arquivada` — arquivada com eixo de execução preenchido | warn | sim |
+| `garra-fantasma` — `dono` com `desde` de mais de 24h | warn | **nunca** |
+| `colisao-de-dominio` — mesmo `dominio`, donos diferentes | warn | **nunca** |
+
+`callout-vs-pasta` só vale para `done`: o status 7 significa literalmente
+"Arquivada", e um arquivo em `archived/done/` dizendo "Não iniciada" é
+contradição. Em `dropped` e `failed` a fase em que a task estava quando foi
+largada é **informação** ("estava bloqueada quando desisti") e fica preservada.
+
+`garra-fantasma` e `colisao-de-dominio` **nunca** são reparados. Soltar em
+silêncio a garra de outro agente é pior que o fantasma: se ele estiver vivo,
+dois agentes passam a achar que a task é sua — exatamente o acidente que o eixo
+existe para evitar. O doctor aponta; quem solta é gente.
 
 Duas decisões deliberadas no detector de links pendurados, ambas contra alarme
 falso — **um checker em que não se confia é um checker que não se lê**:

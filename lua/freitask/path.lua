@@ -62,16 +62,16 @@ end
 --- Caminhos de task ----------------------------------------------------------
 
 ---Decompõe o caminho de um arquivo de task. Aceita as duas formas:
----  tasks/<projeto>/<id>.md                    → project, id, nil
----  tasks/<projeto>/archived/<tipo>/<id>.md    → project, id, tipo
----Qualquer outra coisa sob tasks/ (projeto reservado, subdiretório
+---  projects/<projeto>/tasks/<id>.md                 → project, id, nil
+---  projects/<projeto>/tasks/archived/<tipo>/<id>.md → project, id, tipo
+---Qualquer outra coisa sob projects/<projeto>/tasks/ (subdiretório
 ---desconhecido, tipo de archived inválido, arquivo de conflito do Syncthing)
 ---devolve nil — é o guarda único que impede um arquivo fora de padrão de
 ---entrar no cache ou no board.
 ---@param path string
 ---@return string|nil project, string|nil task_id, string|nil archived
 function M.split_task_path(path)
-  local project, rest = path:match(".*/tasks/([^/]+)/(.+)%.md$")
+  local project, rest = path:match(".*/projects/([^/]+)/tasks/(.+)%.md$")
   if not project or C.RESERVED[project] then
     return nil
   end
@@ -105,9 +105,9 @@ end
 ---@return string
 function M.task_file(project, id, archived)
   if archived then
-    return string.format("%s/%s/archived/%s/%s.md", C.root, project, archived, id)
+    return string.format("%s/%s/tasks/archived/%s/%s.md", C.projects, project, archived, id)
   end
-  return string.format("%s/%s/%s.md", C.root, project, id)
+  return string.format("%s/%s/tasks/%s.md", C.projects, project, id)
 end
 
 ---Diretório vault-relative de uma task, usado como alvo do wikilink da linha 2.
@@ -116,9 +116,9 @@ end
 ---@return string
 function M.vault_dir(project, archived)
   if archived then
-    return string.format("tasks/%s/archived/%s", project, archived)
+    return string.format("projects/%s/tasks/archived/%s", project, archived)
   end
-  return "tasks/" .. project
+  return string.format("projects/%s/tasks", project)
 end
 
 ---Verdadeiro se a task está arquivada. O CAMINHO é a fonte de verdade (não há

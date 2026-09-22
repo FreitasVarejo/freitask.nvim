@@ -7,9 +7,30 @@
 local M = {}
 
 M.vault = vim.fn.expand("~/ObsidianVault")
-M.root = M.vault .. "/tasks"
 
--- Diretórios sob tasks/ que NÃO são projetos.
+-- As tasks moram DENTRO da pasta do projeto no vault, junto da spec e das
+-- decisões: `projects/<projeto>/tasks/`. Antes viviam numa árvore própria,
+-- `tasks/<projeto>/`, e o efeito era que o mesmo projeto existia em dois
+-- lugares — a frente de trabalho longe do porquê que a justifica.
+--
+-- É o que define o que é um projeto: um diretório sob `projects/` que tem um
+-- `tasks/` dentro. Sem regra de nome, sem lista de exceções — a presença da
+-- pasta é o registro.
+M.projects = M.vault .. "/projects"
+
+-- O painel e os snapshots sobem para a raiz do vault. O painel cruza projetos,
+-- então não pertence a nenhum; os snapshots são história do painel.
+M.current = M.vault .. "/CURRENT.md"
+M.daily = M.vault .. "/daily"
+
+-- Configuração, não conteúdo: fica em pasta oculta para o Obsidian não a
+-- listar junto das notas.
+M.status_file = M.vault .. "/.freitask/status.json"
+
+-- Nomes que não podem virar projeto. `daily` e `templates` já não colidiriam
+-- com nada (saíram da árvore de tasks), mas seguem vetados porque reintroduzir
+-- qualquer um deles como projeto traria de volta a ambiguidade que a mudança
+-- de layout acabou de remover.
 M.RESERVED = { daily = true, templates = true }
 
 -- Tipos de arquivamento = subdiretórios de tasks/<projeto>/archived/.
@@ -39,50 +60,54 @@ M.ARCHIVED_PROMPT = { done = "d&one", dropped = "dro&pped", failed = "&failed" }
 -- Callouts que sugerem cada tipo no prompt de arquivamento. Só um DEFAULT: o
 -- tipo é escolhido por quem arquiva, senão o caminho viraria uma segunda fonte
 -- de verdade do status, obrigada a concordar com o callout para sempre.
-M.DONE_CALLOUTS = { done = true, success = true, check = true, tip = true, hint = true }
-M.FAILED_CALLOUTS = { failure = true, fail = true, error = true, danger = true, missing = true, bug = true }
+--
+-- FAILED_CALLOUTS está VAZIO desde que o vocabulário encolheu para as seis
+-- fases: nenhuma delas significa "falhou" (`warning` é bloqueada, que é outra
+-- coisa — quem travou não fracassou). `failed` segue existindo como destino de
+-- arquivamento, só deixou de ter default: escolhe-se à mão no prompt. Preferi a
+-- tabela vazia a apagá-la — no dia em que uma fase de falha entrar, o lugar de
+-- registrá-la fica óbvio.
+M.DONE_CALLOUTS = { done = true, check = true }
+M.FAILED_CALLOUTS = {}
 
--- Metadados de status padrão, espelhados em tasks/status.json no primeiro uso e
--- usados como fallback quando o arquivo está ausente ou corrompido. Cobre todos
--- os tipos de callout suportados pelo render-markdown.nvim (ver
--- https://github.com/MeanderingProgrammer/render-markdown.nvim/wiki/Callouts),
--- ordenados como uma narrativa de workflow: todo → notas/info → em progresso →
--- aguardando/atenção → bloqueado/problema → concluído → referência.
+-- Metadados de status padrão, espelhados no status.json no primeiro uso e
+-- usados como fallback quando o arquivo está ausente ou corrompido.
+--
+-- São SEIS fases de execução mais `done`, e não os 27 callouts que o
+-- render-markdown.nvim suporta. O vocabulário largo não estava sendo escolhido
+-- — 36 tasks ativas, todas em `todo` — e status que ninguém escolhe não informa
+-- nada: a diferenciação real terminava na frase em itálico, que é texto livre e
+-- não se consulta. Seis é o que um agente precisa distinguir para não atropelar
+-- outro.
+--
+-- O número ordena o board, então a ordem numérica É a narrativa: não iniciada →
+-- refinando → implementando → homologando → bloqueada → pronta. `done` fecha a
+-- lista porque é o que `archive` grava, não uma fase que se escolhe no form.
+--
+-- Os nomes de callout honram o vocabulário ANTIGO deste plugin, preservado em
+-- LEGACY_STATUS_TITLES: `example` já era "In Progress", `question` já era
+-- "Review" e `warning` já era "Blocked". Inventar três nomes novos tornaria as
+-- linhas legadas do vault ilegíveis sem ganho nenhum.
+--
+-- Sair do status.json NÃO tira um callout do Obsidian: `note`, `quote` e os
+-- demais seguem renderizando no corpo das notas. Este arquivo governa só como o
+-- freitask lê o PRIMEIRO bloco de uma task.
 M.DEFAULT_STATUS_JSON = [[{
-  "1": { "title": "Todo", "callout": "todo", "icon": "󰗡", "hl_group": "DiagnosticInfo" },
-  "2": { "title": "Note", "callout": "note", "icon": "󰋽", "hl_group": "DiagnosticInfo" },
-  "3": { "title": "Info", "callout": "info", "icon": "󰋽", "hl_group": "DiagnosticInfo" },
-  "4": { "title": "Abstract", "callout": "abstract", "icon": "󰨸", "hl_group": "DiagnosticInfo" },
-  "5": { "title": "Summary", "callout": "summary", "icon": "󰨸", "hl_group": "DiagnosticInfo" },
-  "6": { "title": "TL;DR", "callout": "tldr", "icon": "󰨸", "hl_group": "DiagnosticInfo" },
-  "7": { "title": "Example", "callout": "example", "icon": "󰉹", "hl_group": "DiagnosticHint" },
-  "8": { "title": "Important", "callout": "important", "icon": "󰅾", "hl_group": "DiagnosticHint" },
-  "9": { "title": "Question", "callout": "question", "icon": "󰘥", "hl_group": "DiagnosticWarn" },
-  "10": { "title": "Help", "callout": "help", "icon": "󰘥", "hl_group": "DiagnosticWarn" },
-  "11": { "title": "FAQ", "callout": "faq", "icon": "󰘥", "hl_group": "DiagnosticWarn" },
-  "12": { "title": "Attention", "callout": "attention", "icon": "󰀪", "hl_group": "DiagnosticWarn" },
-  "13": { "title": "Warning", "callout": "warning", "icon": "󰀪", "hl_group": "DiagnosticWarn" },
-  "14": { "title": "Caution", "callout": "caution", "icon": "󰳦", "hl_group": "DiagnosticWarn" },
-  "15": { "title": "Bug", "callout": "bug", "icon": "󰨰", "hl_group": "DiagnosticError" },
-  "16": { "title": "Failure", "callout": "failure", "icon": "󰅖", "hl_group": "DiagnosticError" },
-  "17": { "title": "Fail", "callout": "fail", "icon": "󰅖", "hl_group": "DiagnosticError" },
-  "18": { "title": "Missing", "callout": "missing", "icon": "󰅖", "hl_group": "DiagnosticError" },
-  "19": { "title": "Danger", "callout": "danger", "icon": "󱐌", "hl_group": "DiagnosticError" },
-  "20": { "title": "Error", "callout": "error", "icon": "󱐌", "hl_group": "DiagnosticError" },
-  "21": { "title": "Tip", "callout": "tip", "icon": "󰌶", "hl_group": "DiagnosticOk" },
-  "22": { "title": "Hint", "callout": "hint", "icon": "󰌶", "hl_group": "DiagnosticOk" },
-  "23": { "title": "Success", "callout": "success", "icon": "󰄬", "hl_group": "DiagnosticOk" },
-  "24": { "title": "Check", "callout": "check", "icon": "󰄬", "hl_group": "DiagnosticOk" },
-  "25": { "title": "Done", "callout": "done", "icon": "󰄬", "hl_group": "DiagnosticOk" },
-  "26": { "title": "Quote", "callout": "quote", "icon": "󱆨", "hl_group": "Comment" },
-  "27": { "title": "Cite", "callout": "cite", "icon": "󱆨", "hl_group": "Comment" }
+  "1": { "title": "Não iniciada", "callout": "todo", "icon": "󰗡", "hl_group": "DiagnosticInfo" },
+  "2": { "title": "Refinando", "callout": "abstract", "icon": "󰨸", "hl_group": "DiagnosticInfo" },
+  "3": { "title": "Em implementação", "callout": "example", "icon": "󰉹", "hl_group": "DiagnosticHint" },
+  "4": { "title": "Em homologação", "callout": "question", "icon": "󰘥", "hl_group": "DiagnosticWarn" },
+  "5": { "title": "Bloqueada", "callout": "warning", "icon": "󰀪", "hl_group": "DiagnosticWarn" },
+  "6": { "title": "Pronta", "callout": "check", "icon": "󰄬", "hl_group": "DiagnosticOk" },
+  "7": { "title": "Arquivada", "callout": "done", "icon": "󰄬", "hl_group": "DiagnosticOk" }
 }]]
 
 -- Status sentinela (0) para callouts cujo tipo não existe no status.json.
 -- Deliberadamente FORA do status.json: aquele arquivo lista estados válidos, e
 -- 0 não é um estado que se escolhe — é o que sobra quando o tipo não casa.
--- Note que quote/cite (26/27) NÃO caem aqui: são estados válidos e deliberados
--- para material de referência, e devem continuar ordenando por último.
+-- Um callout do Obsidian que não é fase (um `[!note]` ou `[!quote]` no corpo)
+-- não cai aqui: o status vem só do PRIMEIRO bloco, e o resto do arquivo o
+-- freitask nem olha.
 M.STATUS_INVALID = { title = "Sem status", callout = "invalid", icon = "󰘸", hl_group = "DiagnosticError" }
 
 -- Títulos do status.json ANTIGO (pré-callouts), que já não existem no atual.
@@ -91,9 +116,9 @@ M.STATUS_INVALID = { title = "Sem status", callout = "invalid", icon = "󰘸", h
 -- "> N - Título" espalhadas pelo vault durante a migração.
 M.LEGACY_STATUS_TITLES = {
   ["Backlog"] = 1, -- todo
-  ["In Progress"] = 7, -- example
-  ["Blocked"] = 13, -- warning
-  ["Review"] = 9, -- question
+  ["In Progress"] = 3, -- example
+  ["Blocked"] = 5, -- warning
+  ["Review"] = 4, -- question
 }
 
 return M

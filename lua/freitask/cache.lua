@@ -12,6 +12,7 @@
 local C = require("freitask.config")
 local fs = require("freitask.fs")
 local md = require("freitask.md")
+local meta_ = require("freitask.meta")
 local model = require("freitask.model")
 local path_ = require("freitask.path")
 local status = require("freitask.status")
@@ -28,19 +29,23 @@ M.cache = nil
 ---Não checa mais arquivamento: isso agora é o CAMINHO, resolvido antes de
 ---chegar aqui por split_task_path.
 ---@param path string
----@return { block: string[], status_num: integer }|nil
+---@return { block: string[], status_num: integer, meta: freitask.Meta }|nil
 function M.scan_task(path)
   if vim.fn.filereadable(path) == 0 then
     return nil
   end
-  local _, _, block = md.first_block(fs.read_lines(path))
+  -- As linhas são lidas UMA vez e servem às duas extrações: o bloco (status) e
+  -- o frontmatter (posse). Ler de novo para a posse repetiria, por task e por
+  -- build_cache, o custo que esta função existe para evitar.
+  local lines = fs.read_lines(path)
+  local _, _, block = md.first_block(lines)
   block = block or {}
 
   status.ensure()
   -- Arquivo de task sem callout é um arquivo quebrado: 0 o deixa no topo do
   -- projeto em vez de escondê-lo no meio do Backlog.
   local status_num = (#block > 0) and model.parse_block(block).status_num or 0
-  return { block = block, status_num = status_num }
+  return { block = block, status_num = status_num, meta = meta_.read(lines) }
 end
 
 ---Insere ou atualiza uma task no cache em memória. Tasks arquivadas nunca
@@ -61,6 +66,7 @@ function M.update_cache_entry(path)
     if e.path == path then
       e.status_num = scan.status_num
       e.block = scan.block
+      e.meta = scan.meta
       return
     end
   end
@@ -69,6 +75,7 @@ function M.update_cache_entry(path)
     task_id = task_id,
     status_num = scan.status_num,
     block = scan.block,
+    meta = scan.meta,
     path = path,
   }
 end
@@ -87,10 +94,10 @@ function M.remove_cache_entry(path)
   end
 end
 
----Rescan completo de tasks/*/*.md para o cache.
+---Rescan completo de projects/*/tasks/*.md para o cache.
 function M.build_cache()
   M.cache = {}
-  for _, path in ipairs(vim.fn.glob(C.root .. "/*/*.md", true, true)) do
+  for _, path in ipairs(vim.fn.glob(C.projects .. "/*/tasks/*.md", true, true)) do
     M.update_cache_entry(path)
   end
 end
@@ -114,13 +121,15 @@ function M.entries_for(project)
   return list
 end
 
----Lista de ids de projeto (subdiretórios da raiz, exceto reservados).
+---Lista de ids de projeto: os diretórios sob projects/ que têm um tasks/
+---dentro. Um projeto do vault sem pasta de tasks (spec e ADRs, nenhuma frente
+---aberta) simplesmente não aparece no board — é o estado certo, não uma falta.
 ---@return string[]
 function M.list_projects()
   local out = {}
-  for _, path in ipairs(vim.fn.glob(C.root .. "/*", true, true)) do
+  for _, path in ipairs(vim.fn.glob(C.projects .. "/*/tasks", true, true)) do
     if vim.fn.isdirectory(path) == 1 then
-      local name = vim.fn.fnamemodify(path, ":t")
+      local name = vim.fn.fnamemodify(path, ":h:t")
       if not C.RESERVED[name] then
         out[#out + 1] = name
       end
@@ -137,7 +146,7 @@ end
 ---@return freitask.Entry[]
 function M.archived_entries_for(project)
   local out = {}
-  for _, path in ipairs(vim.fn.glob(C.root .. "/" .. project .. "/archived/*/*.md", true, true)) do
+  for _, path in ipairs(vim.fn.glob(C.projects .. "/" .. project .. "/tasks/archived/*/*.md", true, true)) do
     local p, id, tipo = path_.split_task_path(path)
     if p then
       local scan = M.scan_task(path)
@@ -147,6 +156,7 @@ function M.archived_entries_for(project)
         archived = tipo,
         status_num = scan and scan.status_num or 0,
         block = scan and scan.block or {},
+        meta = scan and scan.meta or {},
         path = path,
       }
     end
@@ -170,7 +180,7 @@ end
 ---@return freitask.TaskRef[]
 function M.all_tasks()
   local out = {}
-  local globs = { C.root .. "/*/*.md", C.root .. "/*/archived/*/*.md" }
+  local globs = { C.projects .. "/*/tasks/*.md", C.projects .. "/*/tasks/archived/*/*.md" }
   for _, g in ipairs(globs) do
     for _, path in ipairs(vim.fn.glob(g, true, true)) do
       local project, id, archived = path_.split_task_path(path)
