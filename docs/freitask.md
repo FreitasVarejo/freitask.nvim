@@ -368,6 +368,7 @@ freitask new-project <nome>
 freitask list        [--json] [--archived]
 freitask projects    [--json]
 freitask statuses    [--json]
+freitask kebab       "<texto>"
 freitask rebuild
 freitask doctor      [--fix] [--json] [--quiet]
 ```

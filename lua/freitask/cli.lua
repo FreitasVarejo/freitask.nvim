@@ -122,6 +122,11 @@ freitask — gestão de tasks do vault do Obsidian
   freitask new-project <nome>
       Cria projects/<nome-em-kebab>/tasks/. Projeto já existente é erro.
 
+  freitask kebab "<texto>"
+      Imprime o id que o motor derivaria do texto (acentos dobrados,
+      kebab-case). É como a TUI sugere o id de uma task nova sem ter uma
+      segunda cópia da regra.
+
   freitask list [--json] [--archived]
       Lista as tasks. O JSON traz, por task: project, id, path, archived,
       status (título da fase), status_num, callout, title, desc e
@@ -369,6 +374,18 @@ if cmd == "new-project" then
   local id, err = T.create_project(name)
   if not id then
     die(err, 1)
+  end
+  say(id)
+  quit(0)
+end
+
+--- kebab --------------------------------------------------------------------
+if cmd == "kebab" then
+  local pos = parse_flags(2)
+  local text = pos[1] or die("falta o texto")
+  local id = T.path.kebab(text)
+  if id == "" then
+    die("o texto não rende um id: " .. text, 1)
   end
   say(id)
   quit(0)

@@ -1,2 +1,3 @@
 .luarc.json
 tags
+/tui/target/
