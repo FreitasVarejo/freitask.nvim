@@ -93,7 +93,7 @@ tests/run.sh          # a suíte inteira
 tests/run.sh freitask # filtra por nome de arquivo
 ```
 
-`tests/runner.lua` é um harness de ~80 linhas rodando sob `nvim --clean -l`
+`tests/runner.lua` é um harness mínimo rodando sob `nvim --clean -l`
 — sem busted, sem plenary. A suíte testa um módulo que só toca arquivos e
 `vim.fn`; uma dependência externa aqui seria um passo de setup que ninguém
 lembra de fazer antes de mexer no parser.
@@ -109,25 +109,17 @@ separada da escrita justamente para caber aqui: as regras de um id novo (kebab,
 projeto reservado) são a parte interessante, e `create_task` fica só com o
 disco.
 
-O que **não** está coberto por teste automatizado, e portanto precisa de
-verificação manual quando você mexer: as operações de escrita (`task.move_task`,
-`edit.apply_edit`, `board.rebuild_current`, `doctor --fix`) e a UI. Para as
-primeiras, o caminho mais rápido é um vault descartável — o módulo deriva a raiz
-de `~`, então basta trocar `$HOME`:
+`cli_spec.lua` cobre a outra metade, **de ponta a ponta**: cada caso roda a
+CLI num processo `nvim -l` de verdade com `HOME` apontando para um diretório
+temporário (o módulo deriva o vault de `~`, então nada toca o vault real). Passa
+por `new`, `set`, `list`/`projects`/`statuses --json`, `archive`, `unarchive`,
+`rename`, `delete` e `doctor`, e confere o contrato JSON, os códigos de saída,
+os dois formatos de wikilink num arquivo que referencia a task, o
+`## Histórico` e o `CURRENT.md`.
 
-```bash
-SB=$(mktemp -d); mkdir -p "$SB/ObsidianVault/projects/p/tasks"
-echo 'ref [[t1]] e [[projects/p/tasks/t1|t1]]' > "$SB/ObsidianVault/n.md"
-
-REPO=~/dev/freitask.nvim
-run() { HOME="$SB" nvim --clean --cmd "set runtimepath+=$REPO" \
-  -l "$REPO/lua/freitask/cli.lua" "$@"; }
-run new p t1 "Um" && run archive t1 done && run unarchive t1 \
-  && run rename t1 t2 && run doctor
-```
-
-Confira, depois: os dois formatos de wikilink em `n.md`, o `id:` do
-frontmatter, o log em `## Histórico` e o `CURRENT.md`.
+O que segue **sem** teste automatizado: `doctor --fix` e a UI do Neovim. Para
+o `--fix`, um vault descartável basta — crie o estado quebrado à mão e rode
+`HOME="$(mktemp -d)" … cli.lua doctor --fix` como `cli_spec.lua` faz.
 
 ## Ao mexer
 

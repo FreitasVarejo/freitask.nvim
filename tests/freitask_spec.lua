@@ -665,3 +665,26 @@ describe("status_after_move", function()
     eq(CHECK, task.status_after_move(CHECK, nil))
   end)
 end)
+
+describe("check_status_change", function()
+  it("devolve o número da fase pedida", function()
+    eq(3, task.check_status_change("example", nil))
+    eq(5, task.check_status_change("warning", "dropped"))
+  end)
+
+  it("recusa fase que não está no status.json", function()
+    local num, err = task.check_status_change("bogus", nil)
+    falsy(num)
+    truthy(err:find("desconhecida"))
+  end)
+
+  it("recusa done: quem grava done é o archive", function()
+    -- Escrever `done` sem mover poria "Arquivada" no board de uma task ativa.
+    falsy(task.check_status_change("done", nil))
+  end)
+
+  it("recusa trocar a fase de quem está em archived/done/", function()
+    -- O doctor acusaria callout-vs-pasta logo em seguida.
+    falsy(task.check_status_change("check", "done"))
+  end)
+end)

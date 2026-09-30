@@ -59,6 +59,9 @@ M.list_projects = M.cache.list_projects
 -- arquivo da task
 M.template = M.task.template
 M.create_task = M.task.create_task
+M.create_project = M.task.create_project
+M.delete_task = M.task.delete_task
+M.check_status_change = M.task.check_status_change
 M.validate_new = M.task.validate_new
 M.read_callout = M.task.read_callout
 M.parse_status_num = M.task.parse_status_num

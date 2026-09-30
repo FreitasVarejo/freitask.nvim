@@ -358,16 +358,30 @@ chamar uma função Lua dentro do Neovim — vão chamar `mv`. A CLI existe para
 que o caminho certo seja o mais fácil:
 
 ```bash
-freitask archive   <id|caminho> done|dropped|failed
-freitask unarchive <id|caminho>
-freitask rename    <id|caminho> <novo-id>
-freitask list      [--json] [--archived]
-freitask doctor    [--fix] [--json] [--quiet]
+freitask new         <projeto> <id> "<título>" [--desc "<estado>"]
+freitask set         <id|caminho> [--status <fase>] [--title "…"] [--desc "…"]
+freitask archive     <id|caminho> done|dropped|failed
+freitask unarchive   <id|caminho>
+freitask rename      <id|caminho> <novo-id>
+freitask delete      <id|caminho>
+freitask new-project <nome>
+freitask list        [--json] [--archived]
+freitask projects    [--json]
+freitask statuses    [--json]
+freitask rebuild
+freitask doctor      [--fix] [--json] [--quiet]
 ```
 
+Argumentos e o formato exato de cada saída: `freitask help`.
+
 Saídas: `0` ok · `1` inconsistência pendente ou operação falha · `2` uso
-inválido. Com `--json`, tanto `list` quanto `doctor` emitem estrutura
-parseável — é o contrato para agentes.
+inválido. Com `--json`, `list`, `projects`, `statuses` e `doctor` emitem
+estrutura parseável — é o contrato para agentes e para a TUI. Os avisos do
+motor saem em stderr, uma linha cada; stdout carrega só o dado.
+
+`set` recusa `--status done`: `done` é o que `archive <id> done` grava junto
+com o move. `delete` não pergunta nada — quem confirma é quem chama — e deixa
+as referências penduradas de propósito, para o `doctor` apontar.
 
 Implementação: `vault/.local/bin/freitask` (shim bash) →
 `lua/freitask/cli.lua` (shim Lua) → o módulo `freitask`. **Nenhuma regra
@@ -487,7 +501,8 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
    sendo a única opção: siga o formato do bloco à risca e peça ao dono um
    `freitask rebuild` — é para isso que esse comando existe.
 2. **Status é derivado EXCLUSIVAMENTE do tipo do callout da linha 1** — para
-   mudar o status, troque o callout (`[!todo]`→`[!success]`). Se o tipo não
+   mudar o status, `freitask set <id> --status <fase>`, ou troque o callout à
+   mão (`[!todo]`→`[!example]`). Se o tipo não
    existir em `status.json`, a task vira status 0 (ver seção "Status 0"
    acima) em vez de falhar — mas isso normalmente indica um typo, não é o
    caminho recomendado para setar status de propósito.

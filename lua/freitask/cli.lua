@@ -29,6 +29,13 @@ local function say(s)
   io.stdout:write(tostring(s) .. "\n")
 end
 
+-- O motor avisa por vim.notify, que sob `nvim -l` sai em stderr SEM quebra de
+-- linha — e o aviso colava no caminho que o comando imprime em stdout logo
+-- depois. Aqui cada aviso vira uma linha de stderr: stdout fica só com o dado.
+vim.notify = function(msg)
+  io.stderr:write(tostring(msg) .. "\n")
+end
+
 local function quit(code)
   io.stdout:flush()
   os.exit(code)
@@ -103,8 +110,30 @@ freitask — gestão de tasks do vault do Obsidian
       Regenera o CURRENT.md sem tocar em task nenhuma. É o que falta depois que
       um agente sem shell (o claude.ai pelo MCP) criou o arquivo na mão.
 
+  freitask set <id|caminho> [--status <fase>] [--title "<título>"] [--desc "<estado>"]
+      Troca a fase (o tipo do callout), o título e/ou a descrição em itálico,
+      reserializando o bloco pelo mesmo código de sempre. `--desc ""` apaga a
+      descrição. Recusa `done` (quem grava `done` é `archive <id> done`).
+
+  freitask delete <id|caminho>
+      Apaga a task, sem perguntar — quem confirma é quem chama. Referências a
+      ela ficam penduradas de propósito: o `doctor` as aponta.
+
+  freitask new-project <nome>
+      Cria projects/<nome-em-kebab>/tasks/. Projeto já existente é erro.
+
   freitask list [--json] [--archived]
-      Lista as tasks.
+      Lista as tasks. O JSON traz, por task: project, id, path, archived,
+      status (título da fase), status_num, callout, title, desc e
+      suggested_archive.
+
+  freitask projects [--json]
+      Lista os projetos (inclusive os sem task ativa) e quantas tasks ativas
+      cada um tem.
+
+  freitask statuses [--json]
+      O vocabulário de fases do .freitask/status.json, em ordem, com ícone e
+      grupo de highlight; o 0 é o sentinela "Sem status".
 
 NUNCA mova nem renomeie um arquivo de task com `mv`: as referências do vault
 ficam penduradas e o histórico não é escrito. E prefira `new` a escrever o
@@ -255,7 +284,166 @@ if cmd == "rebuild" then
   quit(0)
 end
 
+--- set ----------------------------------------------------------------------
+if cmd == "set" then
+  local pos, flags = parse_flags(2, { status = true, title = true, desc = true })
+  local ref = pos[1] or die("falta o id ou caminho da task")
+  if flags.status == nil and flags.title == nil and flags.desc == nil then
+    die("nada a mudar: passe --status, --title e/ou --desc")
+  end
+  T.load_status()
+  local path, err = T.find_task(ref)
+  if not path then
+    die(err, 1)
+  end
+
+  local project, _, archived = T.split_task_path(path)
+  local block = T.read_callout(path)
+  if #block == 0 then
+    die("task sem callout (rode `freitask doctor`): " .. path, 1)
+  end
+  local model = T.parse_block(block)
+  if model.id == "" then
+    model.id = vim.fn.fnamemodify(path, ":t:r")
+  end
+  local nm = vim.deepcopy(model)
+
+  if flags.status then
+    local num, serr = T.check_status_change(flags.status, archived)
+    if not num then
+      -- Fase que não existe é erro de uso (2); fase existente mas recusada é
+      -- operação negada (1) — quem chama pode querer distinguir os dois.
+      die(serr, T.status.by_callout()[flags.status] and 1 or 2)
+    end
+    nm.status_num, nm.raw_callout = num, flags.status
+  end
+  if flags.title then
+    nm.title = vim.trim(flags.title)
+    if nm.title == "" then
+      die("o título não pode ficar vazio")
+    end
+  end
+  if flags.desc then
+    nm.desc = vim.trim(flags.desc)
+  end
+
+  T.apply_edit({
+    source = "task",
+    buf = -1,
+    project = project,
+    archived = archived,
+    task_path = path,
+    model = model,
+  }, nm)
+  local got = T.parse_block(T.read_callout(path))
+  if got.status_num ~= nm.status_num or got.title ~= nm.title or got.desc ~= nm.desc then
+    die("set não concluído (veja as mensagens acima)", 1)
+  end
+  T.rebuild_current({ quiet = true })
+  say(path)
+  quit(0)
+end
+
+--- delete -------------------------------------------------------------------
+if cmd == "delete" then
+  local pos = parse_flags(2)
+  local ref = pos[1] or die("falta o id ou caminho da task")
+  local path, err = T.find_task(ref)
+  if not path then
+    die(err, 1)
+  end
+  local ok_del, derr = T.delete_task(path)
+  if not ok_del then
+    die(derr, 1)
+  end
+  T.rebuild_current({ quiet = true })
+  say(path)
+  quit(0)
+end
+
+--- new-project --------------------------------------------------------------
+if cmd == "new-project" then
+  local pos = parse_flags(2)
+  local name = pos[1] or die("falta o nome do projeto")
+  T.ensure_root()
+  local id, err = T.create_project(name)
+  if not id then
+    die(err, 1)
+  end
+  say(id)
+  quit(0)
+end
+
+--- projects -----------------------------------------------------------------
+if cmd == "projects" then
+  local _, flags = parse_flags(2)
+  T.load_status()
+  T.build_cache()
+  local rows = {}
+  for _, p in ipairs(T.list_projects()) do
+    rows[#rows + 1] = { project = p, active = #T.entries_for(p) }
+  end
+  if flags.json then
+    -- vim.json.encode({}) dá "{}", e quem lê espera uma lista.
+    say(#rows == 0 and "[]" or vim.json.encode(rows))
+  else
+    for _, r in ipairs(rows) do
+      say(string.format("%-14s %d", r.project, r.active))
+    end
+  end
+  quit(0)
+end
+
+--- statuses -----------------------------------------------------------------
+if cmd == "statuses" then
+  local _, flags = parse_flags(2)
+  T.load_status()
+  local nums = {}
+  for k in pairs(T.status.status or {}) do
+    nums[#nums + 1] = tonumber(k)
+  end
+  table.sort(nums)
+  table.insert(nums, 1, 0)
+  local rows = {}
+  for _, n in ipairs(nums) do
+    local st = T.status_meta(n)
+    rows[#rows + 1] = { num = n, callout = st.callout, title = st.title, icon = st.icon, hl_group = st.hl_group }
+  end
+  if flags.json then
+    say(vim.json.encode(rows))
+  else
+    for _, r in ipairs(rows) do
+      say(string.format("%d  %-10s %s", r.num, r.callout, r.title))
+    end
+  end
+  quit(0)
+end
+
 --- list ----------------------------------------------------------------------
+
+---A linha de uma task no `list`. O bloco já está na entry (o cache o guarda
+---para o regen), então isto não relê arquivo nenhum.
+---@param e freitask.Entry
+---@return table
+local function list_row(e)
+  local m = T.parse_block(e.block or {})
+  local st = T.status_meta(e.status_num)
+  return {
+    project = e.project,
+    id = e.task_id,
+    status = st.title,
+    status_num = e.status_num,
+    -- O tipo digitado, mesmo quando inválido (status 0): é o que o usuário
+    -- precisa ver para consertar.
+    callout = (m.raw_callout ~= "" and m.raw_callout) or st.callout,
+    title = m.title,
+    desc = m.desc,
+    archived = e.archived or vim.NIL,
+    suggested_archive = T.suggest_archive_type(e.status_num),
+    path = e.path,
+  }
+end
+
 if cmd == "list" then
   local _, flags = parse_flags(2)
   T.load_status()
@@ -263,24 +451,16 @@ if cmd == "list" then
   local rows = {}
   for _, p in ipairs(T.list_projects()) do
     for _, e in ipairs(T.entries_for(p)) do
-      rows[#rows + 1] =
-        { project = p, id = e.task_id, status = T.status_meta(e.status_num).title, archived = vim.NIL, path = e.path }
+      rows[#rows + 1] = list_row(e)
     end
     if flags.archived then
       for _, e in ipairs(T.archived_entries_for(p)) do
-        rows[#rows + 1] =
-          {
-            project = p,
-            id = e.task_id,
-            status = T.status_meta(e.status_num).title,
-            archived = e.archived,
-            path = e.path,
-          }
+        rows[#rows + 1] = list_row(e)
       end
     end
   end
   if flags.json then
-    say(vim.json.encode(rows))
+    say(#rows == 0 and "[]" or vim.json.encode(rows))
   else
     for _, r in ipairs(rows) do
       say(

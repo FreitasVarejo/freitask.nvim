@@ -123,6 +123,73 @@ function M.create_task(project, model)
   return active
 end
 
+---Cria um projeto vazio: `projects/<kebab(nome)>/tasks/`. O nome passa por
+---kebab, como o `<C-c>` do picker sempre fez: projeto é pasta, e pasta com
+---espaço ou acento só atrapalha quem digita o caminho depois.
+---
+---Diferente de `create_task`, aqui o projeto JÁ existir é erro — pedir para
+---criar o que existe é quase sempre um typo no nome, e um "ok" mudo o esconderia.
+---@param name string
+---@return string|nil id, string|nil err
+function M.create_project(name)
+  local id = path_.kebab(vim.trim(name or ""))
+  if id == "" then
+    return nil, "nome de projeto inválido: " .. tostring(name)
+  end
+  if C.RESERVED[id] then
+    return nil, string.format("%q é um diretório reservado, não um projeto", id)
+  end
+  local dir = C.projects .. "/" .. id .. "/tasks"
+  if vim.fn.isdirectory(dir) == 1 then
+    return nil, "projeto já existe: " .. id
+  end
+  if vim.fn.mkdir(dir, "p") == 0 then
+    return nil, "não consegui criar " .. dir
+  end
+  return id
+end
+
+---Apaga o arquivo de uma task. NÃO mexe nas referências do vault: um link para
+---uma task apagada fica pendurado, e é o `doctor` (`link-pendurado`) quem
+---aponta — reescrever o link para lugar nenhum apagaria a informação de que
+---ele existiu. Como o resto de `task`, não regenera o CURRENT.md.
+---@param path string
+---@return boolean|nil ok, string|nil err
+function M.delete_task(path)
+  if not path_.split_task_path(path) then
+    return nil, "não é um arquivo de task: " .. path
+  end
+  if vim.fn.delete(path) ~= 0 then
+    return nil, "não consegui apagar " .. path
+  end
+  cache.remove_cache_entry(path)
+  return true
+end
+
+---Valida a fase pedida para uma task e devolve o número de status. Puro.
+---
+---`done` fica de fora de propósito: é a fase que `archive <id> done` grava
+---junto com o move, e escrevê-la sem mover poria "Arquivada" no board de uma
+---task ativa. Pelo mesmo motivo, uma task em archived/done/ não troca de fase
+---sem sair de lá — o `doctor` acusaria `callout-vs-pasta` logo em seguida.
+---@param callout string
+---@param archived string|nil tipo de archived, ou nil para ativa
+---@return integer|nil status_num, string|nil err
+function M.check_status_change(callout, archived)
+  status.ensure()
+  local num = status.by_callout()[callout]
+  if not num then
+    return nil, "fase desconhecida: " .. tostring(callout)
+  end
+  if callout == "done" then
+    return nil, "`done` é gravado por `freitask archive <id> done`, não por `set`"
+  end
+  if archived == "done" then
+    return nil, "task em archived/done/ fica `done`; desarquive antes (`freitask unarchive <id>`)"
+  end
+  return num
+end
+
 ---Reescreve o bloco de callout de um arquivo no disco (substituindo o primeiro
 ---bloco `>`, ou prependando se não houver).
 ---@param path string
