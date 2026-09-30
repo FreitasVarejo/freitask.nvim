@@ -160,9 +160,7 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     }
     lines.push(Line::from(Span::styled("─".repeat(area.width.saturating_sub(2) as usize), dim())));
 
-    if let Some((path, content)) = &app.preview
-        && *path == t.path
-    {
+    if let Some((_, content)) = app.preview.as_ref().filter(|(path, _)| *path == t.path) {
         for l in content.lines() {
             let style = if l.starts_with('#') {
                 Style::default().fg(Color::Magenta).add_modifier(Modifier::BOLD)

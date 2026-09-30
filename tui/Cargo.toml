@@ -1,11 +1,16 @@
 [package]
 name = "freitask-tui"
 version = "0.1.0"
-edition = "2024"
+edition = "2021"
+# O cargo da distro é o que o dotfiles instala (vault/hooks/setup.sh), e o do
+# Ubuntu 25.04 (pi01) é o 1.84. Com resolver 3, o cargo escolhe dependências
+# que compilam nesta versão, em vez da mais nova de cada uma.
+rust-version = "1.84"
+resolver = "3"
 description = "TUI do freitask: navega nas tasks do vault falando só com a CLI `freitask`"
 publish = false
 
 [dependencies]
-ratatui = "0.30.2"
-serde = { version = "1.0.229", features = ["derive"] }
-serde_json = "1.0.151"
+ratatui = "0.29"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

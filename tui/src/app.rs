@@ -211,10 +211,10 @@ impl App {
     }
 
     pub fn suggest_id(&mut self, id: String) {
-        if let Mode::NewTask(nt) = &mut self.mode
-            && !nt.id_touched
-        {
-            nt.id = id;
+        if let Mode::NewTask(nt) = &mut self.mode {
+            if !nt.id_touched {
+                nt.id = id;
+            }
         }
     }
 
