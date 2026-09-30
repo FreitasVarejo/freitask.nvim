@@ -4,10 +4,20 @@ Documento para quem vai **mexer no código**. Para o formato das tarefas, o
 fluxo de uso e o contrato com agentes de IA, ver [`freitask.md`](freitask.md) —
 este aqui não repete nada de lá.
 
-Tudo vive em `lua/freitask/`. Este repositório é um plugin de Neovim comum: a
-raiz entra no `runtimepath` e `require("freitask")` resolve a partir de `lua/`.
-Quem consome é o dotfiles (spec do lazy.nvim) e a CLI `freitask`, chamada de
-fora do Neovim.
+Duas partes. O **motor** vive em `lua/freitask/`: a raiz do repo entra no
+`runtimepath` de um `nvim --clean -l` e `require("freitask")` resolve a partir
+de `lua/` — o Neovim é só o interpretador, nenhuma janela abre. O único
+consumidor do motor é a CLI (`lua/freitask/cli.lua`, embrulhada pelo shim
+`freitask` do dotfiles). A **TUI** vive em `tui/` (Rust) e é consumidora da
+CLI, não do motor: lê o JSON dela e muda o vault chamando subcomandos.
+
+```
+freitask-tui ──(processo, JSON)──▶ freitask (shim) ──▶ nvim -l cli.lua ──▶ require("freitask")
+agentes, scripts, healthcheck ────▶ freitask (shim) ──┘
+```
+
+Regra nova do motor vai no motor, e a TUI a enxerga pela CLI. Uma regra
+reescrita em Rust seria a segunda cópia que `cli.lua` existe para evitar.
 
 ---
 
@@ -17,10 +27,8 @@ Ela é **acíclica por construção**, e a regra para mantê-la assim é: um mó
 pode requerer módulos à sua esquerda.
 
 ```
-config ──┬── fs ────┬── path ──┬── model ──┬── cache ──┬── task ── board ──┬── doctor
-         └── status ┘   md ────┘           └── links ──┘                   │
-                                                                           ├── ui.form ── edit ──┬── ui.picker
-                                                                           └────────────────────┴── autocmd
+config ──┬── fs ────┬── path ──┬── model ──┬── cache ──┬── task ── board ── doctor
+         └── status ┘   md ────┘           └── links ──┘
 ```
 
 `meta` entrou depois e ocupa a mesma faixa de `model` e `links`: requer `md`, é
@@ -33,7 +41,7 @@ Tamanho de módulo não está aqui de propósito: contagem em contrato apodrece
 | Módulo | Responsabilidade | Não é responsabilidade dele |
 | --- | --- | --- |
 | `config` | Caminhos, tipos de arquivamento, `status.json` default, tabelas de callout. Sem lógica, sem estado. | Decidir qualquer coisa. |
-| `types` | Só `---@class`: `Model`, `Entry`, `Ctx`, `StatusMeta`, `Finding`, `TaskRef`. | Ter código. |
+| `types` | Só `---@class`: `Model`, `Entry`, `StatusMeta`, `Finding`, `TaskRef`. | Ter código. |
 | `fs` | Ler arquivo, recarregar/reapontar buffer, varrer o vault. | Saber o que é uma task. |
 | `status` | O vocabulário de status lido do `status.json`, e o mapa reverso callout → número. | Saber o status de uma *task* — isso é o callout dela. |
 | `path` | Tudo que se deriva de um **caminho**: projeto, id, arquivamento, `kebab`. | Ler arquivo. |
@@ -42,13 +50,10 @@ Tamanho de módulo não está aqui de propósito: contagem em contrato apodrece
 | `cache` | O índice em memória das tasks **ativas**, com o bloco de cada uma. | Enxergar arquivadas (elas são lidas do disco sob demanda). |
 | `links` | Reescrever os wikilinks do vault quando um arquivo muda de endereço. | Decidir que ele mudou. |
 | `meta` | O eixo de EXECUÇÃO no frontmatter (`dono`/`desde`/`dominio`) e a aritmética de data que o sustenta. | Saber a FASE — isso é o callout. |
-| `task` | Operações sobre o **arquivo** de uma task: criar, mover, localizar por id. | Regenerar o board — quem chama decide quando. |
+| `task` | Operações sobre o **arquivo** de uma task: criar, editar (`apply_edit`, que vira rename quando o id muda), mover, apagar, localizar por id. | Regenerar o board — quem chama decide quando. |
 | `board` | O `CURRENT.md`. | Ser fonte de verdade de coisa alguma. |
 | `doctor` | Verificação, reparo e migração de formato. | Adivinhar (não inventa data nem resolve conflito). |
-| `ui/form` | O buffer flutuante: desenhar, completar, parsear de volta. | Saber o que fazer com o modelo. |
-| `edit` | Resolver **o que** editar e persistir o resultado. | Desenhar janela. |
-| `ui/picker` | O picker de dois níveis, no Snacks. | Ter regra de task nenhuma. |
-| `autocmd` | O que dispara sozinho: regen ao salvar, keymaps buffer-local. | — |
+| `cli` | Os subcomandos: argumentos, saída (texto ou `--json`) e código de saída. | Ter regra — é shim sobre o `init`. |
 | `init` | A API pública: os submódulos + a superfície plana (as atribuições `M.<nome> =` no fim do arquivo). | Ter lógica. |
 
 ---
@@ -64,12 +69,27 @@ Tamanho de módulo não está aqui de propósito: contagem em contrato apodrece
 - **`path` existe porque o caminho é fonte de verdade** de duas coisas — projeto
   e arquivamento —, exatamente como o callout é a do status. Não há flag de
   frontmatter para nenhuma das duas.
-- **`ui/form` e `edit` são separados** porque `apply_edit` trata mudança de id
-  como *rename*, e um rename arrasta o arquivo, o `id:` do frontmatter, os
-  wikilinks do vault inteiro e a branch git de mesmo nome. Isso não é desenho de
-  janela, e o form deve poder ser trocado sem encostar nisso.
+- **`task.apply_edit` trata mudança de id como *rename*,** e um rename arrasta
+  o arquivo, o `id:` do frontmatter e os wikilinks do vault inteiro. Por isso
+  o id novo passa pela mesma validação de uma task nova: ele é também o nome da
+  branch.
 - **`task` não chama `board.rebuild_current`.** Quem chama é que sabe se vale a
-  pena: o picker arquiva e regenera uma vez só, no fim.
+  pena: a CLI regenera uma vez só, no fim de cada subcomando.
+- **Sobra consciência de buffer em `fs`, `links`, `task` e `board`** (pular
+  buffer sujo, reapontar buffer renomeado). Era do tempo em que o motor rodava
+  dentro do Neovim do usuário; sob `nvim -l` não há buffer carregado e esses
+  ramos não disparam.
+
+## A TUI (`tui/`)
+
+| Arquivo | Responsabilidade |
+| --- | --- |
+| `engine.rs` | A porta para a CLI: roda `freitask <args>`, decodifica o JSON, devolve o stderr do motor como erro. `FREITASK_BIN` troca o executável. |
+| `app.rs` | O estado da tela e o que cada tecla faz. **Puro**: tecla entra, `Effect` sai — é o que os testes cobrem. |
+| `ui.rs` | Desenho (ratatui). Só lê o `App`. |
+| `main.rs` | O laço: executa os efeitos (processo, editor, leitura do preview) e redesenha. Abrir arquivo dentro de um terminal do Neovim (`$NVIM`) vai para o Neovim pai por `--remote-expr`. |
+
+`cargo test` roda os testes; o dotfiles instala com `cargo install --path tui`.
 
 ## Convenções
 
@@ -117,7 +137,10 @@ por `new`, `set`, `list`/`projects`/`statuses --json`, `archive`, `unarchive`,
 os dois formatos de wikilink num arquivo que referencia a task, o
 `## Histórico` e o `CURRENT.md`.
 
-O que segue **sem** teste automatizado: `doctor --fix` e a UI do Neovim. Para
+`tui/` tem os próprios testes (`cargo test`), do estado e das teclas; o
+desenho em si se verifica abrindo a TUI.
+
+O que segue **sem** teste automatizado: `doctor --fix`. Para
 o `--fix`, um vault descartável basta — crie o estado quebrado à mão e rode
 `HOME="$(mktemp -d)" … cli.lua doctor --fix` como `cli_spec.lua` faz.
 
@@ -125,7 +148,8 @@ o `--fix`, um vault descartável basta — crie o estado quebrado à mão e rode
 
 1. `tests/run.sh`
 2. `luacheck lua tests`
-3. `freitask doctor` no vault real (read-only; deve sair verde)
+3. `(cd tui && cargo test)` se mexeu na TUI — ou no contrato JSON que ela lê
+4. `freitask doctor` no vault real (read-only; deve sair verde)
 
 O luacheck **não** pega `mod.foo` apontando para uma função que não existe —
 `mod` é uma tabela válida e o erro só aparece em runtime, possivelmente meses

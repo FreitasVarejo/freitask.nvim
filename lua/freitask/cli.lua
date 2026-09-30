@@ -84,9 +84,13 @@ end
 local USAGE = [[
 freitask — gestão de tasks do vault do Obsidian
 
+  freitask            (sem argumentos, num terminal)
+  freitask tui
+      Abre a TUI (freitask-tui). Sem terminal — script, agente, pipe — cai
+      neste usage com exit 2. Tratado pelo shim em bash, antes de chegar aqui.
+
   freitask current
-      Abre o CURRENT.md no Neovim interativo (tratado pelo shim em bash,
-      antes de chegar aqui).
+      Abre o CURRENT.md no Neovim interativo (também tratado pelo shim).
 
   freitask doctor [--fix] [--json] [--quiet]
       Verifica a integridade do vault. Read-only por padrão; --fix repara o
@@ -142,7 +146,7 @@ freitask — gestão de tasks do vault do Obsidian
 
 NUNCA mova nem renomeie um arquivo de task com `mv`: as referências do vault
 ficam penduradas e o histórico não é escrito. E prefira `new` a escrever o
-markdown na mão: o bloco é serializado pelo mesmo código que o Neovim usa.
+markdown na mão: o bloco é serializado pelo mesmo código de todo o resto.
 ]]
 
 --- doctor --------------------------------------------------------------------
@@ -225,28 +229,20 @@ if cmd == "rename" then
     die(err, 1)
   end
 
-  local project, _, archived = T.split_task_path(path)
-  local model = T.parse_block(T.read_callout(path))
-  if model.id == "" then
-    model.id = vim.fn.fnamemodify(path, ":t:r")
-  end
-  local ctx = {
-    source = "task",
-    buf = -1,
-    project = project,
-    archived = archived,
-    task_path = path,
-    model = model,
-  }
-  local nm = vim.deepcopy(model)
+  -- O modelo sai do bloco, mas o id atual é o do CAMINHO: é ele que
+  -- apply_edit compara com o novo para decidir que isto é um rename.
+  local _, id = T.split_task_path(path)
+  local nm = T.parse_block(T.read_callout(path))
   nm.id = new_id
-  T.apply_edit(ctx, nm)
-  local expected = vim.fn.fnamemodify(path, ":h") .. "/" .. new_id .. ".md"
-  if vim.fn.filereadable(expected) == 0 then
-    die("rename não concluído (id inválido ou já existente?)", 1)
+  if id == new_id then
+    die("a task já se chama " .. new_id, 1)
+  end
+  local new, aerr = T.apply_edit(path, nm)
+  if not new then
+    die(aerr, 1)
   end
   T.rebuild_current({ quiet = true })
-  say(expected)
+  say(new)
   quit(0)
 end
 
@@ -302,16 +298,11 @@ if cmd == "set" then
     die(err, 1)
   end
 
-  local project, _, archived = T.split_task_path(path)
-  local block = T.read_callout(path)
-  if #block == 0 then
-    die("task sem callout (rode `freitask doctor`): " .. path, 1)
-  end
-  local model = T.parse_block(block)
-  if model.id == "" then
-    model.id = vim.fn.fnamemodify(path, ":t:r")
-  end
-  local nm = vim.deepcopy(model)
+  local _, id, archived = T.split_task_path(path)
+  local nm = T.parse_block(T.read_callout(path))
+  -- O id do caminho, não o do bloco: `set` nunca renomeia, nem quando o link
+  -- da linha 2 está dessincronizado (e aí ele sai consertado).
+  nm.id = id
 
   if flags.status then
     local num, serr = T.check_status_change(flags.status, archived)
@@ -332,17 +323,9 @@ if cmd == "set" then
     nm.desc = vim.trim(flags.desc)
   end
 
-  T.apply_edit({
-    source = "task",
-    buf = -1,
-    project = project,
-    archived = archived,
-    task_path = path,
-    model = model,
-  }, nm)
-  local got = T.parse_block(T.read_callout(path))
-  if got.status_num ~= nm.status_num or got.title ~= nm.title or got.desc ~= nm.desc then
-    die("set não concluído (veja as mensagens acima)", 1)
+  local _, aerr = T.apply_edit(path, nm)
+  if aerr then
+    die(aerr, 1)
   end
   T.rebuild_current({ quiet = true })
   say(path)

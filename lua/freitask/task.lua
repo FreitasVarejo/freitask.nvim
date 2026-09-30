@@ -69,10 +69,22 @@ function M.validate_new(project, id)
   return true
 end
 
+---Os caminhos que um id ocupa num projeto: o ativo e um por tipo de archived.
+---@param project string
+---@param id string
+---@return string[]
+local function taken_paths(project, id)
+  local out = { path_.task_file(project, id) }
+  for _, t in ipairs(C.ARCHIVED_TYPES) do
+    out[#out + 1] = path_.task_file(project, id, t)
+  end
+  return out
+end
+
 ---Cria o arquivo de uma task nova e devolve o caminho.
 ---
----MOTOR ÚNICO de criação: o form e a CLI passam por aqui. Antes a escrita
----morava dentro de `edit.create_task_form`, alcançável só por quem tivesse um
+---MOTOR ÚNICO de criação: a CLI passa por aqui, e a TUI pela CLI. Antes a
+---escrita morava dentro do form do Neovim, alcançável só por quem tivesse um
 ---Neovim com janela — e era justamente por isso que todo agente montava o
 ---markdown na mão.
 ---
@@ -100,11 +112,7 @@ function M.create_task(project, model)
   -- Arquivada conta como existente: o id é o nome da branch, e ressuscitar um
   -- id arquivado em silêncio daria duas tasks com a mesma branch.
   local active = path_.task_file(project, id)
-  local taken = { active }
-  for _, t in ipairs(C.ARCHIVED_TYPES) do
-    taken[#taken + 1] = path_.task_file(project, id, t)
-  end
-  for _, candidate in ipairs(taken) do
+  for _, candidate in ipairs(taken_paths(project, id)) do
     if vim.fn.filereadable(candidate) == 1 then
       return nil, "já existe uma task com esse id: " .. candidate
     end
@@ -210,6 +218,74 @@ function M.file_replace_callout(path, new_block)
   vim.fn.writefile(out, path)
 end
 
+---Aplica um modelo editado ao arquivo de uma task e devolve o caminho final.
+---
+---Se o id muda, é um RENAME, com tudo que ele arrasta: o arquivo, o `id:` do
+---frontmatter e os wikilinks do vault inteiro (`links.retarget_links`). O id é
+---o nome da BRANCH git também, e por isso passa pela mesma validação de uma
+---task nova (kebab-case, livre inclusive em archived/) — renomear para
+---"Minha Task" criaria um arquivo e uma branch que ninguém consegue digitar.
+---
+---Editar uma task arquivada NÃO a desarquiva, mesmo que a fase nova seja de
+---task ativa: mover arquivo como efeito colateral de uma edição é o tipo de
+---mágica que come dado. Quem move é `archive`/`unarchive`.
+---
+---Como o resto de `task`, NÃO regenera o CURRENT.md.
+---@param path string
+---@param nm freitask.Model o modelo novo; `nm.id` é o id desejado
+---@return string|nil new_path, string|nil err
+function M.apply_edit(path, nm)
+  status.ensure()
+  local project, old_id, archived = path_.split_task_path(path)
+  if not project then
+    return nil, "não é um arquivo de task: " .. path
+  end
+  local renaming = nm.id ~= old_id
+  local new_path = renaming and path_.task_file(project, nm.id, archived) or path
+  if renaming then
+    local ok, err = M.validate_new(project, nm.id)
+    if not ok then
+      return nil, err
+    end
+    for _, candidate in ipairs(taken_paths(project, nm.id)) do
+      if vim.fn.filereadable(candidate) == 1 then
+        return nil, "já existe uma task com esse id: " .. candidate
+      end
+    end
+  end
+
+  local lines = fs.read_lines(path)
+  local s, e = md.first_block_range(lines)
+  if not s then
+    return nil, "task sem callout (rode `freitask doctor`): " .. path
+  end
+  local m = vim.deepcopy(nm)
+  m.project, m.archived = project, archived
+  lines = md.splice(lines, s, e, model_.serialize_block(m))
+
+  if not renaming then
+    vim.fn.writefile(lines, path)
+    cache.update_cache_entry(path)
+    return path
+  end
+
+  -- rename de verdade, e só então a escrita: se a escrita falhar no meio, o
+  -- conteúdo antigo continua existindo, só com o nome novo.
+  if vim.fn.rename(path, new_path) ~= 0 then
+    return nil, "não consegui renomear para " .. nm.id
+  end
+  -- `id:` do frontmatter (injetado pelo obsidian.nvim) espelha o nome do
+  -- arquivo; sem isto ele ficaria apontando para o id antigo.
+  md.update_frontmatter_key(lines, "id", nm.id)
+  vim.fn.writefile(lines, new_path)
+  cache.remove_cache_entry(path)
+  cache.update_cache_entry(new_path)
+  -- Renomear muda o basename, então quebra TAMBÉM os links curtos `[[id]]`
+  -- espalhados pelo vault — não só os path-qualified.
+  links.retarget_links(path, new_path)
+  return new_path
+end
+
 ---A fase depois de (des)arquivar. Puro.
 ---
 ---`archive <id> done` movia o arquivo e deixava o callout como estava, e o
@@ -308,39 +384,6 @@ local function move_task(path, dest)
   end
   links.retarget_links(path, new_path)
   return new_path
-end
-
----Pergunta o tipo de arquivamento, com o default derivado do callout. Existia
----duas vezes — no <C-r> do picker e no <leader>oa — e as duas cópias já tinham
----divergido: uma montava os rótulos de ARCHIVED_TYPES, a outra os tinha
----hardcoded numa string. Acrescentar um quarto tipo teria consertado só metade.
----vim.fn.confirm e não vim.ui.select: é bloqueante e não abre uma janela que
----dispute foco com a do picker.
----@param id string
----@param status_num integer|nil
----@return string|nil tipo nil se cancelado
-function M.prompt_archive_type(id, status_num)
-  local suggested = path_.suggest_archive_type(status_num)
-  local labels, default = {}, 1
-  for i, t in ipairs(C.ARCHIVED_TYPES) do
-    labels[i] = C.ARCHIVED_PROMPT[t] or t
-    if t == suggested then
-      default = i
-    end
-  end
-  local choice =
-    vim.fn.confirm("Arquivar '" .. id .. "' como:", table.concat(labels, "\n") .. "\n&cancelar", default)
-  if choice < 1 or choice > #C.ARCHIVED_TYPES then
-    return nil
-  end
-  return C.ARCHIVED_TYPES[choice]
-end
-
----Confirma o desarquivamento. Contraparte de M.prompt_archive_type.
----@param id string
----@return boolean
-function M.confirm_unarchive(id)
-  return vim.fn.confirm("Desarquivar '" .. id .. "'?", "&Sim\n&Não", 2) == 1
 end
 
 ---Arquiva uma task: move para projects/<projeto>/tasks/archived/<tipo>/, tirando-a do

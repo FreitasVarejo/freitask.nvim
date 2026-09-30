@@ -4,9 +4,11 @@ Como registrar tarefas e o planejamento diário neste setup — pensado tanto pa
 o usuário quanto para **agentes de IA** que precisem ler/criar notas sem quebrar
 as convenções.
 
-Implementação: `lua/freitask/` (o módulo, dividido por responsabilidade), neste
-repositório; o dotfiles só carrega o plugin via spec do lazy.nvim
-(`nvim/lua/plugins/freitask.lua`). Opera **exclusivamente** sob
+Implementação, neste repositório: o **motor** em `lua/freitask/` (dividido por
+responsabilidade), que a CLI `freitask` roda sob `nvim -l`, e a **TUI** em
+`tui/` (Rust), que fala com o motor só pela CLI. O Neovim não carrega nada
+daqui: o dotfiles só abre a TUI num float (`<leader>k`) e roda
+`freitask rebuild` ao salvar uma task. Opera **exclusivamente** sob
 `~/ObsidianVault/projects/<projeto>/tasks/`. Para o mapa dos módulos e como
 testar, ver
 [`freitask-internals.md`](freitask-internals.md).
@@ -113,10 +115,10 @@ removido, edição manual malfeita), a task recebe `status_num = 0` em vez de
 cair silenciosamente em `todo`. O tipo digitado é **preservado verbatim** no
 arquivo (não é substituído nem apagado), para que:
 
-- a task continue abrindo no form via `<leader>oe`/`<C-e>` — status 0 não é um
-  beco sem saída;
-- o erro fique visível ao reabrir (o form mostra o tipo errado na linha 3,
-  pronto pra corrigir);
+- a task continue consertável — `s` na TUI (ou `freitask set <id> --status
+  <fase>`) troca o tipo; status 0 não é um beco sem saída;
+- o erro fique visível: `freitask list --json` devolve o tipo errado em
+  `callout`, e a TUI mostra a task com o ícone de erro;
 - no board, a task ordene **antes de tudo no seu projeto** (0 é o menor
   `status_num`), com ícone/hl de erro — sinal de "conserte isso".
 
@@ -198,60 +200,48 @@ weekday: Monday
 
 ---
 
-## Uso interativo (Neovim)
+## Uso interativo (TUI)
 
-| Tecla | Onde | Ação |
-| ----- | ---- | ---- |
-| `<leader>ob` | qualquer lugar | Abre o picker: projetos → tarefas |
-| `<leader>oe` | cursor sobre um callout (em `CURRENT.md` ou no arquivo da tarefa) | Abre o **form** de edição multi-campo |
-| `<leader>oa` | dentro de um arquivo de tarefa | Arquiva (perguntando o tipo) ou desarquiva a tarefa do buffer |
-| `<C-a>` | picker de projetos | Regenera e abre o `CURRENT.md` |
+`freitask` sem argumentos, num terminal, abre a TUI (`freitask-tui`); no
+Neovim, `<leader>k` a abre num float. São três painéis: projetos, as tarefas
+do projeto (ícone e cor da fase) e o preview do arquivo.
 
-Dentro do picker de tarefas: `<C-t>` nova tarefa (abre o form vazio) · `<C-x>`
-deletar · `<C-r>` arquivar **ou desarquivar** (a mesma tecla nos dois sentidos,
-conforme a tarefa selecionada) · `<C-u>` mostrar/esconder as arquivadas na
-lista · `<C-e>` editar (form) · `<C-o>` voltar. No picker de projetos: `<C-c>`
-novo projeto.
+| Tecla | Ação |
+| ----- | ---- |
+| `n` | nova tarefa no projeto: título → id (sugerido pelo motor a partir do título, editável) → descrição; nasce `todo` |
+| `s` | trocar a fase |
+| `t` / `i` | editar o título / a descrição do estado |
+| `r` | renomear o id |
+| `a` | arquivar (o tipo sugerido vem pré-selecionado) ou, numa arquivada, desarquivar |
+| `A` | mostrar / esconder as arquivadas |
+| `d` | apagar (pede `y`) |
+| `N` | novo projeto |
+| `c` | regenerar e abrir o `CURRENT.md` |
+| `/` | filtrar por id ou título |
+| `Enter` / `e` | abrir a tarefa no editor |
+| `?` | todas as teclas |
 
-O **form** (janela flutuante) é **posicional, sem rótulos no texto** — os
-rótulos aparecem como virtual text à direita de cada linha, mas não fazem
-parte do conteúdo editável:
+A TUI **não conhece regra de tarefa**: cada tecla vira um subcomando da CLI
+(`set`, `rename`, `archive`…), e quando o motor recusa, a mensagem dele aparece
+na barra de baixo e o modal volta preenchido para corrigir. As **notas**
+(linhas 4+) se editam no editor (`e`) — texto livre não cabe num campo.
 
-```
-Título da task                          título
-id-da-task                               id / branch
-todo _descrição opcional do estado_      tipo de status + descrição
-nota livre 1
-nota livre 2
-```
+Abrir uma tarefa com a TUI **dentro do Neovim** a abre no Neovim pai (via
+`$NVIM`) e fecha o float, como o lazygit; fora dele, roda `$VISUAL`/`$EDITOR`
+em primeiro plano e regenera o `CURRENT.md` na volta. Salvar uma tarefa no
+Neovim roda `freitask rebuild` (autocmd do dotfiles).
 
-Linha 1 = título · linha 2 = id (kebab-case; se deixada em branco, é derivada
-do título) · linha 3 = `<tipo-de-callout>` seguido, opcionalmente, de
-`_descrição_` em itálico · linha 4+ = notas livres.
+Renomear o id faz **rename real** do arquivo (`vim.fn.rename`, não
+escrever-o-novo-e-apagar-o-velho) e **migra as referências do vault**
+(`M.retarget_links`) junto com o `id:` do frontmatter. O id novo passa pela
+mesma validação de uma tarefa nova — kebab-case e livre, inclusive em
+`archived/` —, porque ele é também o nome da branch.
 
-`⏎` salva, `q`/`<Esc>` cancela, `<C-s>` abre um `vim.ui.select` com os status
-disponíveis (troca só o tipo da linha 3, preservando a descrição); a linha 3
-também tem completion (`<C-x><C-o>`) para os tipos de callout. **A validação é
-estrita**: tipo de callout desconhecido na linha 3, ou menos de 3 linhas, faz o
-`⏎` recusar e notificar em vez de fechar — o texto digitado continua no buffer
-para corrigir. (O parser do *arquivo* é tolerante — vira status 0 — mas o form
-não deixa você criar um status 0 sem querer.)
-
-O mesmo form serve para **criar** (`<C-t>`, buffer vazio com status inicial
-`todo`) e **editar** (`<C-e>`/`<leader>oe`, pré-preenchido) — um único formato,
-um único parser (`parse_form`), sem dois caminhos para o mesmo dado divergirem.
-
-Editar a partir do `CURRENT.md` grava no arquivo-fonte **e** atualiza o bloco
-no painel in place. Renomear o `Id` faz **rename real** do arquivo
-(`vim.fn.rename`, não escrever-o-novo-e-apagar-o-velho) — o arquivo e a branch
-passam a se chamar pelo novo id — e **migra as referências do vault**
-(`M.retarget_links`) junto com o `id:` do frontmatter.
-
-Editar uma tarefa **arquivada** funciona normalmente (o form abre com o título
-`Editar task (archived/<tipo>)`), inclusive renomear o id — ela continua na
-mesma pasta de arquivamento. Trocar o callout de uma tarefa arquivada para um
-status "ativo" **não** a desarquiva: mover arquivo como efeito colateral de um
-save seria fácil de disparar sem querer. Use `<leader>oa` / `<C-r>`.
+Editar uma tarefa **arquivada** funciona normalmente, inclusive renomear o id
+— ela continua na mesma pasta de arquivamento. Trocar a fase de uma arquivada
+**não** a desarquiva: mover arquivo como efeito colateral de uma edição seria
+fácil de disparar sem querer. Quem move é `a` / `freitask unarchive`. E `done`
+não se escolhe no `s`: é o que `archive <id> done` grava junto com o move.
 
 ### Arquivar / desarquivar / deletar
 
@@ -273,19 +263,21 @@ Os tipos são **três**:
 | `dropped` | decidi não fazer / parei de tocar |
 | `failed` | tentei e não deu |
 
-`done` e `failed` são deriváveis do callout, e por isso o prompt de
-arquivamento já vem **pré-selecionado** a partir dele (`M.suggest_archive_type`:
-`done`/`success`/`check`/`tip`/`hint` → `done`; `failure`/`fail`/`error`/
-`danger`/`missing`/`bug` → `failed`; o resto → `dropped`). `dropped` é a única
+O tipo de arquivamento já vem **pré-selecionado** a partir do callout
+(`M.suggest_archive_type`, exposto como `suggested_archive` no
+`list --json`: `done`/`check` → `done`; o resto → `dropped`). `failed` não tem
+default desde que as fases encolheram para seis — nenhuma delas significa
+"falhou" — e se escolhe à mão. `dropped` é a única
 decisão que o status não carrega. Não há um quarto balde genérico ("misc") de
 propósito: ele viraria o destino de tudo que se arquiva com pressa, sem
 distinguir nada — e criar um diretório depois é trivial, esvaziar um cheio não.
 
-- **Arquivar** (`<C-r>` no picker · `<leader>oa` no arquivo ·
+- **Arquivar** (`a` na TUI · `freitask archive <id> <tipo>` ·
   `M.archive_task(path, tipo)`): move o arquivo, reescreve o wikilink da linha 2
   para o novo caminho, registra no rodapé (ver abaixo), migra as referências do
   vault e tira do cache.
-- **Desarquivar** (mesmas teclas · `M.unarchive_task(path)`): o caminho inverso.
+- **Desarquivar** (`a` numa arquivada · `freitask unarchive <id>` ·
+  `M.unarchive_task(path)`): o caminho inverso.
   A tarefa volta ao cache e reaparece no `CURRENT.md` na regen seguinte.
 
 #### Rodapé `## Histórico`
@@ -309,18 +301,20 @@ e quando você mudou de ideia). As glosas em PT-BR são `done` → feito,
 
 Entradas novas entram no **fim da seção**, não no fim do arquivo — se você
 escrever outra `## seção` depois do histórico, ela continua abaixo. Só o
-arquivamento escreve ali: renomear o id, editar pelo form ou regenerar o board
+arquivamento escreve ali: renomear o id, editar (`set`) ou regenerar o board
 **não** acrescentam linha. O rodapé também não vaza para o `CURRENT.md`, que
 reimprime apenas o bloco de callout.
 
 Esta é a **única** exceção à regra de que a ferramenta não reescreve o corpo do
 arquivo — e ela só acrescenta, nunca mexe no que já estava lá.
-- **Ver as arquivadas**: `<C-u>` no picker de tarefas alterna a exibição delas
-  na mesma lista (prefixadas com `[<tipo>]` e esmaecidas). São lidas do disco
+- **Ver as arquivadas**: `A` na TUI alterna a exibição delas na mesma lista
+  (prefixadas com `[<tipo>]` e esmaecidas); `freitask list --archived` as
+  inclui. São lidas do disco
   sob demanda (`M.archived_entries_for`) e **nunca** entram em `M.cache`, para
   que board, regen e o resto do módulo sigam enxergando só o que está ativo.
-- **Deletar** (`<C-x>` no picker): pede confirmação e apaga o arquivo do disco
-  de vez.
+- **Deletar** (`d` na TUI, que pede `y` · `freitask delete <id>`, que não
+  pergunta): apaga o arquivo do disco de vez. As referências a ela ficam
+  penduradas de propósito, e o `doctor` as aponta (`link-pendurado`).
 
 ### Referências do Obsidian (`M.retarget_links`)
 
@@ -342,20 +336,22 @@ Ficam **de fora** da varredura, de propósito:
 
 - `daily/*.md` — são snapshots de como o board estava naquele dia;
   reescrevê-los falsificaria o histórico.
-- `tasks/CURRENT.md` — é regenerado do zero; basta o `rebuild_current` seguinte.
+- `CURRENT.md` (na raiz do vault) — é regenerado do zero; basta o
+  `rebuild_current` seguinte.
 
-Arquivos abertos num buffer **com alterações não salvas** são pulados e
-reportados por nome (mesma postura do `rebuild_current` diante de um
-`CURRENT.md` sujo) — atualize-os à mão ou salve e refaça a operação.
+A CLI roda **fora** do seu Neovim e não enxerga os buffers dele: uma nota
+aberta e com alterações não salvas que referencia a tarefa é reescrita no
+disco mesmo assim. O Neovim avisa (W12) quando você for salvá-la — recarregue
+(`:e`) antes; se salvar por cima, o `doctor` acusa o link pendurado.
 
 ---
 
-## CLI (`freitask`) — para quem não é o Neovim
+## CLI (`freitask`)
 
-O Neovim **não é o único escritor** deste vault: há o Obsidian (aqui e no
-celular, via Syncthing) e agentes de IA com acesso a shell. Nenhum deles vai
-chamar uma função Lua dentro do Neovim — vão chamar `mv`. A CLI existe para
-que o caminho certo seja o mais fácil:
+A CLI é a **única porta para o motor**: a TUI passa por ela, e também os
+outros escritores deste vault — o Obsidian (aqui e no celular, via Syncthing)
+e agentes de IA com acesso a shell. Nenhum deles vai chamar uma função Lua; sem
+a CLI, chamariam `mv`. Ela existe para que o caminho certo seja o mais fácil:
 
 ```bash
 freitask new         <projeto> <id> "<título>" [--desc "<estado>"]
@@ -491,11 +487,10 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 1. **Criar tarefa**: `freitask new <projeto> <id> "<título>" [--desc "<estado>"]`.
    É o caminho único onde há shell — ele valida (id kebab-case, projeto não
    reservado, id livre inclusive em `archived/`; projeto novo é criado), serializa o bloco pelo mesmo
-   código que o Neovim usa e **regenera o `CURRENT.md`**. Montar o markdown na
+   código de todo o resto e **regenera o `CURRENT.md`**. Montar o markdown na
    mão deixa o painel para trás, que era o sintoma antigo: task criada por
    arquivo não aparecia no board até alguém salvar outra task no Neovim.
-   Dentro do Neovim o caminho é o form (`<C-t>` no picker), que chama o mesmo
-   motor. De dentro do Lua, `require("freitask").create_task(project, model)` —
+   Na TUI, `n` chama o mesmo `freitask new`. De dentro do Lua, `require("freitask").create_task(project, model)` —
    `model` é `{ status_num, raw_callout, title, id, desc, extras }`, os mesmos
    campos que `parse_block` devolve.
    Sem shell (o claude.ai pelo conector MCP), escrever o arquivo à mão segue
@@ -556,7 +551,7 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
   `vault/.local/bin/freitask` (no dotfiles) são shims sem lógica: **não**
   acrescente regra neles, senão passam a existir duas versões da mesma regra.
 - `links.retarget_links` é chamada por `task.archive_task`,
-  `task.unarchive_task` e `edit.apply_edit` (rename). Qualquer caminho novo que mova ou renomeie um
+  `task.unarchive_task` e `task.apply_edit` (rename). Qualquer caminho novo que mova ou renomeie um
   arquivo de task precisa chamá-la também — é o único ponto que conserta as
   referências do vault.
 - `doctor.migrate_format()` converte arquivos de formatos antigos para o atual
@@ -570,7 +565,7 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
   cheque se essa tabela precisa crescer, senão a migração vira texto-livre
   permanente em vez de status.
 - `path.split_task_path` é o **guarda único** de "isto é um arquivo de task?" —
-  cache, autocmds, form e picker passam por ele. Ao acrescentar um formato de
+  cache, doctor e CLI passam por ele. Ao acrescentar um formato de
   caminho, mude-o lá e não com um `match` novo no ponto de uso.
 - O cache (`cache.cache`) guarda o **bloco bruto** de cada task (`entry.block`),
   lido uma única vez por `scan_task`; `rebuild_current` reimprime a partir daí
@@ -578,15 +573,16 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
   `scan_task` a abrir o arquivo de novo em outro lugar.
 - Validação:
   ```bash
-  tests/run.sh        # a suíte (funções puras: parser, links, kebab…)
+  tests/run.sh        # funções puras + a CLI de ponta a ponta
+  (cd tui && cargo test)   # estado e teclas da TUI
   luacheck lua tests
   shellcheck -x tests/run.sh
   freitask doctor          # integridade dos DADOS (o resto checa o CÓDIGO)
   ./healthcheck.sh         # inclui o doctor via vault/hooks/check.sh
   ```
-  As operações de **escrita** e a UI não têm teste automatizado; o roteiro
-  manual (vault descartável via `$HOME`) está em
-  [`freitask-internals.md`](freitask-internals.md).
+  As operações de **escrita** são cobertas por `tests/cli_spec.lua`, num vault
+  descartável (ver [`freitask-internals.md`](freitask-internals.md)); o que
+  segue manual é o `doctor --fix` e o desenho da TUI.
 - O `doctor` é a rede de segurança contra escritores que não passam por este
   módulo (Obsidian, celular, agentes). Ao acrescentar um invariante ao formato,
   acrescente **junto** o check correspondente — um invariante que só existe na

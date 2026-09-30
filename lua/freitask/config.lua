@@ -51,13 +51,7 @@ end
 -- nome do diretório, que é o dado real.
 M.ARCHIVED_LABELS = { done = "feito", dropped = "abandonado", failed = "falhou" }
 
--- Rótulos do vim.fn.confirm, com `&` marcando a tecla de atalho. As iniciais
--- são distintas de propósito (o/p/f): "done" e "dropped" colidiriam em "d".
--- Fica ao lado de ARCHIVED_TYPES para que acrescentar um tipo sem lhe dar um
--- rótulo apareça na hora, e não como um item mudo no prompt.
-M.ARCHIVED_PROMPT = { done = "d&one", dropped = "dro&pped", failed = "&failed" }
-
--- Callouts que sugerem cada tipo no prompt de arquivamento. Só um DEFAULT: o
+-- Callouts que sugerem cada tipo de arquivamento. Só um DEFAULT: o
 -- tipo é escolhido por quem arquiva, senão o caminho viraria uma segunda fonte
 -- de verdade do status, obrigada a concordar com o callout para sempre.
 --

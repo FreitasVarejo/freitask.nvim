@@ -1,13 +1,13 @@
 -- freitask — gestão de tasks sobre o vault do Obsidian.
 --
--- Este arquivo é a API PÚBLICA e nada mais: não tem lógica, só reúne o que os
--- consumidores (o spec do plugin, a CLI, os keymaps) precisam chamar. Cada
--- regra mora num módulo só; ver docs/freitask-internals.md para o mapa e
+-- Este arquivo é a API PÚBLICA e nada mais: não tem lógica, só reúne o que o
+-- consumidor (a CLI, lua/freitask/cli.lua) precisa chamar. Cada regra mora
+-- num módulo só; ver docs/freitask-internals.md para o mapa e
 -- docs/freitask.md para o formato e o fluxo de uso.
 --
 -- A ordem dos requires não importa: a pilha é acíclica por construção
 -- (config → fs/status → path/md → model → cache/links → task → board →
--- doctor/ui), e o init está no topo, onde ninguém importa de volta.
+-- doctor), e o init está no topo, onde ninguém importa de volta.
 
 local M = {}
 
@@ -22,10 +22,6 @@ M.links = require("freitask.links")
 M.task = require("freitask.task")
 M.board = require("freitask.board")
 M.doctor_mod = require("freitask.doctor")
-M.form = require("freitask.ui.form")
-M.edit = require("freitask.edit")
-M.picker = require("freitask.ui.picker")
-M.autocmd = require("freitask.autocmd")
 
 --- Superfície plana ----------------------------------------------------------
 --
@@ -68,24 +64,12 @@ M.parse_status_num = M.task.parse_status_num
 M.find_task = M.task.find_task
 M.archive_task = M.task.archive_task
 M.unarchive_task = M.task.unarchive_task
-M.prompt_archive_type = M.task.prompt_archive_type
-M.confirm_unarchive = M.task.confirm_unarchive
+M.apply_edit = M.task.apply_edit
 M.retarget_links = M.links.retarget_links
 
--- board, manutenção e UI
+-- board e manutenção
 M.rebuild_current = M.board.rebuild_current
 M.doctor = M.doctor_mod.doctor
 M.migrate_format = M.doctor_mod.migrate_format
-M.resolve_under_cursor = M.edit.resolve_under_cursor
-M.edit_task_form = M.form.edit_task_form
-M.edit_task_file = M.edit.edit_task_file
-M.edit_under_cursor = M.edit.edit_under_cursor
-M.create_task_form = M.edit.create_task_form
-M.apply_edit = M.edit.apply_edit
-M.callout_omnifunc = M.form.callout_omnifunc
-M.open_tasks = M.picker.open_tasks
-M.open_projects = M.picker.open_projects
-M.toggle_archive_current_file = M.autocmd.toggle_archive_current_file
-M.setup_autocmd = M.autocmd.setup_autocmd
 
 return M

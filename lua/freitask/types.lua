@@ -44,17 +44,6 @@
 ---@field archived string|nil
 ---@field meta freitask.Meta
 
----Contexto de uma edição em curso: de onde o bloco veio e para onde volta.
----@class freitask.Ctx
----@field source "current"|"task"
----@field buf integer
----@field block_start integer|nil
----@field block_end integer|nil
----@field project string
----@field archived string|nil
----@field task_path string
----@field model freitask.Model
-
 ---Um achado do doctor. `fixed` diz se ESTA passagem reparou.
 ---@class freitask.Finding
 ---@field level "error"|"warn"

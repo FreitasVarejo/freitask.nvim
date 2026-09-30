@@ -5,7 +5,6 @@ max_line_length = 120
 
 globals = {
   "vim",
-  "Snacks",
 }
 
 -- Os specs rodam sob tests/runner.lua, que injeta o vocabulário de teste como

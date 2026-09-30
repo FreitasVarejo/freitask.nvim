@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tests/run.sh — roda a suíte de testes do config do Neovim.
+# tests/run.sh — roda a suíte de testes do motor do freitask.
 #
 # `--clean`: a suíte não deve depender de plugin nenhum nem do estado do
 # usuário, pelo mesmo motivo que a CLI do freitask não depende (ver

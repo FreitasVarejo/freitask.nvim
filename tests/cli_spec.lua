@@ -135,6 +135,16 @@ describe("cli: arquivar, renomear, apagar", function()
     truthy(n:find("[[projects/meu-projeto/tasks/t2|t2]]", 1, true), n)
   end)
 
+  it("rename recusa id fora de kebab e id já ocupado, até em archived/", function()
+    -- Regressão: `rename t "Id Ruim"` criava `Id Ruim.md` — um arquivo e uma
+    -- branch que ninguém digita.
+    eq(1, (run("rename", "t2", "Id Ruim")))
+    eq(0, (run("new", "meu-projeto", "t3", "Três")))
+    eq(0, (run("archive", "t3", "dropped")))
+    eq(1, (run("rename", "t2", "t3")))
+    eq(1, vim.fn.filereadable(vault .. "/projects/meu-projeto/tasks/t2.md"))
+  end)
+
   it("delete apaga e deixa o link pendurado para o doctor", function()
     eq(0, (run("delete", "t2")))
     eq(0, vim.fn.filereadable(vault .. "/projects/meu-projeto/tasks/t2.md"))

@@ -1,50 +1,44 @@
-# freitask.nvim
+# freitask
 
-Gestão de tarefas em Markdown sobre um vault do Obsidian, dirigida por
-[Snacks.picker](https://github.com/folke/snacks.nvim). Uma tarefa é **um
+Gestão de tarefas em Markdown sobre um vault do Obsidian. Uma tarefa é **um
 arquivo**; o status é **o tipo do callout**; estar arquivada é **o caminho**.
 Não há banco de dados, e nenhum estado vive fora dos arquivos que o Obsidian já
 sincroniza.
 
-Foi extraído do meu dotfiles quando passou de 3.000 linhas — ver
-`docs/freitask-internals.md` para o mapa dos módulos.
+Duas partes, neste repo:
+
+- **o motor** (`lua/freitask/`), com todas as regras, rodado pela CLI
+  `freitask` sob `nvim --clean -l` — o Neovim como interpretador Lua, sem
+  janela;
+- **a TUI** (`tui/`, Rust), uma tela estilo lazygit que fala com o motor só
+  pela CLI.
+
+O nome `.nvim` é do tempo em que isto era um plugin com picker no Snacks; o
+Neovim não carrega mais nada daqui.
 
 ## Instalação
 
-Com [lazy.nvim](https://github.com/folke/lazy.nvim), a partir de um clone local:
-
-```lua
-{
-  dir = vim.fn.expand("~/dev/freitask.nvim"),
-  dependencies = { "folke/snacks.nvim" },
-  keys = {
-    { "<leader>ob", function() require("freitask").open_projects() end, desc = "Freitask" },
-  },
-  init = function()
-    require("freitask").setup_autocmd()
-  end,
-}
-```
-
-O módulo assume o vault em `~/ObsidianVault/projects/<projeto>/tasks/` (ver `lua/freitask/config.lua`).
-
-## CLI
-
-`lua/freitask/cli.lua` roda sob `nvim -l` e expõe as mesmas operações fora do
-editor — é o caminho que o Obsidian, scripts e agentes de IA devem usar em vez
-de `mv`/`rm`, porque só ele mantém os invariantes acoplados em sincronia:
+A CLI é um shim que vive no dotfiles (`vault/.local/bin/freitask`), porque é o
+dotfiles que sabe onde este repo foi clonado (`FREITASK_REPO`, default
+`~/dev/freitask.nvim`). A TUI:
 
 ```bash
-freitask list
-freitask archive <id> done|dropped|failed
-freitask unarchive <id>
-freitask rename <antigo> <novo>
-freitask doctor [--fix]
+cargo install --path tui     # instala freitask-tui em ~/.cargo/bin
 ```
 
-O executável `freitask` que embrulha essa chamada vive no dotfiles
-(`vault/.local/bin/freitask`), porque é o dotfiles que sabe onde este repo foi
-clonado.
+O módulo assume o vault em `~/ObsidianVault/projects/<projeto>/tasks/` (ver
+`lua/freitask/config.lua`).
+
+## Uso
+
+```bash
+freitask                  # num terminal: abre a TUI (`?` lista as teclas)
+freitask list [--json]    # e o resto dos subcomandos: `freitask help`
+```
+
+A CLI é o caminho que a TUI, o Obsidian, scripts e agentes de IA devem usar em
+vez de `mv`/`rm`, porque só ela mantém os invariantes acoplados em sincronia
+(arquivo, link da linha 2, referências do vault, `## Histórico`).
 
 ## Documentação
 
@@ -56,10 +50,11 @@ clonado.
 ## Testes
 
 ```bash
-tests/run.sh          # suíte inteira
-tests/run.sh links    # filtra por nome de arquivo
+tests/run.sh             # motor: funções puras + a CLI de ponta a ponta
+tests/run.sh cli         # filtra por nome de arquivo
 luacheck lua tests
+(cd tui && cargo test)   # TUI: estado e teclas
 ```
 
-O harness (`tests/runner.lua`, ~80 linhas) roda sob `nvim --clean -l` de
-propósito: a suíte não deve depender de plugin nenhum nem do estado do usuário.
+O harness (`tests/runner.lua`) roda sob `nvim --clean -l` de propósito: a
+suíte não deve depender de plugin nenhum nem do estado do usuário.
