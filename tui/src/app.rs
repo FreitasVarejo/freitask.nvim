@@ -10,8 +10,11 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// Destinos de arquivamento e a glosa de cada um. Espelha `ARCHIVED_TYPES` do
 /// motor só para montar a lista; quem valida é o `freitask archive`.
-pub const ARCHIVE_TYPES: [(&str, &str); 3] =
-    [("done", "done — feito"), ("dropped", "dropped — abandonado"), ("failed", "failed — falhou")];
+pub const ARCHIVE_TYPES: [(&str, &str); 3] = [
+    ("done", "done — feito"),
+    ("dropped", "dropped — abandonado"),
+    ("failed", "failed — falhou"),
+];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Pane {
@@ -66,9 +69,18 @@ pub enum Mode {
     Normal,
     Filter,
     NewTask(NewTask),
-    Prompt { kind: PromptKind, value: String },
-    Pick { kind: PickKind, options: Vec<(String, String)>, idx: usize },
-    Confirm { kind: ConfirmKind },
+    Prompt {
+        kind: PromptKind,
+        value: String,
+    },
+    Pick {
+        kind: PickKind,
+        options: Vec<(String, String)>,
+        idx: usize,
+    },
+    Confirm {
+        kind: ConfirmKind,
+    },
     Help,
 }
 
@@ -77,7 +89,10 @@ pub enum Mode {
 pub enum After {
     /// A mesma task de antes (pelo id), ou a mesma posição se ela sumiu.
     Keep,
-    Task { project: String, id: String },
+    Task {
+        project: String,
+        id: String,
+    },
     /// O stdout da CLI é o id do projeto (é o que `new-project` imprime).
     ProjectFromOutput,
 }
@@ -87,7 +102,11 @@ pub enum Effect {
     None,
     Quit,
     /// Roda `freitask <args>`; em sucesso relê tudo e mostra `ok`.
-    Run { args: Vec<String>, after: After, ok: String },
+    Run {
+        args: Vec<String>,
+        after: After,
+        ok: String,
+    },
     Open(String),
     /// Regenera e abre o CURRENT.md (o caminho vem do `freitask rebuild`).
     OpenCurrent,
@@ -231,11 +250,17 @@ impl App {
     }
 
     pub fn info(&mut self, text: impl Into<String>) {
-        self.message = Some(Message { text: text.into(), error: false });
+        self.message = Some(Message {
+            text: text.into(),
+            error: false,
+        });
     }
 
     pub fn error(&mut self, text: impl Into<String>) {
-        self.message = Some(Message { text: text.into(), error: true });
+        self.message = Some(Message {
+            text: text.into(),
+            error: true,
+        });
     }
 
     fn clamp(&mut self) {
@@ -298,7 +323,12 @@ impl App {
                     self.error("crie um projeto antes (N)");
                 }
             }
-            KeyCode::Char('N') => self.mode = Mode::Prompt { kind: PromptKind::NewProject, value: String::new() },
+            KeyCode::Char('N') => {
+                self.mode = Mode::Prompt {
+                    kind: PromptKind::NewProject,
+                    value: String::new(),
+                }
+            }
             KeyCode::Char('A') => {
                 self.show_archived = !self.show_archived;
                 self.preview = None;
@@ -319,12 +349,22 @@ impl App {
             return;
         };
         self.mode = match c {
-            'd' => Mode::Confirm { kind: ConfirmKind::Delete },
-            'a' if t.archived.is_some() => Mode::Confirm { kind: ConfirmKind::Unarchive },
+            'd' => Mode::Confirm {
+                kind: ConfirmKind::Delete,
+            },
+            'a' if t.archived.is_some() => Mode::Confirm {
+                kind: ConfirmKind::Unarchive,
+            },
             'a' => Mode::Pick {
                 kind: PickKind::Archive,
-                options: ARCHIVE_TYPES.iter().map(|(v, l)| (v.to_string(), l.to_string())).collect(),
-                idx: ARCHIVE_TYPES.iter().position(|(v, _)| *v == t.suggested_archive).unwrap_or(1),
+                options: ARCHIVE_TYPES
+                    .iter()
+                    .map(|(v, l)| (v.to_string(), l.to_string()))
+                    .collect(),
+                idx: ARCHIVE_TYPES
+                    .iter()
+                    .position(|(v, _)| *v == t.suggested_archive)
+                    .unwrap_or(1),
             },
             's' => {
                 // `done` e o sentinela 0 ficam fora: o primeiro é o que `archive`
@@ -338,11 +378,24 @@ impl App {
                     .map(|s| (s.callout.clone(), format!("{} {}", s.icon, s.title)))
                     .collect();
                 let idx = options.iter().position(|(c, _)| *c == t.callout).unwrap_or(0);
-                Mode::Pick { kind: PickKind::Status, options, idx }
+                Mode::Pick {
+                    kind: PickKind::Status,
+                    options,
+                    idx,
+                }
             }
-            'r' => Mode::Prompt { kind: PromptKind::Rename, value: t.id },
-            't' => Mode::Prompt { kind: PromptKind::Title, value: t.title },
-            'i' => Mode::Prompt { kind: PromptKind::Desc, value: t.desc },
+            'r' => Mode::Prompt {
+                kind: PromptKind::Rename,
+                value: t.id,
+            },
+            't' => Mode::Prompt {
+                kind: PromptKind::Title,
+                value: t.title,
+            },
+            'i' => Mode::Prompt {
+                kind: PromptKind::Desc,
+                value: t.desc,
+            },
             _ => Mode::Normal,
         };
     }
@@ -447,10 +500,18 @@ impl App {
         let Some(project) = self.current_project().map(|p| p.project.clone()) else {
             return Effect::None;
         };
-        let (title, id, desc) = (nt.title.trim().to_string(), nt.id.trim().to_string(), nt.desc.trim().to_string());
+        let (title, id, desc) = (
+            nt.title.trim().to_string(),
+            nt.id.trim().to_string(),
+            nt.desc.trim().to_string(),
+        );
         if title.is_empty() || id.is_empty() {
             nt.field = if title.is_empty() { 0 } else { 1 };
-            self.error(if title.is_empty() { "falta o título" } else { "falta o id" });
+            self.error(if title.is_empty() {
+                "falta o título"
+            } else {
+                "falta o id"
+            });
             self.mode = Mode::NewTask(nt);
             return Effect::None;
         }
@@ -459,7 +520,14 @@ impl App {
             a.extend(args(&["--desc", &desc]));
         }
         self.retry = Some(Mode::NewTask(nt));
-        Effect::Run { args: a, after: After::Task { project, id: id.clone() }, ok: format!("criada: {id}") }
+        Effect::Run {
+            args: a,
+            after: After::Task {
+                project,
+                id: id.clone(),
+            },
+            ok: format!("criada: {id}"),
+        }
     }
 
     fn on_prompt(&mut self, kind: PromptKind, mut value: String, key: KeyEvent) -> Effect {
@@ -500,11 +568,22 @@ impl App {
             PromptKind::Title if v == t.title => return Effect::None,
             PromptKind::Desc if v == t.desc => return Effect::None,
             PromptKind::Rename if v == t.id => return Effect::None,
-            PromptKind::Title => (args(&["set", &t.path, "--title", &v]), After::Keep, "título atualizado".to_string()),
-            PromptKind::Desc => (args(&["set", &t.path, "--desc", &v]), After::Keep, "descrição atualizada".to_string()),
+            PromptKind::Title => (
+                args(&["set", &t.path, "--title", &v]),
+                After::Keep,
+                "título atualizado".to_string(),
+            ),
+            PromptKind::Desc => (
+                args(&["set", &t.path, "--desc", &v]),
+                After::Keep,
+                "descrição atualizada".to_string(),
+            ),
             PromptKind::Rename => (
                 args(&["rename", &t.path, &v]),
-                After::Task { project: t.project.clone(), id: v.clone() },
+                After::Task {
+                    project: t.project.clone(),
+                    id: v.clone(),
+                },
                 format!("renomeada: {} → {v}", t.id),
             ),
             PromptKind::NewProject => unreachable!(),
@@ -557,7 +636,10 @@ impl App {
             },
             ConfirmKind::Unarchive => Effect::Run {
                 args: args(&["unarchive", &t.path]),
-                after: After::Task { project: t.project.clone(), id: t.id.clone() },
+                after: After::Task {
+                    project: t.project.clone(),
+                    id: t.id.clone(),
+                },
                 ok: format!("desarquivada: {}", t.id),
             },
         }
@@ -588,7 +670,13 @@ mod tests {
     }
 
     fn status(num: i64, callout: &str) -> Status {
-        Status { num, callout: callout.into(), title: callout.into(), icon: "*".into(), hl_group: String::new() }
+        Status {
+            num,
+            callout: callout.into(),
+            title: callout.into(),
+            icon: "*".into(),
+            hl_group: String::new(),
+        }
     }
 
     fn data() -> Data {
@@ -600,7 +688,16 @@ mod tests {
                 status(6, "check"),
                 status(7, "done"),
             ],
-            projects: vec![Project { project: "alfa".into(), active: 2 }, Project { project: "beta".into(), active: 1 }],
+            projects: vec![
+                Project {
+                    project: "alfa".into(),
+                    active: 2,
+                },
+                Project {
+                    project: "beta".into(),
+                    active: 1,
+                },
+            ],
             tasks: vec![
                 task("alfa", "a1", "todo", 1, None),
                 task("alfa", "a2", "check", 6, None),
@@ -678,7 +775,10 @@ mod tests {
             e,
             Effect::Run {
                 args: args(&["new", "alfa", "avida-nova", "Ávida nova", "--desc", "estado"]),
-                after: After::Task { project: "alfa".into(), id: "avida-nova".into() },
+                after: After::Task {
+                    project: "alfa".into(),
+                    id: "avida-nova".into()
+                },
                 ok: "criada: avida-nova".into(),
             }
         );
@@ -705,7 +805,9 @@ mod tests {
         app.handle_key(code(KeyCode::Tab));
         run_args(app.handle_key(code(KeyCode::Enter)));
         app.run_failed("id precisa ser kebab-case".into());
-        let Mode::NewTask(nt) = &app.mode else { panic!("modal não voltou") };
+        let Mode::NewTask(nt) = &app.mode else {
+            panic!("modal não voltou")
+        };
         assert_eq!(nt.id, "Id Ruim");
         assert!(app.message.as_ref().unwrap().error);
     }
@@ -714,7 +816,9 @@ mod tests {
     fn fase_oferece_so_o_que_o_set_aceita() {
         let mut app = App::new(data());
         app.handle_key(key('s'));
-        let Mode::Pick { options, idx, .. } = &app.mode else { panic!() };
+        let Mode::Pick { options, idx, .. } = &app.mode else {
+            panic!()
+        };
         let callouts: Vec<&str> = options.iter().map(|(c, _)| c.as_str()).collect();
         assert_eq!(callouts, ["todo", "example", "check"]);
         assert_eq!(*idx, 0); // a1 está em todo
@@ -747,7 +851,12 @@ mod tests {
         app.handle_key(key('G'));
         assert_eq!(app.current_task().unwrap().id, "a0");
         app.handle_key(key('a'));
-        assert_eq!(app.mode, Mode::Confirm { kind: ConfirmKind::Unarchive });
+        assert_eq!(
+            app.mode,
+            Mode::Confirm {
+                kind: ConfirmKind::Unarchive
+            }
+        );
         assert_eq!(
             run_args(app.handle_key(key('y'))),
             args(&["unarchive", "/v/projects/alfa/tasks/archived/done/a0.md"])
@@ -761,7 +870,10 @@ mod tests {
         assert_eq!(app.handle_key(key('n')), Effect::None);
         assert_eq!(app.mode, Mode::Normal);
         app.handle_key(key('d'));
-        assert_eq!(run_args(app.handle_key(key('y'))), args(&["delete", "/v/projects/alfa/tasks/a1.md"]));
+        assert_eq!(
+            run_args(app.handle_key(key('y'))),
+            args(&["delete", "/v/projects/alfa/tasks/a1.md"])
+        );
     }
 
     #[test]
@@ -772,7 +884,10 @@ mod tests {
         app.handle_key(key('r'));
         app.handle_key(code(KeyCode::Backspace));
         typ(&mut app, "9");
-        assert_eq!(run_args(app.handle_key(code(KeyCode::Enter))), args(&["rename", "/v/projects/alfa/tasks/a1.md", "a9"]));
+        assert_eq!(
+            run_args(app.handle_key(code(KeyCode::Enter))),
+            args(&["rename", "/v/projects/alfa/tasks/a1.md", "a9"])
+        );
     }
 
     #[test]
@@ -784,7 +899,13 @@ mod tests {
         app.handle_key(key('t'));
         app.handle_key(KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL));
         assert_eq!(app.handle_key(code(KeyCode::Enter)), Effect::None);
-        assert!(matches!(app.mode, Mode::Prompt { kind: PromptKind::Title, .. }));
+        assert!(matches!(
+            app.mode,
+            Mode::Prompt {
+                kind: PromptKind::Title,
+                ..
+            }
+        ));
     }
 
     #[test]
@@ -803,7 +924,14 @@ mod tests {
         let mut app = App::new(data());
         let mut d = data();
         d.tasks.push(task("beta", "b2", "todo", 1, None));
-        app.set_data(d, &After::Task { project: "beta".into(), id: "b2".into() }, "");
+        app.set_data(
+            d,
+            &After::Task {
+                project: "beta".into(),
+                id: "b2".into(),
+            },
+            "",
+        );
         assert_eq!(app.current_project().unwrap().project, "beta");
         assert_eq!(app.current_task().unwrap().id, "b2");
     }
@@ -812,7 +940,10 @@ mod tests {
     fn novo_projeto_e_selecionado_pelo_stdout() {
         let mut app = App::new(data());
         let mut d = data();
-        d.projects.push(Project { project: "gama".into(), active: 0 });
+        d.projects.push(Project {
+            project: "gama".into(),
+            active: 0,
+        });
         app.set_data(d, &After::ProjectFromOutput, "gama\n");
         assert_eq!(app.current_project().unwrap().project, "gama");
         assert!(app.current_task().is_none());
@@ -824,6 +955,9 @@ mod tests {
     fn ctrl_c_sai_de_qualquer_modo() {
         let mut app = App::new(data());
         app.handle_key(key('n'));
-        assert_eq!(app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)), Effect::Quit);
+        assert_eq!(
+            app.handle_key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL)),
+            Effect::Quit
+        );
     }
 }

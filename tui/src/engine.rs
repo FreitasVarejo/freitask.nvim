@@ -5,8 +5,8 @@
 //! mesmo contrato que agentes e scripts usam. Uma segunda cópia das regras
 //! aqui divergiria do Lua em semanas (ver o cabeçalho de `lua/freitask/cli.lua`).
 
-use serde::Deserialize;
 use serde::de::DeserializeOwned;
+use serde::Deserialize;
 use std::process::Command;
 
 /// Uma linha de `freitask list --json --archived`.
@@ -138,7 +138,9 @@ mod tests {
     #[test]
     fn falha_devolve_o_stderr_sem_o_prefixo() {
         let e = Engine { bin: "sh".into() };
-        let err = e.run(&["-c", "echo 'freitask: task não encontrada: x' >&2; exit 1"]).unwrap_err();
+        let err = e
+            .run(&["-c", "echo 'freitask: task não encontrada: x' >&2; exit 1"])
+            .unwrap_err();
         assert_eq!(err, "task não encontrada: x");
     }
 

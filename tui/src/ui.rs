@@ -1,11 +1,11 @@
 //! Desenho. Só lê o `App`; nenhuma decisão mora aqui.
 
-use crate::app::{ARCHIVE_TYPES, App, ConfirmKind, Mode, NewTask, Pane, PickKind, PromptKind};
-use ratatui::Frame;
+use crate::app::{App, ConfirmKind, Mode, NewTask, Pane, PickKind, PromptKind, ARCHIVE_TYPES};
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::Frame;
 
 const HELP: &[(&str, &str)] = &[
     ("j/k ↑/↓", "mover"),
@@ -46,7 +46,10 @@ fn dim() -> Style {
 
 fn pane_block(title: String, focused: bool) -> Block<'static> {
     let (border, title_style) = if focused {
-        (Style::default().fg(Color::Green), Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+        (
+            Style::default().fg(Color::Green),
+            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+        )
     } else {
         (dim(), Style::default())
     };
@@ -62,9 +65,12 @@ fn highlight() -> Style {
 
 pub fn draw(f: &mut Frame, app: &App) {
     let [main, bar] = Layout::vertical([Constraint::Min(3), Constraint::Length(1)]).areas(f.area());
-    let [left, mid, right] =
-        Layout::horizontal([Constraint::Percentage(20), Constraint::Percentage(35), Constraint::Percentage(45)])
-            .areas(main);
+    let [left, mid, right] = Layout::horizontal([
+        Constraint::Percentage(20),
+        Constraint::Percentage(35),
+        Constraint::Percentage(45),
+    ])
+    .areas(main);
     draw_projects(f, app, left);
     draw_tasks(f, app, mid);
     draw_preview(f, app, right);
@@ -116,7 +122,10 @@ fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
                 spans.push(Span::styled(format!("[{a}] "), dim()));
             }
             spans.push(Span::styled(format!("{icon} "), Style::default().fg(color)));
-            spans.push(Span::styled(t.id.clone(), if t.archived.is_some() { dim() } else { Style::default() }));
+            spans.push(Span::styled(
+                t.id.clone(),
+                if t.archived.is_some() { dim() } else { Style::default() },
+            ));
             spans.push(Span::styled(format!("  {}", t.title), dim()));
             ListItem::new(Line::from(spans))
         })
@@ -134,31 +143,54 @@ fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
     if !tasks.is_empty() {
         state.select(Some(app.task_idx));
     }
-    let list = List::new(items).block(pane_block(title, app.pane == Pane::Tasks)).highlight_style(highlight());
+    let list = List::new(items)
+        .block(pane_block(title, app.pane == Pane::Tasks))
+        .highlight_style(highlight());
     f.render_stateful_widget(list, area, &mut state);
 }
 
 fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
     let block = pane_block(" Preview ".into(), false);
     let Some(t) = app.current_task() else {
-        f.render_widget(Paragraph::new(Span::styled("sem task selecionada", dim())).block(block), area);
+        f.render_widget(
+            Paragraph::new(Span::styled("sem task selecionada", dim())).block(block),
+            area,
+        );
         return;
     };
     let st = app.status_of(t.status_num);
     let color = st.map_or(Color::Red, |s| hl_color(&s.hl_group));
 
     let mut lines = vec![
-        Line::from(Span::styled(t.title.clone(), Style::default().add_modifier(Modifier::BOLD))),
+        Line::from(Span::styled(
+            t.title.clone(),
+            Style::default().add_modifier(Modifier::BOLD),
+        )),
         Line::from(vec![
-            Span::styled(format!("{} {}", st.map_or("?", |s| s.icon.as_str()), t.status), Style::default().fg(color)),
+            Span::styled(
+                format!("{} {}", st.map_or("?", |s| s.icon.as_str()), t.status),
+                Style::default().fg(color),
+            ),
             Span::styled(format!("  ·  {}", t.id), dim()),
-            Span::styled(t.archived.as_ref().map(|a| format!("  ·  archived/{a}")).unwrap_or_default(), dim()),
+            Span::styled(
+                t.archived
+                    .as_ref()
+                    .map(|a| format!("  ·  archived/{a}"))
+                    .unwrap_or_default(),
+                dim(),
+            ),
         ]),
     ];
     if !t.desc.is_empty() {
-        lines.push(Line::from(Span::styled(t.desc.clone(), Style::default().add_modifier(Modifier::ITALIC))));
+        lines.push(Line::from(Span::styled(
+            t.desc.clone(),
+            Style::default().add_modifier(Modifier::ITALIC),
+        )));
     }
-    lines.push(Line::from(Span::styled("─".repeat(area.width.saturating_sub(2) as usize), dim())));
+    lines.push(Line::from(Span::styled(
+        "─".repeat(area.width.saturating_sub(2) as usize),
+        dim(),
+    )));
 
     if let Some((_, content)) = app.preview.as_ref().filter(|(path, _)| *path == t.path) {
         for l in content.lines() {
@@ -175,7 +207,10 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
         }
     }
 
-    let p = Paragraph::new(lines).block(block).wrap(Wrap { trim: false }).scroll((app.preview_scroll, 0));
+    let p = Paragraph::new(lines)
+        .block(block)
+        .wrap(Wrap { trim: false })
+        .scroll((app.preview_scroll, 0));
     f.render_widget(p, area);
 }
 
@@ -200,7 +235,12 @@ fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
 fn centered(area: Rect, w: u16, h: u16) -> Rect {
     let w = w.min(area.width);
     let h = h.min(area.height);
-    Rect { x: area.x + (area.width - w) / 2, y: area.y + (area.height - h) / 2, width: w, height: h }
+    Rect {
+        x: area.x + (area.width - w) / 2,
+        y: area.y + (area.height - h) / 2,
+        width: w,
+        height: h,
+    }
 }
 
 fn modal(title: String) -> Block<'static> {
@@ -275,7 +315,11 @@ fn draw_pick(f: &mut Frame, app: &App, kind: PickKind, options: &[(String, Strin
                     .find(|s| s.callout == *value)
                     .map_or(Color::Reset, |s| hl_color(&s.hl_group)),
                 PickKind::Archive => {
-                    if ARCHIVE_TYPES[0].0 == value { Color::Green } else { Color::Reset }
+                    if ARCHIVE_TYPES[0].0 == value {
+                        Color::Green
+                    } else {
+                        Color::Reset
+                    }
                 }
             };
             ListItem::new(Span::styled(label.clone(), Style::default().fg(color)))
@@ -283,7 +327,10 @@ fn draw_pick(f: &mut Frame, app: &App, kind: PickKind, options: &[(String, Strin
         .collect();
     let mut state = ListState::default();
     state.select(Some(idx));
-    let list = List::new(items).block(modal(title)).highlight_style(highlight()).highlight_symbol("› ");
+    let list = List::new(items)
+        .block(modal(title))
+        .highlight_style(highlight())
+        .highlight_symbol("› ");
     f.render_stateful_widget(list, area, &mut state);
 }
 
@@ -305,7 +352,10 @@ fn draw_help(f: &mut Frame) {
     let lines: Vec<Line> = HELP
         .iter()
         .map(|(k, d)| {
-            Line::from(vec![Span::styled(format!("{k:>14}  "), Style::default().fg(Color::Yellow)), Span::raw(*d)])
+            Line::from(vec![
+                Span::styled(format!("{k:>14}  "), Style::default().fg(Color::Yellow)),
+                Span::raw(*d),
+            ])
         })
         .collect();
     f.render_widget(Paragraph::new(lines).block(modal(" Teclas ".into())), area);

@@ -13,8 +13,8 @@ mod ui;
 
 use app::{After, App, Effect};
 use engine::Engine;
-use ratatui::DefaultTerminal;
 use ratatui::crossterm::event::{self, Event, KeyEventKind};
+use ratatui::DefaultTerminal;
 use std::io;
 use std::process::{Command, ExitCode};
 
@@ -124,11 +124,16 @@ fn reload(app: &mut App, engine: &Engine, after: &After, output: &str) -> bool {
 /// Fora do Neovim, o `$EDITOR` roda em primeiro plano e a TUI volta depois.
 fn open(terminal: &mut DefaultTerminal, app: &mut App, engine: &Engine, path: &str) -> io::Result<bool> {
     if let Some(sock) = std::env::var("NVIM").ok().filter(|s| !s.is_empty()) {
-        let out = Command::new("nvim").args(["--server", &sock, "--remote-expr", &remote_open_expr(path)]).output();
+        let out = Command::new("nvim")
+            .args(["--server", &sock, "--remote-expr", &remote_open_expr(path)])
+            .output();
         return Ok(match out {
             Ok(o) if o.status.success() => true,
             Ok(o) => {
-                app.error(format!("nvim --remote-expr falhou: {}", String::from_utf8_lossy(&o.stderr).trim()));
+                app.error(format!(
+                    "nvim --remote-expr falhou: {}",
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ));
                 false
             }
             Err(e) => {
