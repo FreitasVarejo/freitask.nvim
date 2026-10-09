@@ -149,7 +149,8 @@ o `--fix`, um vault descartável basta — crie o estado quebrado à mão e rode
 1. `tests/run.sh`
 2. `luacheck lua tests`
 3. `(cd tui && cargo test)` se mexeu na TUI — ou no contrato JSON que ela lê
-4. `freitask doctor` no vault real (read-only; deve sair verde)
+4. `(cd tui && cargo fmt --check && cargo clippy --all-targets -- -D warnings)` se mexeu na TUI
+5. `freitask doctor` no vault real (read-only; deve sair verde)
 
 O luacheck **não** pega `mod.foo` apontando para uma função que não existe —
 `mod` é uma tabela válida e o erro só aparece em runtime, possivelmente meses

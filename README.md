@@ -54,6 +54,7 @@ tests/run.sh             # motor: funções puras + a CLI de ponta a ponta
 tests/run.sh cli         # filtra por nome de arquivo
 luacheck lua tests
 (cd tui && cargo test)   # TUI: estado e teclas
+(cd tui && cargo fmt --check && cargo clippy --all-targets -- -D warnings)
 ```
 
 O harness (`tests/runner.lua`) roda sob `nvim --clean -l` de propósito: a
