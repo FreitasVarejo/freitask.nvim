@@ -38,7 +38,7 @@ pub enum PickKind {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ConfirmKind {
-    Delete,
+    Drop,
     Unarchive,
 }
 
@@ -349,8 +349,14 @@ impl App {
             return;
         };
         self.mode = match c {
+            // Largar é arquivar como `dropped`, não apagar: o arquivo fica e o
+            // `freitask archive` reaponta os links. Apagar de vez é só pela CLI.
+            'd' if t.archived.is_some() => {
+                self.error(format!("{} já está arquivada (a desarquiva)", t.id));
+                return;
+            }
             'd' => Mode::Confirm {
-                kind: ConfirmKind::Delete,
+                kind: ConfirmKind::Drop,
             },
             'a' if t.archived.is_some() => Mode::Confirm {
                 kind: ConfirmKind::Unarchive,
@@ -629,10 +635,10 @@ impl App {
             return Effect::None;
         };
         match kind {
-            ConfirmKind::Delete => Effect::Run {
-                args: args(&["delete", &t.path]),
+            ConfirmKind::Drop => Effect::Run {
+                args: args(&["archive", &t.path, "dropped"]),
                 after: After::Keep,
-                ok: format!("apagada: {}", t.id),
+                ok: format!("largada: {}", t.id),
             },
             ConfirmKind::Unarchive => Effect::Run {
                 args: args(&["unarchive", &t.path]),
@@ -864,7 +870,7 @@ mod tests {
     }
 
     #[test]
-    fn apagar_so_com_y() {
+    fn largar_so_com_y_e_arquiva_como_dropped() {
         let mut app = App::new(data());
         app.handle_key(key('d'));
         assert_eq!(app.handle_key(key('n')), Effect::None);
@@ -872,8 +878,20 @@ mod tests {
         app.handle_key(key('d'));
         assert_eq!(
             run_args(app.handle_key(key('y'))),
-            args(&["delete", "/v/projects/alfa/tasks/a1.md"])
+            args(&["archive", "/v/projects/alfa/tasks/a1.md", "dropped"])
         );
+    }
+
+    #[test]
+    fn d_numa_arquivada_nao_reclassifica() {
+        let mut app = App::new(data());
+        app.handle_key(key('A'));
+        app.pane = Pane::Tasks;
+        app.handle_key(key('G'));
+        assert_eq!(app.current_task().unwrap().id, "a0");
+        assert_eq!(app.handle_key(key('d')), Effect::None);
+        assert_eq!(app.mode, Mode::Normal);
+        assert!(app.message.as_ref().is_some_and(|m| m.error));
     }
 
     #[test]

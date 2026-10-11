@@ -214,7 +214,7 @@ do projeto (ícone e cor da fase) e o preview do arquivo.
 | `r` | renomear o id |
 | `a` | arquivar (o tipo sugerido vem pré-selecionado) ou, numa arquivada, desarquivar |
 | `A` | mostrar / esconder as arquivadas |
-| `d` | apagar (pede `y`) |
+| `d` | largar: arquiva como `dropped` (pede `y`) |
 | `N` | novo projeto |
 | `c` | regenerar e abrir o `CURRENT.md` |
 | `/` | filtrar por id ou título |
@@ -312,9 +312,12 @@ arquivo — e ela só acrescenta, nunca mexe no que já estava lá.
   inclui. São lidas do disco
   sob demanda (`M.archived_entries_for`) e **nunca** entram em `M.cache`, para
   que board, regen e o resto do módulo sigam enxergando só o que está ativo.
-- **Deletar** (`d` na TUI, que pede `y` · `freitask delete <id>`, que não
-  pergunta): apaga o arquivo do disco de vez. As referências a ela ficam
-  penduradas de propósito, e o `doctor` as aponta (`link-pendurado`).
+- **Largar** (`d` na TUI, que pede `y`): é arquivar como `dropped`. O arquivo
+  fica e os links acompanham, como em qualquer arquivamento. Numa task já
+  arquivada a tecla recusa: reclassificar é `a`, desarquivando antes.
+- **Deletar** (`freitask delete <id>`, só na CLI, que não pergunta): apaga o
+  arquivo do disco de vez. As referências a ela ficam penduradas de propósito,
+  e o `doctor` as aponta (`link-pendurado`).
 
 ### Referências do Obsidian (`M.retarget_links`)
 

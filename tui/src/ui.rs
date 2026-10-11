@@ -21,7 +21,7 @@ const HELP: &[(&str, &str)] = &[
     ("r", "renomear o id (arquivo e links)"),
     ("a", "arquivar / desarquivar"),
     ("A", "mostrar / esconder arquivadas"),
-    ("d", "apagar a task"),
+    ("d", "largar a task (arquiva como dropped)"),
     ("N", "novo projeto"),
     ("c", "abrir o CURRENT.md"),
     ("R", "reler o vault"),
@@ -225,7 +225,7 @@ fn draw_bar(f: &mut Frame, app: &App, area: Rect) {
         Line::from(Span::styled(m.text.clone(), Style::default().fg(color)))
     } else {
         Line::from(Span::styled(
-            "? ajuda · n nova · s fase · a arquivar · d apagar · e abrir · / filtro · q sair",
+            "? ajuda · n nova · s fase · a arquivar · d largar · e abrir · / filtro · q sair",
             dim(),
         ))
     };
@@ -337,7 +337,7 @@ fn draw_pick(f: &mut Frame, app: &App, kind: PickKind, options: &[(String, Strin
 fn draw_confirm(f: &mut Frame, app: &App, kind: ConfirmKind) {
     let id = app.current_task().map_or("", |t| t.id.as_str());
     let text = match kind {
-        ConfirmKind::Delete => format!("Apagar {id}? Links para ela ficam pendurados."),
+        ConfirmKind::Drop => format!("Largar {id}? Ela vai para archived/dropped."),
         ConfirmKind::Unarchive => format!("Desarquivar {id}?"),
     };
     let area = centered(f.area(), (text.chars().count() as u16 + 4).max(30), 3);
