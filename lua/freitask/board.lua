@@ -110,7 +110,6 @@ function M.rebuild_current(opts)
     "# Planning diário " .. os.date("%d/%m/%y"),
     "",
     string.format("> Painel gerado automaticamente — %d tasks em %d projetos.", total, #projects),
-    "> Abra o gestor com `<leader>ob` · regenere com `<C-a>` · edite o callout sob o cursor com `<leader>oe`.",
     "",
     "## Notas Avulsas",
     "",

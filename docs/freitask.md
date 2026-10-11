@@ -469,8 +469,8 @@ mudou. Você nunca commita à mão; commits são checkpoints de máquina. Para
 inspecionar ou desfazer, use o wrapper `vaultgit`:
 
 ```bash
-vaultgit log --oneline -- tasks/jellyfin/stack-up.md
-vaultgit restore --source=HEAD~3 tasks/jellyfin/stack-up.md
+vaultgit log --oneline -- projects/<projeto>/tasks/<id>.md
+vaultgit restore --source=HEAD~3 projects/<projeto>/tasks/<id>.md
 ```
 
 Cada máquina tem sua própria história — é um log de undo local, não
