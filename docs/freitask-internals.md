@@ -133,8 +133,8 @@ disco.
 CLI num processo `nvim -l` de verdade com `HOME` apontando para um diretório
 temporário (o módulo deriva o vault de `~`, então nada toca o vault real). Passa
 por `new`, `set`, `list`/`projects`/`statuses --json`, `archive`, `unarchive`,
-`rename`, `delete` e `doctor`, e confere o contrato JSON, os códigos de saída,
-os dois formatos de wikilink num arquivo que referencia a task, o
+`rename`, `move`, `delete` e `doctor`, e confere o contrato JSON, os códigos de
+saída, os dois formatos de wikilink num arquivo que referencia a task, o
 `## Histórico` e o `CURRENT.md`.
 
 `tui/` tem os próprios testes (`cargo test`), do estado e das teclas; o

@@ -104,6 +104,15 @@ freitask — gestão de tasks do vault do Obsidian
       `archive <id> done` também grava o callout `done`, e desarquivar uma
       task `done` a devolve como `check` (Pronta).
 
+  freitask move <id|caminho> <projeto>
+      Leva a task para projects/<projeto>/tasks/ — ou para o mesmo
+      archived/<tipo>/ de lá, se estava arquivada: o tipo e a fase não mudam.
+      Reescreve o wikilink da linha 2 e as referências path-qualificadas do
+      vault, registra a mudança no `## Histórico` e deixa como estão os links
+      curtos (só o id), que seguem valendo. Recusa projeto que não existe (crie
+      com `freitask new-project`), projeto reservado, task que já está nele e
+      id já ocupado lá (inclusive arquivado).
+
   freitask new <projeto> <id> "<título>" [--desc "<estado>"]
       Cria uma task em projects/<projeto>/tasks/<id>.md e regenera o painel.
       O <id> é o nome do arquivo E o da branch git: precisa vir em kebab-case,
@@ -242,6 +251,27 @@ if cmd == "rename" then
   local new, aerr = T.apply_edit(path, nm)
   if not new then
     die(aerr, 1)
+  end
+  T.rebuild_current({ quiet = true })
+  say(new)
+  quit(0)
+end
+
+--- move ----------------------------------------------------------------------
+if cmd == "move" then
+  local pos = parse_flags(2)
+  local ref = pos[1] or die("falta o id ou caminho da task")
+  local project = pos[2] or die("falta o projeto de destino")
+  local path, err = T.find_task(ref)
+  if not path then
+    die(err, 1)
+  end
+
+  -- As recusas (projeto que não existe, reservado, id ocupado…) voltam como
+  -- valor do motor e saem em stderr com o código 1, como as do rename.
+  local new, merr = T.move_to_project(path, project)
+  if not new then
+    die(merr, 1)
   end
   T.rebuild_current({ quiet = true })
   say(new)

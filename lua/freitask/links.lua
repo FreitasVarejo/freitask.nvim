@@ -1,7 +1,8 @@
 -- freitask.links — reescrita dos wikilinks do vault.
 --
--- Arquivar, desarquivar e renomear o id são o MESMO evento — "esse arquivo
--- mudou de endereço" — e por isso passam todos por M.retarget_links.
+-- Arquivar, desarquivar, mudar de projeto e renomear o id são o MESMO evento —
+-- "esse arquivo mudou de endereço" — e por isso passam todos por
+-- M.retarget_links.
 --
 -- O Obsidian resolve `[[foo]]` pelo BASENAME, em qualquer pasta do vault. Daí
 -- a assimetria que a tabela abaixo resume, e que explica por que arquivar é
@@ -9,6 +10,7 @@
 --
 --   operação              [[foo]]      [[projects/p/tasks/foo|foo]]   frontmatter id:
 --   arquivar/desarquivar  intacto      reescrever            intacto
+--   mudar de projeto      intacto      reescrever            intacto
 --   renomear id           reescrever   reescrever            reescrever
 
 local C = require("freitask.config")

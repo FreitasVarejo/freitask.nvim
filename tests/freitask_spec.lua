@@ -446,6 +446,42 @@ describe("append_history", function()
   end)
 end)
 
+describe("append_history_moved", function()
+  local today = os.date("%Y-%m-%d")
+  local entry = "- " .. today .. " — movida de `projeto-a` para `projeto-b`"
+
+  it("cria a seção quando ela não existe", function()
+    local lines = { "# Task", "", "corpo", "" }
+    md.append_history_moved(lines, "projeto-a", "projeto-b")
+    eq({ "# Task", "", "corpo", "", "## Histórico", "", entry }, lines)
+  end)
+
+  it("acrescenta ao FIM da seção existente, depois do arquivamento", function()
+    local lines = {
+      "## Histórico",
+      "",
+      "- 2026-01-01 — arquivada em `archived/done` (feito)",
+      "",
+      "## Outra seção",
+      "conteúdo",
+    }
+    md.append_history_moved(lines, "projeto-a", "projeto-b")
+    eq("- 2026-01-01 — arquivada em `archived/done` (feito)", lines[3])
+    eq(entry, lines[4])
+    eq("", lines[5], "a linha em branco de separação da seção é preservada")
+    eq("## Outra seção", lines[6], "a entrada nova não pode vazar para depois da próxima seção")
+  end)
+
+  it("é um log: mover duas vezes deixa duas entradas", function()
+    local lines = { "corpo" }
+    md.append_history_moved(lines, "a", "b")
+    md.append_history_moved(lines, "b", "a")
+    eq(6, #lines)
+    eq("- " .. today .. " — movida de `a` para `b`", lines[5])
+    eq("- " .. today .. " — movida de `b` para `a`", lines[6])
+  end)
+end)
+
 describe("update_frontmatter_key", function()
   it("atualiza a chave quando ela já existe", function()
     local lines = { "---", "id: velho", "tags: []", "---", "corpo" }
@@ -625,6 +661,26 @@ describe("validate_new", function()
   it("aceita kebab com dígito e acento já dobrado", function()
     truthy((task.validate_new("dotfiles", "vault-lint-2")))
     truthy((task.validate_new("dotfiles", path.kebab("Configuração da API"))))
+  end)
+end)
+
+describe("validate_project", function()
+  it("recusa vazio, com barra e reservado, com a mesma mensagem do validate_new", function()
+    falsy((task.validate_project("")))
+    falsy((task.validate_project("   ")))
+    falsy((task.validate_project("a/b")))
+    for _, reservado in ipairs({ "daily", "templates" }) do
+      local ok, err = task.validate_project(reservado)
+      falsy(ok)
+      truthy(err:find("reservado"), err)
+      local _, err_new = task.validate_new(reservado, "x")
+      eq(err_new, err, "uma noção de reservado só")
+    end
+  end)
+
+  it("aceita um nome de projeto, aparado", function()
+    truthy((task.validate_project("dotfiles")))
+    truthy((task.validate_project("  dotfiles  ")))
   end)
 end)
 

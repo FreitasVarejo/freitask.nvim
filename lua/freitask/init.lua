@@ -66,6 +66,7 @@ M.parse_status_num = M.task.parse_status_num
 M.find_task = M.task.find_task
 M.archive_task = M.task.archive_task
 M.unarchive_task = M.task.unarchive_task
+M.move_to_project = M.task.move_to_project
 M.apply_edit = M.task.apply_edit
 M.retarget_links = M.links.retarget_links
 

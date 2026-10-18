@@ -1,9 +1,10 @@
 -- freitask.task — as operações sobre o ARQUIVO de uma task.
 --
--- Criar, mover entre ativo e arquivado, localizar por id. Arquivar e
--- desarquivar são o mesmo motor (move_task) em dois sentidos: nenhum dos dois
--- regenera o CURRENT.md, porque quem chama é que sabe quando vale a pena (o
--- picker regenera uma vez só, no fim).
+-- Criar, mover entre ativo e arquivado ou entre projetos, localizar por id.
+-- Arquivar e desarquivar são o mesmo motor (move_task) em dois sentidos, e
+-- mudar de projeto (move_to_project) divide com ele o deslocamento do arquivo
+-- (relocate). Nenhum dos três regenera o CURRENT.md, porque quem chama é que
+-- sabe quando vale a pena (a CLI regenera uma vez só, no fim).
 
 local C = require("freitask.config")
 local cache = require("freitask.cache")
@@ -35,17 +36,17 @@ function M.template(model)
   return out
 end
 
----Valida projeto e id de uma task nova, sem tocar no disco — a parte com as
----regras, separada para poder ser testada sem vault.
+---Valida o NOME de um projeto, sem tocar no disco: não vazio, sem `/`, não
+---reservado. É o que `validate_new` (a task nasce nele) e `move_to_project` (a
+---task muda para ele) cobram do projeto, e por isso mora num lugar só: duas
+---noções de "reservado" divergiriam.
 ---
----Não valida se o arquivo já existe: isso é disco, e mora em M.create_task.
+---Não valida se o projeto existe: isso é disco, e cada chamador decide o que
+---fazer com um projeto que falta (`create_task` cria, `move_to_project` recusa).
 ---@param project string
----@param id string
 ---@return boolean ok, string|nil err
-function M.validate_new(project, id)
+function M.validate_project(project)
   project = vim.trim(project or "")
-  id = vim.trim(id or "")
-
   if project == "" then
     return false, "falta o projeto"
   end
@@ -55,6 +56,23 @@ function M.validate_new(project, id)
   if C.RESERVED[project] then
     -- `daily` e `templates` não são projetos; ver o comentário em config.
     return false, string.format("%q é um diretório reservado, não um projeto", project)
+  end
+  return true
+end
+
+---Valida projeto e id de uma task nova, sem tocar no disco — a parte com as
+---regras, separada para poder ser testada sem vault.
+---
+---Não valida se o arquivo já existe: isso é disco, e mora em M.create_task.
+---@param project string
+---@param id string
+---@return boolean ok, string|nil err
+function M.validate_new(project, id)
+  id = vim.trim(id or "")
+
+  local ok, err = M.validate_project(project)
+  if not ok then
+    return false, err
   end
   if id == "" then
     return false, "falta o id"
@@ -315,6 +333,74 @@ function M.status_after_move(status_num, dest)
   return status_num
 end
 
+---O deslocamento de arquivo que (des)arquivar e mudar de projeto têm em
+---comum: as guardas, o rename, a reescrita do conteúdo, o cache e as
+---referências do vault. O que muda de um para o outro é só o endereço de
+---destino e o que se reescreve dentro do arquivo (`rewrite`).
+---
+---O erro volta como valor, com o nível que o aviso teria, em vez de ser
+---notificado aqui: (des)arquivar avisa por `vim.notify`, e mudar de projeto
+---devolve a mensagem para a CLI usar como saída de erro. NÃO chama
+---rebuild_current: quem chama decide quando regenerar.
+---@param path string
+---@param new_path string
+---@param verb string o que se estava fazendo, para a mensagem da guarda de buffer
+---@param rewrite fun(lines: string[]): string[] recebe o arquivo JÁ no endereço novo
+---@return string|nil new_path, string|nil err, integer|nil level
+local function relocate(path, new_path, verb, rewrite)
+  local buf = fs.loaded_buf(path)
+  if buf and vim.bo[buf].modified then
+    return nil, "salve o arquivo da task antes de " .. verb, vim.log.levels.WARN
+  end
+  if vim.fn.filereadable(new_path) == 1 then
+    return nil, "já existe um arquivo em " .. new_path, vim.log.levels.WARN
+  end
+  local dir = vim.fn.fnamemodify(new_path, ":h")
+  if vim.fn.isdirectory(dir) == 0 then
+    vim.fn.mkdir(dir, "p")
+  end
+  if vim.fn.rename(path, new_path) ~= 0 then
+    return nil, "não consegui mover " .. vim.fn.fnamemodify(new_path, ":t:r"), vim.log.levels.ERROR
+  end
+
+  vim.fn.writefile(rewrite(fs.read_lines(new_path)), new_path)
+  if buf then
+    fs.retarget_buf(buf, new_path)
+  end
+
+  cache.remove_cache_entry(path)
+  -- Arquivada nunca entra no cache: o próprio update_cache_entry a ignora.
+  cache.update_cache_entry(new_path)
+  links.retarget_links(path, new_path)
+  return new_path
+end
+
+---Reserializa o bloco de callout de `lines` para o endereço novo da task. O
+---link da linha 2 é path-qualified, então precisa seguir o arquivo. `adjust`,
+---se vier, mexe no modelo antes de ele ser serializado (a fase, ao
+---(des)arquivar). Sem bloco, devolve `lines` como estava.
+---@param lines string[]
+---@param id string
+---@param project string
+---@param archived string|nil
+---@param adjust? fun(model: freitask.Model)
+---@return string[]
+local function relink_block(lines, id, project, archived, adjust)
+  local s, e, block = md.first_block(lines)
+  if not s then
+    return lines
+  end
+  local model = model_.parse_block(block)
+  if model.id == "" then
+    model.id = id
+  end
+  model.project, model.archived = project, archived
+  if adjust then
+    adjust(model)
+  end
+  return md.splice(lines, s, e, model_.serialize_block(model))
+end
+
 ---Move o arquivo de uma task entre ativo e arquivado — o motor por trás de
 ---M.archive_task e M.unarchive_task, que são só nomes para os dois sentidos.
 ---Reescreve o bloco (o wikilink da linha 2 precisa acompanhar a pasta),
@@ -337,52 +423,20 @@ local function move_task(path, dest)
     return path -- já está onde deveria
   end
 
-  local buf = fs.loaded_buf(path)
-  if buf and vim.bo[buf].modified then
-    vim.notify("freitask: salve o arquivo da task antes de (des)arquivar", vim.log.levels.WARN)
+  local new_path, err, level = relocate(path, path_.task_file(project, id, dest), "(des)arquivar", function(lines)
+    -- O link da linha 2 é path-qualified, então precisa seguir a pasta nova; o
+    -- callout acompanha a pasta nos dois sentidos; e o rodapé ganha a entrada de
+    -- histórico. Um write só para as três coisas.
+    lines = relink_block(lines, id, project, dest, function(model)
+      model.status_num = M.status_after_move(model.status_num, dest)
+    end)
+    md.append_history(lines, dest)
+    return lines
+  end)
+  if not new_path then
+    vim.notify("freitask: " .. err, level)
     return nil
   end
-
-  local new_path = path_.task_file(project, id, dest)
-  if vim.fn.filereadable(new_path) == 1 then
-    vim.notify("freitask: já existe um arquivo em " .. new_path, vim.log.levels.WARN)
-    return nil
-  end
-  local dir = vim.fn.fnamemodify(new_path, ":h")
-  if vim.fn.isdirectory(dir) == 0 then
-    vim.fn.mkdir(dir, "p")
-  end
-  if vim.fn.rename(path, new_path) ~= 0 then
-    vim.notify("freitask: não consegui mover " .. id, vim.log.levels.ERROR)
-    return nil
-  end
-
-  -- O link da linha 2 é path-qualified, então precisa seguir a pasta nova; o
-  -- callout acompanha a pasta nos dois sentidos; e o rodapé ganha a entrada de
-  -- histórico. Um write só para as três coisas.
-  local lines = fs.read_lines(new_path)
-  local s, e, block = md.first_block(lines)
-  if s then
-    local model = model_.parse_block(block)
-    if model.id == "" then
-      model.id = id
-    end
-    model.project, model.archived = project, dest
-    model.status_num = M.status_after_move(model.status_num, dest)
-    lines = md.splice(lines, s, e, model_.serialize_block(model))
-  end
-  md.append_history(lines, dest)
-  vim.fn.writefile(lines, new_path)
-
-  if buf then
-    fs.retarget_buf(buf, new_path)
-  end
-
-  cache.remove_cache_entry(path)
-  if not dest then
-    cache.update_cache_entry(new_path)
-  end
-  links.retarget_links(path, new_path)
   return new_path
 end
 
@@ -401,6 +455,67 @@ end
 ---@return string|nil new_path
 function M.unarchive_task(path)
   return move_task(path, nil)
+end
+
+---Move uma task para outro projeto: `projects/<destino>/tasks/<id>.md`, ou
+---`.../tasks/archived/<tipo>/<id>.md` se ela estava arquivada. O tipo de
+---arquivamento e a fase NÃO mudam — mudar de projeto não é (des)arquivar —, e o
+---`id` também não, então os links curtos `[[id]]` seguem valendo sem reescrita:
+---quem muda de endereço são o link da linha 2 e as referências path-qualificadas
+---do vault, que passam por `links.retarget_links`, como em qualquer outro move.
+---A mudança fica registrada no `## Histórico`.
+---
+---Recusa, devolvendo `nil, err` (a CLI sai 1), tudo que deixaria o vault pior:
+---projeto reservado, projeto que não existe (a pasta é o registro, e criá-lo em
+---silêncio faria o typo `dotfile` nascer como projeto — quem quer um novo roda
+---`freitask new-project`), task que já está nele, id já ocupado lá (ativo ou
+---arquivado em qualquer tipo, porque o id é o nome da branch) e buffer da task
+---com alterações não salvas.
+---
+---Como o resto de `task`, NÃO regenera o CURRENT.md.
+---@param path string
+---@param project string projeto de destino
+---@return string|nil new_path, string|nil err
+function M.move_to_project(path, project)
+  status.ensure()
+  local from, id, archived = path_.split_task_path(path)
+  if not from then
+    return nil, "não é um arquivo de task: " .. path
+  end
+
+  project = vim.trim(project or "")
+  local ok, err = M.validate_project(project)
+  if not ok then
+    return nil, err
+  end
+  if not vim.tbl_contains(cache.list_projects(), project) then
+    local msg = "o projeto %q não existe; crie-o antes com `freitask new-project %s`"
+    return nil, string.format(msg, project, project)
+  end
+  if project == from then
+    return nil, "a task já está no projeto " .. project
+  end
+  for _, candidate in ipairs(taken_paths(project, id)) do
+    if vim.fn.filereadable(candidate) == 1 then
+      return nil, string.format("já existe uma task com esse id em %s: %s", project, candidate)
+    end
+  end
+
+  local function rewrite(lines)
+    -- O id do ARQUIVO, e não o do bloco: com a linha 2 dessincronizada, manter o
+    -- id do bloco gravaria no projeto novo um link para uma task que não existe.
+    lines = relink_block(lines, id, project, archived, function(model)
+      model.id = id
+    end)
+    md.append_history_moved(lines, from, project)
+    return lines
+  end
+  local target = path_.task_file(project, id, archived)
+  local new_path, rerr = relocate(path, target, "mover para outro projeto", rewrite)
+  if not new_path then
+    return nil, rerr
+  end
+  return new_path
 end
 
 ---Lê o bloco de callout inicial (linhas `>` contíguas) de um arquivo de task.

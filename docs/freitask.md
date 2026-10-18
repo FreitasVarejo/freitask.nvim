@@ -58,8 +58,9 @@ O topo de cada arquivo de tarefa é um *callout* do Obsidian de 2 a N linhas:
 
 Depois do bloco vem o corpo livre do arquivo (`## Notas Soltas`, checklists…),
 que a ferramenta **nunca** reescreve. A única coisa que ela escreve fora do
-bloco é o rodapé `## Histórico`, ao arquivar/desarquivar — e ainda assim só
-acrescentando uma linha (ver "Arquivar / desarquivar / deletar").
+bloco é o rodapé `## Histórico`, ao arquivar/desarquivar e ao mover de projeto
+— e ainda assim só acrescentando uma linha (ver "Arquivar / desarquivar /
+deletar" e "Mover para outro projeto").
 
 **Frontmatter YAML** é pulado pela detecção do callout, e hoje carrega a
 prioridade (abaixo). Chaves que o freitask não conhece — as que o obsidian.nvim
@@ -296,8 +297,8 @@ distinguir nada — e criar um diretório depois é trivial, esvaziar um cheio n
 
 #### Rodapé `## Histórico`
 
-Arquivar e desarquivar acrescentam uma linha datada ao fim do arquivo, numa
-seção `## Histórico` criada na primeira vez:
+Arquivar, desarquivar e mover de projeto acrescentam uma linha datada ao fim
+do arquivo, numa seção `## Histórico` criada na primeira vez:
 
 ```markdown
 ## Histórico
@@ -305,19 +306,21 @@ seção `## Histórico` criada na primeira vez:
 - 2026-08-09 — arquivada em `archived/dropped` (abandonado)
 - 2026-08-11 — desarquivada, de volta ao board
 - 2026-08-30 — arquivada em `archived/done` (feito)
+- 2026-09-02 — movida de `dotfiles` para `workflow-ia`
 ```
 
 É um **log, não uma linha única**: arquivar → desarquivar → rearquivar é um
 ciclo normal, e sobrescrever apagaria justamente o que interessa (quantas vezes,
 e quando você mudou de ideia). As glosas em PT-BR são `done` → feito,
 `dropped` → abandonado, `failed` → falhou; o nome do diretório vem junto porque
-é ele o dado real.
+é ele o dado real. Na mudança de projeto, origem e destino são os nomes dos
+projetos, entre crases.
 
 Entradas novas entram no **fim da seção**, não no fim do arquivo — se você
 escrever outra `## seção` depois do histórico, ela continua abaixo. Só o
-arquivamento escreve ali: renomear o id, editar (`set`) ou regenerar o board
-**não** acrescentam linha. O rodapé também não vaza para o `CURRENT.md`, que
-reimprime apenas o bloco de callout.
+arquivamento e a mudança de projeto escrevem ali: renomear o id, editar (`set`)
+ou regenerar o board **não** acrescentam linha. O rodapé também não vaza para o
+`CURRENT.md`, que reimprime apenas o bloco de callout.
 
 Esta é a **única** exceção à regra de que a ferramenta não reescreve o corpo do
 arquivo — e ela só acrescenta, nunca mexe no que já estava lá.
@@ -333,20 +336,43 @@ arquivo — e ela só acrescenta, nunca mexe no que já estava lá.
   arquivo do disco de vez. As referências a ela ficam penduradas de propósito,
   e o `doctor` as aponta (`link-pendurado`).
 
+### Mover para outro projeto
+
+`freitask move <id|caminho> <projeto>` · `M.move_to_project(path, projeto)`.
+Leva o arquivo para `projects/<projeto>/tasks/<id>.md` — ou para
+`projects/<projeto>/tasks/archived/<tipo>/<id>.md`, se estava arquivada. O tipo
+de arquivamento e a fase **não mudam**: mudar de projeto não é (des)arquivar. O
+`id` também não, então os links curtos `[[id]]` seguem valendo; quem muda de
+endereço são o wikilink da linha 2 e as referências path-qualificadas do vault
+(`M.retarget_links`, como nos outros moves), e a mudança é registrada no
+`## Histórico`.
+
+O motor recusa — saída `1`, mensagem em stderr, nada escrito — quando:
+
+- o projeto de destino **não existe**. A mensagem sugere `freitask new-project`:
+  um projeto nunca nasce em silêncio por causa de um typo no nome;
+- o projeto é **reservado** (`daily`, `templates`), a mesma noção do `new`;
+- a task **já está** nesse projeto;
+- o **id já está ocupado** no destino, ativo ou arquivado em qualquer tipo — o
+  id é o nome da branch, e duas tasks com ele no mesmo projeto não se distinguem;
+- o buffer da task tem **alterações não salvas** (só dispara se o motor é
+  chamado de dentro de um Neovim com a task aberta).
+
 ### Referências do Obsidian (`M.retarget_links`)
 
-Arquivar, desarquivar e renomear o id são o **mesmo evento** — "esse arquivo
-mudou de endereço" — e por isso passam todos por `M.retarget_links(old, new)`,
-que varre o vault inteiro reescrevendo os wikilinks. Cobre `[[alvo]]`,
-`[[alvo|alias]]`, embeds `![[...]]` e sufixos `#heading` / `^bloco`; preserva o
-alias, exceto quando ele **era** o id antigo (aí acompanha o rename).
+Arquivar, desarquivar, mudar de projeto e renomear o id são o **mesmo evento** —
+"esse arquivo mudou de endereço" — e por isso passam todos por
+`M.retarget_links(old, new)`, que varre o vault inteiro reescrevendo os
+wikilinks. Cobre `[[alvo]]`, `[[alvo|alias]]`, embeds `![[...]]` e sufixos
+`#heading` / `^bloco`; preserva o alias, exceto quando ele **era** o id antigo
+(aí acompanha o rename).
 
 O Obsidian resolve `[[foo]]` pelo **basename**, em qualquer pasta do vault.
-Daí a assimetria — e é por isso que arquivar sai barato:
+Daí a assimetria — e é por isso que arquivar e mudar de projeto saem baratos:
 
 | operação | `[[foo]]` | `[[projects/p/tasks/foo\|foo]]` | frontmatter `id:` |
 | --- | --- | --- | --- |
-| arquivar / desarquivar | intacto | reescrito | intacto |
+| arquivar / desarquivar / mudar de projeto | intacto | reescrito | intacto |
 | renomear id | reescrito | reescrito | reescrito |
 
 Ficam **de fora** da varredura, de propósito:
@@ -376,6 +402,7 @@ freitask set         <id|caminho> [--status <fase>] [--title "…"] [--desc "…
 freitask archive     <id|caminho> done|dropped|failed
 freitask unarchive   <id|caminho>
 freitask rename      <id|caminho> <novo-id>
+freitask move        <id|caminho> <projeto>
 freitask delete      <id|caminho>
 freitask new-project <nome>
 freitask list        [--json] [--archived]
@@ -541,14 +568,16 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
    `M.split_task_path(path)` → `project, id, archived` como guarda único (ele
    devolve `nil` para qualquer coisa fora de padrão) ou `M.is_archived(path)`.
 8. **Nunca mova nem renomeie um arquivo de tarefa na mão** — use
-   `M.archive_task` / `M.unarchive_task` / `M.apply_edit`. Os três chamam
-   `M.retarget_links`, sem a qual os wikilinks do vault ficam pendurados; o
-   wikilink da linha 2 é path-qualified e precisa ser reescrito junto; e
-   arquivar/desarquivar ainda registram a linha datada em `## Histórico`.
-9. **Não escreva em `## Histórico` à mão** para marcar arquivamento — quem
-   escreve ali é `M.archive_task`/`M.unarchive_task`, e a fonte de verdade do
-   estado continua sendo o **caminho**. Uma linha de histórico sem o move
-   correspondente é só um texto mentindo sobre onde o arquivo está.
+   `M.archive_task` / `M.unarchive_task` / `M.move_to_project` / `M.apply_edit`.
+   Os quatro chamam `M.retarget_links`, sem a qual os wikilinks do vault ficam
+   pendurados; o wikilink da linha 2 é path-qualified e precisa ser reescrito
+   junto; e arquivar/desarquivar/mudar de projeto ainda registram a linha datada
+   em `## Histórico`.
+9. **Não escreva em `## Histórico` à mão** para marcar arquivamento ou mudança
+   de projeto — quem escreve ali é
+   `M.archive_task`/`M.unarchive_task`/`M.move_to_project`, e a fonte de
+   verdade do estado continua sendo o **caminho**. Uma linha de histórico sem o
+   move correspondente é só um texto mentindo sobre onde o arquivo está.
 
 ---
 
@@ -562,9 +591,9 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
   `vault/.local/bin/freitask` (no dotfiles) são shims sem lógica: **não**
   acrescente regra neles, senão passam a existir duas versões da mesma regra.
 - `links.retarget_links` é chamada por `task.archive_task`,
-  `task.unarchive_task` e `task.apply_edit` (rename). Qualquer caminho novo que mova ou renomeie um
-  arquivo de task precisa chamá-la também — é o único ponto que conserta as
-  referências do vault.
+  `task.unarchive_task`, `task.move_to_project` e `task.apply_edit` (rename).
+  Qualquer caminho novo que mova ou renomeie um arquivo de task precisa
+  chamá-la também — é o único ponto que conserta as referências do vault.
 - `doctor.migrate_format()` converte arquivos de formatos antigos para o atual
   (idempotente); rode-o após qualquer mudança de formato, seguido de
   `board.rebuild_current()`. Também migra o **formato legado de arquivamento**

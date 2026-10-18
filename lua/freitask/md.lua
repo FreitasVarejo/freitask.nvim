@@ -280,26 +280,12 @@ function M.update_frontmatter_key(lines, key, value)
   return false
 end
 
----Acrescenta uma entrada ao rodapé `## Histórico` do arquivo (criando a seção
----se não existir). É um LOG, não uma linha única: arquivar → desarquivar →
----rearquivar é um ciclo normal, e sobrescrever apagaria justamente a
----informação interessante (quantas vezes, e quando você mudou de ideia).
----Muta `lines` in place; quem chama grava.
+---Acrescenta `entry` ao rodapé `## Histórico` do arquivo (criando a seção se
+---não existir). É o miolo comum a todo evento que escreve ali: onde a linha
+---entra não depende de qual evento foi. Muta `lines` in place.
 ---@param lines string[]
----@param dest string|nil tipo de archived, ou nil para desarquivar
-function M.append_history(lines, dest)
-  local entry
-  if dest then
-    entry = string.format(
-      "- %s — arquivada em `archived/%s` (%s)",
-      os.date("%Y-%m-%d"),
-      dest,
-      C.ARCHIVED_LABELS[dest] or dest
-    )
-  else
-    entry = string.format("- %s — desarquivada, de volta ao board", os.date("%Y-%m-%d"))
-  end
-
+---@param entry string
+local function append_entry(lines, entry)
   -- Última ocorrência: se houver mais de um `## Histórico` (edição manual),
   -- a de baixo é a que o olho lê como rodapé.
   local hstart
@@ -332,6 +318,41 @@ function M.append_history(lines, dest)
     hend = hend - 1
   end
   table.insert(lines, hend + 1, entry)
+end
+
+---Acrescenta a entrada de (des)arquivamento ao rodapé `## Histórico`. É um
+---LOG, não uma linha única: arquivar → desarquivar → rearquivar é um ciclo
+---normal, e sobrescrever apagaria justamente a informação interessante
+---(quantas vezes, e quando você mudou de ideia).
+---Muta `lines` in place; quem chama grava.
+---@param lines string[]
+---@param dest string|nil tipo de archived, ou nil para desarquivar
+function M.append_history(lines, dest)
+  local entry
+  if dest then
+    entry = string.format(
+      "- %s — arquivada em `archived/%s` (%s)",
+      os.date("%Y-%m-%d"),
+      dest,
+      C.ARCHIVED_LABELS[dest] or dest
+    )
+  else
+    entry = string.format("- %s — desarquivada, de volta ao board", os.date("%Y-%m-%d"))
+  end
+  append_entry(lines, entry)
+end
+
+---Acrescenta a entrada de mudança de projeto ao rodapé `## Histórico`. Função
+---à parte, e não um terceiro caso de `append_history(lines, dest)`: ali `nil`
+---já quer dizer "desarquivar", e uma mudança de projeto não tem `dest` — o tipo
+---de arquivamento não muda quando a task troca de projeto. As duas entradas
+---moram no mesmo log, uma abaixo da outra, na ordem em que aconteceram.
+---Muta `lines` in place; quem chama grava.
+---@param lines string[]
+---@param from string projeto de origem
+---@param to string projeto de destino
+function M.append_history_moved(lines, from, to)
+  append_entry(lines, string.format("- %s — movida de `%s` para `%s`", os.date("%Y-%m-%d"), from, to))
 end
 
 return M
