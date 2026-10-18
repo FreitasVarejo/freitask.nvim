@@ -127,6 +127,8 @@ pub struct App {
     pub project_idx: usize,
     pub task_idx: usize,
     pub show_archived: bool,
+    /// Mostra as tasks que o motor esconde por padrão (o "Algum dia").
+    pub show_hidden: bool,
     pub filter: String,
     pub mode: Mode,
     pub message: Option<Message>,
@@ -150,6 +152,7 @@ impl App {
             project_idx: 0,
             task_idx: 0,
             show_archived: false,
+            show_hidden: false,
             filter: String::new(),
             mode: Mode::Normal,
             message: None,
@@ -177,6 +180,7 @@ impl App {
             .iter()
             .filter(|t| t.project == p.project)
             .filter(|t| self.show_archived || t.archived.is_none())
+            .filter(|t| self.show_hidden || !t.hidden)
             .filter(|t| f.is_empty() || t.id.to_lowercase().contains(&f) || t.title.to_lowercase().contains(&f))
             .collect()
     }
@@ -331,6 +335,11 @@ impl App {
             }
             KeyCode::Char('A') => {
                 self.show_archived = !self.show_archived;
+                self.preview = None;
+                self.clamp();
+            }
+            KeyCode::Char('S') => {
+                self.show_hidden = !self.show_hidden;
                 self.preview = None;
                 self.clamp();
             }
@@ -672,6 +681,8 @@ mod tests {
             archived: archived.map(Into::into),
             suggested_archive: if callout == "check" { "done" } else { "dropped" }.into(),
             path,
+            prioridade: None,
+            hidden: false,
         }
     }
 
@@ -740,6 +751,52 @@ mod tests {
         assert_eq!(app.visible_tasks().len(), 2);
         app.handle_key(key('A'));
         assert_eq!(app.visible_tasks().len(), 3);
+    }
+
+    #[test]
+    fn algum_dia_fica_escondido_ate_o_toggle() {
+        let mut d = data();
+        d.tasks.push(Task {
+            hidden: true,
+            ..task("alfa", "a9", "quote", 8, None)
+        });
+        let mut app = App::new(d);
+        let ids = |app: &App| -> Vec<String> { app.visible_tasks().iter().map(|t| t.id.clone()).collect() };
+        assert_eq!(ids(&app), ["a1", "a2"]);
+        app.handle_key(key('S'));
+        assert_eq!(ids(&app), ["a1", "a2", "a9"]);
+        app.handle_key(key('S'));
+        assert_eq!(ids(&app), ["a1", "a2"]);
+    }
+
+    #[test]
+    fn o_toggle_de_algum_dia_nao_mexe_nas_arquivadas() {
+        let mut d = data();
+        d.tasks.push(Task {
+            hidden: true,
+            ..task("alfa", "a9", "quote", 8, None)
+        });
+        let mut app = App::new(d);
+        app.handle_key(key('A'));
+        assert_eq!(app.visible_tasks().len(), 3, "arquivadas à mostra, Algum dia ainda não");
+        app.handle_key(key('S'));
+        assert_eq!(app.visible_tasks().len(), 4);
+    }
+
+    #[test]
+    fn toggle_recoloca_a_selecao_dentro_da_lista() {
+        let mut d = data();
+        d.tasks.push(Task {
+            hidden: true,
+            ..task("alfa", "a9", "quote", 8, None)
+        });
+        let mut app = App::new(d);
+        app.pane = Pane::Tasks;
+        app.handle_key(key('S'));
+        app.handle_key(key('G'));
+        assert_eq!(app.current_task().unwrap().id, "a9");
+        app.handle_key(key('S'));
+        assert_eq!(app.current_task().unwrap().id, "a2");
     }
 
     #[test]

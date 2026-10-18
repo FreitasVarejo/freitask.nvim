@@ -30,6 +30,15 @@ status.load_status = function() end
 
 local VAULT = vim.fn.expand("~/ObsidianVault")
 
+---Número da fase pelo callout. O número ordena o board e muda quando o
+---vocabulário cresce; o callout é o que a task grava, então os testes pedem a
+---fase por ele em vez de fixar um número que a próxima fase nova invalidaria.
+---@param callout string
+---@return integer
+local function phase(callout)
+  return status.by_callout()[callout]
+end
+
 describe("kebab", function()
   it("dobra acentos multibyte", function()
     eq("configuracao-da-api", path.kebab("Configuração da API"))
@@ -115,14 +124,47 @@ describe("is_status_text", function()
     eq(1, num)
     local ok2, num2 = model.is_status_text("3 - Blocked")
     truthy(ok2)
-    eq(5, num2, "Blocked legado mapeia para o callout warning de hoje")
+    eq(phase("warning"), num2, "Blocked legado mapeia para o callout warning de hoje")
+    local _, num3 = model.is_status_text("4 - In Progress")
+    eq(phase("example"), num3, "In Progress legado mapeia para example")
+    local _, num4 = model.is_status_text("5 - Review")
+    eq(phase("question"), num4, "Review legado mapeia para question")
+  end)
+
+  it("o legado resolve pelo callout no status.json que o vault tem", function()
+    -- Um vault que ainda tem o status.json de sete fases: o número de
+    -- "Blocked" é o dele, não o do default de hoje.
+    local atual = status.status
+    status.status = {
+      ["1"] = { title = "Não iniciada", callout = "todo" },
+      ["2"] = { title = "Refinando", callout = "abstract" },
+      ["3"] = { title = "Em implementação", callout = "example" },
+      ["4"] = { title = "Em homologação", callout = "question" },
+      ["5"] = { title = "Bloqueada", callout = "warning" },
+      ["6"] = { title = "Pronta", callout = "check" },
+      ["7"] = { title = "Arquivada", callout = "done" },
+    }
+    local ok, err = pcall(function()
+      eq(5, select(2, model.is_status_text("3 - Blocked")))
+      eq(3, select(2, model.is_status_text("4 - In Progress")))
+      eq(4, select(2, model.is_status_text("5 - Review")))
+      -- O mapa de callouts é memoizado pela identidade da tabela: troque a tabela.
+      local sem_warning = vim.deepcopy(status.status)
+      sem_warning["5"] = nil
+      status.status = sem_warning
+      local reconhecida, num = model.is_status_text("3 - Blocked")
+      truthy(reconhecida, "a linha legada é descartada mesmo sem o callout no arquivo")
+      eq(0, num, "e vira Sem status, não outra fase")
+    end)
+    status.status = atual
+    assert(ok, err)
   end)
 
   it("usa a chave ATUAL do título, não o dígito escrito na linha", function()
-    -- "99 - Arquivada" tem dígito inválido, mas o título casa a entrada 7.
+    -- "99 - Arquivada" tem dígito inválido, mas o título casa a entrada de `done`.
     local ok, num = model.is_status_text("99 - Arquivada")
     truthy(ok)
-    eq(7, num)
+    eq(phase("done"), num)
   end)
 
   it("não come uma nota que só parece status", function()
@@ -213,7 +255,13 @@ describe("serialize_block", function()
     eq({
       "> [!done] Título",
       "> [[projects/p/tasks/archived/done/x|x]]",
-    }, model.serialize_block({ status_num = 7, title = "Título", id = "x", project = "p", archived = "done" }))
+    }, model.serialize_block({
+      status_num = phase("done"),
+      title = "Título",
+      id = "x",
+      project = "p",
+      archived = "done",
+    }))
   end)
 
   it("omite a linha de descrição quando ela está vazia", function()
@@ -422,12 +470,12 @@ end)
 
 describe("suggest_archive_type", function()
   it("deriva done dos callouts de conclusão", function()
-    eq("done", path.suggest_archive_type(7)) -- done
-    eq("done", path.suggest_archive_type(6)) -- check
+    eq("done", path.suggest_archive_type(phase("done")))
+    eq("done", path.suggest_archive_type(phase("check")))
   end)
 
   it("não deriva failed de fase nenhuma: `failed` se escolhe à mão", function()
-    -- Nenhuma das seis fases significa "falhou" — `warning` é BLOQUEADA, que é
+    -- Nenhuma das fases significa "falhou" — `warning` é BLOQUEADA, que é
     -- outra coisa: quem travou não fracassou. Com FAILED_CALLOUTS vazio, o
     -- prompt passa a sugerir `dropped` e quem quiser `failed` digita. O teste
     -- fica como registro da escolha: se um dia uma fase de falha entrar no
@@ -520,52 +568,33 @@ describe("set_frontmatter", function()
 end)
 
 describe("meta", function()
-  it("lê só as três chaves do eixo, ignorando o resto", function()
-    local mt = meta.read({ "---", "id: x", "dono: fedora/nvim", "desde: 2026-09-22T10:00:00-03:00", "---" })
-    eq("fedora/nvim", mt.dono)
-    eq("2026-09-22T10:00:00-03:00", mt.desde)
-    eq(nil, mt.dominio)
+  it("lê só a prioridade, ignorando o resto do frontmatter", function()
+    local mt = meta.read({ "---", "id: x", "prioridade: alta", "tags: [p]", "---" })
+    eq("alta", mt.prioridade)
     eq(nil, mt.id)
   end)
 
-  it("trata campo vazio como ausente", function()
-    eq(nil, meta.read({ "---", "dono:", "---" }).dono)
+  it("trata campo vazio ou ausente como sem prioridade", function()
+    eq(nil, meta.read({ "---", "prioridade:", "---" }).prioridade)
+    eq(nil, meta.read({ "---", "id: x", "---" }).prioridade)
+    eq(nil, meta.read({ "> [!todo] sem frontmatter" }).prioridade)
   end)
 
   it("escreve o estado INTEIRO: campo ausente é removido", function()
-    local lines = { "---", "dono: a", "dominio: d", "---", "", "> x" }
-    meta.write(lines, { dono = "b" })
-    local mt = meta.read(lines)
-    eq("b", mt.dono)
-    eq(nil, mt.dominio, "dominio some porque não veio na tabela")
+    local lines = { "---", "id: x", "prioridade: alta", "---", "", "> x" }
+    meta.write(lines, {})
+    eq(nil, meta.read(lines).prioridade)
+    eq("x", md.frontmatter(lines).id, "o que não é do freitask fica")
+    meta.write(lines, { prioridade = "alta" })
+    eq("alta", meta.read(lines).prioridade)
   end)
 
-  it("converte ISO-8601 com offset para o mesmo instante", function()
-    eq(meta.epoch("2026-09-22T00:00:00Z"), meta.epoch("2026-09-21T21:00:00-03:00"))
-    eq(meta.epoch("2026-09-22T00:00:00Z"), meta.epoch("2026-09-22T03:00:00+03:00"))
-    eq(3600, meta.epoch("2026-09-22T01:00:00Z") - meta.epoch("2026-09-22T00:00:00Z"))
-  end)
-
-  it("devolve nil para carimbo ilegível", function()
-    eq(nil, meta.epoch("ontem"))
-    eq(nil, meta.epoch(nil))
-  end)
-
-  it("emite carimbo ISO com offset de dois-pontos", function()
-    truthy(meta.now():match("^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%d[+-]%d%d:%d%d$"))
-  end)
-
-  it("só acusa fantasma quando há garra velha", function()
-    local now = meta.epoch("2026-09-22T12:00:00Z")
-    falsy(meta.stale({}, now), "sem dono não há garra")
-    falsy(meta.stale({ dono = "a", desde = "2026-09-22T11:00:00Z" }, now), "1h é garra viva")
-    falsy(meta.stale({ dono = "a", desde = "2026-09-21T13:00:00Z" }, now), "23h ainda vale")
-    truthy(meta.stale({ dono = "a", desde = "2026-09-21T11:00:00Z" }, now), "25h é fantasma")
-    truthy(meta.stale({ dono = "a" }, now), "garra sem carimbo nunca expiraria sozinha")
-  end)
-
-  it("identifica o agente como <maquina>/<ferramenta>", function()
-    truthy(meta.whoami("claude-code"):match("^[^/]+/claude%-code$"))
+  it("só `alta`, exato, conta como prioridade alta", function()
+    truthy(meta.is_high({ prioridade = "alta" }))
+    falsy(meta.is_high({ prioridade = "Alta" }), "o doctor avisa; o motor não adivinha")
+    falsy(meta.is_high({ prioridade = "urgente" }))
+    falsy(meta.is_high({}))
+    falsy(meta.is_high(nil))
   end)
 end)
 
@@ -636,8 +665,40 @@ describe("template", function()
   end)
 end)
 
+describe("status.is_hidden", function()
+  it("esconde só a fase de callout quote (Algum dia)", function()
+    truthy(status.is_hidden(phase("quote")))
+    for _, c in ipairs({ "todo", "abstract", "tip", "example", "question", "warning", "check" }) do
+      falsy(status.is_hidden(phase(c)), c .. " aparece")
+    end
+  end)
+
+  it("o sentinela de status inválido não é escondido", function()
+    falsy(status.is_hidden(0))
+    falsy(status.is_hidden(nil))
+  end)
+end)
+
+describe("vocabulário de status", function()
+  it("tem as nove fases na ordem da narrativa, com callouts distintos", function()
+    local ordem = { "todo", "abstract", "tip", "example", "question", "warning", "check", "quote", "done" }
+    local seen = {}
+    for i, callout in ipairs(ordem) do
+      eq(callout, status.status[tostring(i)].callout)
+      falsy(seen[callout], callout .. " repetido")
+      seen[callout] = true
+    end
+    eq(#ordem, vim.tbl_count(status.status))
+  end)
+
+  it("Algum dia vem depois de Pronta e antes de Arquivada", function()
+    truthy(phase("check") < phase("quote"))
+    truthy(phase("quote") < phase("done"))
+  end)
+end)
+
 describe("status_after_move", function()
-  local DONE, CHECK, TODO = 7, 6, 1
+  local DONE, CHECK, TODO = phase("done"), phase("check"), phase("todo")
 
   it("arquivar como done grava a fase done", function()
     -- Regressão: `archive <id> done` movia o arquivo e deixava o callout, e o
@@ -668,8 +729,8 @@ end)
 
 describe("check_status_change", function()
   it("devolve o número da fase pedida", function()
-    eq(3, task.check_status_change("example", nil))
-    eq(5, task.check_status_change("warning", "dropped"))
+    eq(phase("example"), task.check_status_change("example", nil))
+    eq(phase("warning"), task.check_status_change("warning", "dropped"))
   end)
 
   it("recusa fase que não está no status.json", function()

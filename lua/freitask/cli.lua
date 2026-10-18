@@ -132,17 +132,19 @@ freitask — gestão de tasks do vault do Obsidian
       segunda cópia da regra.
 
   freitask list [--json] [--archived]
-      Lista as tasks. O JSON traz, por task: project, id, path, archived,
-      status (título da fase), status_num, callout, title, desc e
-      suggested_archive.
+      Lista as tasks, as de prioridade alta primeiro. O JSON traz, por task:
+      project, id, path, archived, status (título da fase), status_num,
+      callout, title, desc, suggested_archive, hidden (a fase que o painel e a
+      TUI escondem por padrão; só task ativa) e prioridade ("alta" ou null).
 
   freitask projects [--json]
       Lista os projetos (inclusive os sem task ativa) e quantas tasks ativas
-      cada um tem.
+      cada um tem, as que o painel mostra (as de fase escondida não contam).
 
   freitask statuses [--json]
-      O vocabulário de fases do .freitask/status.json, em ordem, com ícone e
-      grupo de highlight; o 0 é o sentinela "Sem status".
+      O vocabulário de fases do .freitask/status.json, em ordem, com ícone,
+      grupo de highlight e hidden (a fase que o painel e a TUI escondem por
+      padrão); o 0 é o sentinela "Sem status".
 
 NUNCA mova nem renomeie um arquivo de task com `mv`: as referências do vault
 ficam penduradas e o histórico não é escrito. E prefira `new` a escrever o
@@ -381,7 +383,14 @@ if cmd == "projects" then
   T.build_cache()
   local rows = {}
   for _, p in ipairs(T.list_projects()) do
-    rows[#rows + 1] = { project = p, active = #T.entries_for(p) }
+    -- As que o painel mostra: a contagem do CURRENT.md e a da TUI são esta.
+    local shown = 0
+    for _, e in ipairs(T.entries_for(p)) do
+      if not T.is_hidden(e.status_num) then
+        shown = shown + 1
+      end
+    end
+    rows[#rows + 1] = { project = p, active = shown }
   end
   if flags.json then
     -- vim.json.encode({}) dá "{}", e quem lê espera uma lista.
@@ -407,7 +416,14 @@ if cmd == "statuses" then
   local rows = {}
   for _, n in ipairs(nums) do
     local st = T.status_meta(n)
-    rows[#rows + 1] = { num = n, callout = st.callout, title = st.title, icon = st.icon, hl_group = st.hl_group }
+    rows[#rows + 1] = {
+      num = n,
+      callout = st.callout,
+      title = st.title,
+      icon = st.icon,
+      hl_group = st.hl_group,
+      hidden = T.is_hidden(n),
+    }
   end
   if flags.json then
     say(vim.json.encode(rows))
@@ -440,6 +456,13 @@ local function list_row(e)
     desc = m.desc,
     archived = e.archived or vim.NIL,
     suggested_archive = T.suggest_archive_type(e.status_num),
+    -- Regra do motor (a TUI não conhece regra de task): a fase que o painel e a
+    -- TUI escondem por padrão. Só vale para task ativa: a arquivada já tem o
+    -- próprio toggle, e uma largada do "Algum dia" não deve sumir ao mostrá-las.
+    hidden = e.archived == nil and T.is_hidden(e.status_num),
+    -- "alta" ou null: só o valor que conta; o resto o doctor acusa. Arquivada
+    -- não tem o que priorizar, então a marca não vai com ela.
+    prioridade = (e.archived == nil and T.meta.is_high(e.meta)) and T.meta.HIGH or vim.NIL,
     path = e.path,
   }
 end

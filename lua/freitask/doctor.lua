@@ -172,11 +172,6 @@ function M.doctor(opts)
     end
   end
 
-  -- Reivindicações das tasks ATIVAS, colhidas no laço abaixo para a checagem
-  -- de colisão que vem depois dele — e não numa varredura própria, porque o
-  -- laço já abre todo arquivo de task do vault uma vez.
-  local claims = {}
-
   -- 4. Invariantes deriváveis do caminho: bloco e frontmatter. Tudo aqui é
   -- reparável sem adivinhação, porque o caminho é a fonte de verdade.
   for _, t in ipairs(cache.all_tasks()) do
@@ -206,7 +201,7 @@ function M.doctor(opts)
       end
 
       -- Callout que contradiz a pasta de arquivamento. Só vale para `done`:
-      -- desde que o vocabulário encolheu, o status 7 significa literalmente
+      -- o status `done` significa literalmente
       -- "Arquivada", e um arquivo em archived/done/ dizendo "Não iniciada" é
       -- contradição, não nuance. Em `dropped` e `failed` a fase em que a task
       -- estava quando foi largada é INFORMAÇÃO ("estava bloqueada quando
@@ -262,36 +257,19 @@ function M.doctor(opts)
         end
       end
 
-      -- 6. O eixo de execução. Fica por ÚLTIMO no laço porque set_frontmatter
-      -- insere e remove linhas, invalidando o `s`/`e` que o splice do bloco
-      -- usa; daqui para baixo ninguém mais os toca.
-      local mt = meta_.read(lines)
-
-      if t.archived then
-        -- Posse em task arquivada não tem leitura possível: ninguém "está
-        -- mexendo" no que saiu do board. Reparável sem adivinhação.
-        if mt.dono or mt.desde or mt.dominio then
-          if opts.fix then
-            meta_.write(lines, {})
-            dirty = true
-          end
-          add("warn", "dono-em-arquivada", t.path, "task arquivada com eixo de execução preenchido", opts.fix)
-        end
-      else
-        -- Garra fantasma: NUNCA reparada. Soltar em silêncio a garra de outro
-        -- agente é pior que o fantasma — se ele estiver vivo, dois agentes
-        -- passam a achar que a task é sua, que é exatamente o acidente que este
-        -- eixo existe para evitar. O doctor aponta; quem solta é gente.
-        if meta_.stale(mt) then
+      -- 6. Prioridade: só `alta` conta. Outro valor (`Alta`, `urgente`) viraria
+      -- "normal" em silêncio, o mesmo furo que o status 0 fecha para o callout.
+      -- Sem --fix: não se adivinha o que o dono quis dizer. Em arquivada não há
+      -- o que priorizar.
+      if not t.archived then
+        local prioridade = meta_.read(lines).prioridade
+        if prioridade and prioridade ~= meta_.HIGH then
           add(
             "warn",
-            "garra-fantasma",
+            "prioridade-desconhecida",
             t.path,
-            string.format("reivindicada por %s em %s — mais de 24h", mt.dono, mt.desde or "(sem carimbo)")
+            string.format("prioridade %q não é `%s` — a task conta como normal", prioridade, meta_.HIGH)
           )
-        end
-        if mt.dono and mt.dominio then
-          claims[#claims + 1] = { dono = mt.dono, dominio = mt.dominio, path = t.path }
         end
       end
 
@@ -301,43 +279,7 @@ function M.doctor(opts)
     end
   end
 
-  -- 7. Colisão de domínio: duas tasks ativas, DONOS DIFERENTES, mesmo rótulo de
-  -- `dominio`. É o check pelo qual todo o eixo de execução existe — o acidente
-  -- que ele persegue não é dois agentes editando o mesmo arquivo (isso o git
-  -- resolve), é dois agentes decidindo a mesma coisa de formas incompatíveis.
-  --
-  -- Mesmo dono em duas tasks do mesmo domínio NÃO é colisão: é um agente
-  -- tocando duas frentes do mesmo assunto, que é normal e não surpreende.
-  --
-  -- Comparação EXATA de rótulo, sem aproximação: "schema de tasks" e "schema
-  -- das tasks" passam batido. Aceito de propósito — casar por aproximação daria
-  -- alarme falso entre domínios legitimamente vizinhos, e um checker com alarme
-  -- falso é um checker que se aprende a ignorar. O rótulo é texto livre
-  -- enquanto ninguém sabe quais são os domínios reais; quando eles aparecerem,
-  -- vira lista fechada e o problema some na origem.
-  local by_dominio = {}
-  for _, c in ipairs(claims) do
-    by_dominio[c.dominio] = by_dominio[c.dominio] or {}
-    table.insert(by_dominio[c.dominio], c)
-  end
-  for dominio, cs in pairs(by_dominio) do
-    local donos = {}
-    for _, c in ipairs(cs) do
-      donos[c.dono] = true
-    end
-    if vim.tbl_count(donos) > 1 then
-      local nomes = vim.tbl_keys(donos)
-      table.sort(nomes)
-      add(
-        "warn",
-        "colisao-de-dominio",
-        cs[1].path,
-        string.format("domínio %q reivindicado por %s em %d tasks", dominio, table.concat(nomes, " e "), #cs)
-      )
-    end
-  end
-
-  -- 8. Wikilinks path-qualified pendurados: a impressão digital de um rename
+  -- 7. Wikilinks path-qualified pendurados: a impressão digital de um rename
   -- feito sem M.retarget_links. NÃO é reparável — nada no vault registra que
   -- `foo` um dia se chamou `bar` —, e é justamente por isso que precisa ser
   -- reportado.

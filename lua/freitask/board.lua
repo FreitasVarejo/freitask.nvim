@@ -99,7 +99,19 @@ function M.rebuild_current(opts)
 
   local notes = M.extract_loose_notes(path)
   local projects = cache.list_projects()
-  local total = #(cache.cache or {})
+
+  -- O que o painel mostra: as fases escondidas ("Algum dia") ficam de fora, e o
+  -- total do cabeçalho conta só o que sai impresso.
+  local shown, total = {}, 0
+  for _, project in ipairs(projects) do
+    shown[project] = {}
+    for _, e in ipairs(cache.entries_for(project)) do
+      if not status.is_hidden(e.status_num) then
+        table.insert(shown[project], e)
+      end
+    end
+    total = total + #shown[project]
+  end
 
   local lines = {
     "---",
@@ -126,7 +138,7 @@ function M.rebuild_current(opts)
   for _, project in ipairs(projects) do
     lines[#lines + 1] = "## " .. project
     lines[#lines + 1] = ""
-    local entries = cache.entries_for(project)
+    local entries = shown[project]
     if #entries == 0 then
       lines[#lines + 1] = "_(sem tasks)_"
       lines[#lines + 1] = ""

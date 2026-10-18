@@ -42,7 +42,9 @@ function M.is_status_text(content)
   -- qualquer "N - Texto" comeria notas legítimas como "3 - comprar leite".
   local legacy = C.LEGACY_STATUS_TITLES[stitle]
   if legacy then
-    return true, legacy
+    -- 0 se o status.json do vault não tem o callout: a linha é reconhecida e
+    -- descartada do mesmo jeito, e o status vira "Sem status" em vez de outro.
+    return true, status.by_callout()[legacy] or 0
   end
   return false, nil
 end

@@ -23,6 +23,13 @@ pub struct Task {
     pub archived: Option<String>,
     pub suggested_archive: String,
     pub path: String,
+    /// "alta" ou nada: o motor só devolve o valor que conta.
+    #[serde(default)]
+    pub prioridade: Option<String>,
+    /// A fase que o motor manda esconder por padrão (o "Algum dia"). A regra é
+    /// dele; a TUI só obedece. Nunca vale para arquivada, que tem o próprio toggle.
+    #[serde(default)]
+    pub hidden: bool,
 }
 
 /// Uma linha de `freitask projects --json`.
@@ -115,16 +122,33 @@ mod tests {
 
     #[test]
     fn decodifica_o_contrato_do_list() {
-        let raw = r#"[{"project":"p","id":"t1","status":"Em implementação","status_num":3,
+        let raw = r#"[{"project":"p","id":"t1","status":"Em implementação","status_num":4,
             "callout":"example","title":"Um","desc":"","archived":null,
-            "suggested_archive":"dropped","path":"/v/projects/p/tasks/t1.md"},
-            {"project":"p","id":"t0","status":"Arquivada","status_num":7,"callout":"done",
+            "suggested_archive":"dropped","path":"/v/projects/p/tasks/t1.md",
+            "hidden":false,"prioridade":"alta"},
+            {"project":"p","id":"t0","status":"Arquivada","status_num":9,"callout":"done",
             "title":"Zero","desc":"x","archived":"done","suggested_archive":"done",
             "path":"/v/projects/p/tasks/archived/done/t0.md"}]"#;
         let tasks: Vec<Task> = serde_json::from_str(raw).unwrap();
         assert_eq!(tasks[0].archived, None);
         assert_eq!(tasks[1].archived.as_deref(), Some("done"));
-        assert_eq!(tasks[0].status_num, 3);
+        assert_eq!(tasks[0].status_num, 4);
+        assert_eq!(tasks[0].prioridade.as_deref(), Some("alta"));
+        assert!(!tasks[0].hidden);
+        // Contrato antigo, sem os campos novos: a TUI segue lendo.
+        assert_eq!(tasks[1].prioridade, None);
+        assert!(!tasks[1].hidden);
+    }
+
+    #[test]
+    fn prioridade_nula_e_hidden_verdadeiro() {
+        let raw = r#"[{"project":"p","id":"t","status":"Algum dia","status_num":8,
+            "callout":"quote","title":"T","desc":"","archived":null,
+            "suggested_archive":"dropped","path":"/v/projects/p/tasks/t.md",
+            "hidden":true,"prioridade":null}]"#;
+        let tasks: Vec<Task> = serde_json::from_str(raw).unwrap();
+        assert_eq!(tasks[0].prioridade, None);
+        assert!(tasks[0].hidden);
     }
 
     #[test]

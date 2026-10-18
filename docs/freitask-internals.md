@@ -49,7 +49,7 @@ Tamanho de módulo não está aqui de propósito: contagem em contrato apodrece
 | `model` | **Parser e serializer do bloco.** Puro: linhas entram, `freitask.Model` sai. | Tocar disco, notificar, conhecer buffer. |
 | `cache` | O índice em memória das tasks **ativas**, com o bloco de cada uma. | Enxergar arquivadas (elas são lidas do disco sob demanda). |
 | `links` | Reescrever os wikilinks do vault quando um arquivo muda de endereço. | Decidir que ele mudou. |
-| `meta` | O eixo de EXECUÇÃO no frontmatter (`dono`/`desde`/`dominio`) e a aritmética de data que o sustenta. | Saber a FASE — isso é o callout. |
+| `meta` | A PRIORIDADE no frontmatter (`prioridade: alta`). | Saber a FASE — isso é o callout. |
 | `task` | Operações sobre o **arquivo** de uma task: criar, editar (`apply_edit`, que vira rename quando o id muda), mover, apagar, localizar por id. | Regenerar o board — quem chama decide quando. |
 | `board` | O `CURRENT.md`. | Ser fonte de verdade de coisa alguma. |
 | `doctor` | Verificação, reparo e migração de formato. | Adivinhar (não inventa data nem resolve conflito). |
@@ -123,8 +123,8 @@ Cobertura em `freitask_spec.lua`: as funções **puras** — `path.kebab`,
 `model.is_status_text`, `model.parse_block` (formato atual, legado e status 0),
 `model.serialize_block`, o round-trip entre os dois, `md.first_block_range`,
 `md.block_around`, `md.splice`, `md.append_history`,
-`md.update_frontmatter_key`, `links.rewrite_link`, o eixo de execução de
-`meta` e, da criação, `task.validate_new` e `task.template` — a validação foi
+`md.update_frontmatter_key`, `links.rewrite_link`, a prioridade de
+`meta`, o `status.is_hidden` e, da criação, `task.validate_new` e `task.template` — a validação foi
 separada da escrita justamente para caber aqui: as regras de um id novo (kebab,
 projeto reservado) são a parte interessante, e `create_task` fica só com o
 disco.

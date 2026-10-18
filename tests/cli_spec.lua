@@ -32,6 +32,23 @@ end
 
 local TASK = "projects/meu-projeto/tasks/t1.md"
 
+---Número da fase pelo callout, como o `statuses --json` o devolve. O número
+---ordena o board e muda quando o vocabulário cresce, então o teste o pergunta.
+local function phase_num(callout)
+  for _, r in ipairs(json("statuses", "--json")) do
+    if r.callout == callout then
+      return r.num
+    end
+  end
+end
+
+---Põe um frontmatter de uma linha no topo do arquivo de uma task, como o
+---celular ou um agente faria à mão.
+local function set_frontmatter(rel, line)
+  local lines = vim.fn.readfile(vault .. "/" .. rel)
+  vim.fn.writefile(vim.list_extend({ "---", line, "---" }, lines), vault .. "/" .. rel)
+end
+
 describe("cli: projetos", function()
   it("lista vazia é [] e não {}", function()
     local _, out = run("projects", "--json")
@@ -96,11 +113,13 @@ describe("cli: list e statuses", function()
     eq("meu-projeto", r.project)
     eq("t1", r.id)
     eq("Em implementação", r.status)
-    eq(3, r.status_num)
+    eq(phase_num("example"), r.status_num)
     eq("example", r.callout)
     eq("Um novo", r.title)
     eq("", r.desc)
     eq("dropped", r.suggested_archive)
+    eq(false, r.hidden)
+    eq(vim.NIL, r.prioridade)
     eq(vim.NIL, r.archived)
     eq(vault .. "/" .. TASK, r.path)
   end)
@@ -114,6 +133,107 @@ describe("cli: list e statuses", function()
       truthy(rows[i].num > rows[i - 1].num)
       truthy(rows[i].icon and rows[i].hl_group)
     end
+  end)
+end)
+
+describe("cli: fases novas, prioridade e Algum dia", function()
+  it("statuses traz Refinada e Algum dia, na ordem da narrativa", function()
+    local rows = json("statuses", "--json")
+    local by = {}
+    for _, r in ipairs(rows) do
+      by[r.callout] = r
+    end
+    truthy(by.tip and by.quote, "as duas fases novas estão no vocabulário")
+    eq("Refinada", by.tip.title)
+    eq("Algum dia", by.quote.title)
+    truthy(by.abstract.num < by.tip.num and by.tip.num < by.example.num)
+    truthy(by.check.num < by.quote.num and by.quote.num < by.done.num)
+    eq(true, by.quote.hidden)
+    eq(false, by.tip.hidden)
+    eq(false, rows[1].hidden, "o sentinela também diz")
+  end)
+
+  it("a task alta sobe ao topo qualquer que seja a fase", function()
+    eq(0, (run("new", "meu-projeto", "t-alta", "Alta, em homologação")))
+    eq(0, (run("set", "t-alta", "--status", "question")))
+    set_frontmatter("projects/meu-projeto/tasks/t-alta.md", "prioridade: alta")
+
+    local rows = json("list", "--json")
+    eq("t-alta", rows[1].id, "a alta em homologação vem antes da normal em implementação")
+    eq("alta", rows[1].prioridade)
+    eq("t1", rows[2].id)
+    eq(vim.NIL, rows[2].prioridade)
+
+    -- O frontmatter foi escrito à mão, como o celular faria: o painel só o vê no
+    -- próximo rebuild.
+    eq(0, (run("rebuild")))
+    local board = read("CURRENT.md")
+    truthy(board:find("t-alta", 1, true) < board:find("tasks/t1", 1, true), "o painel segue a mesma ordem")
+
+    -- Arquivada não tem o que priorizar: a marca não vai com ela para a TUI.
+    eq(0, (run("archive", "t-alta", "dropped")))
+    local achou = false
+    for _, r in ipairs(json("list", "--json", "--archived")) do
+      if r.id == "t-alta" then
+        achou = true
+        eq(vim.NIL, r.prioridade)
+      end
+    end
+    truthy(achou, "a task arquivada tem de aparecer no list --archived")
+    eq(0, (run("delete", "t-alta")))
+  end)
+
+  it("Algum dia sai do CURRENT.md, mas segue no list --json com hidden", function()
+    eq(0, (run("new", "meu-projeto", "t-sem-pressa", "Quando der")))
+    eq(0, (run("set", "t-sem-pressa", "--status", "quote")))
+
+    local rows = json("list", "--json")
+    local by = {}
+    for _, r in ipairs(rows) do
+      by[r.id] = r
+    end
+    eq(true, by["t-sem-pressa"].hidden)
+    eq(false, by.t1.hidden)
+    eq("Algum dia", by["t-sem-pressa"].status)
+
+    local board = read("CURRENT.md")
+    falsy(board:find("t-sem-pressa", 1, true), board)
+    truthy(board:find("tasks/t1", 1, true), board)
+    truthy(board:find("1 tasks em 1 projetos", 1, true), "o total conta só o que o painel mostra: " .. board)
+    eq({ { project = "meu-projeto", active = 1 } }, json("projects", "--json"), "projects conta o mesmo que o painel")
+
+    -- Largada, a task deixa de ser "escondida": a arquivada tem o próprio toggle,
+    -- e quem a mostra não espera que uma delas continue sumida.
+    eq(0, (run("archive", "t-sem-pressa", "dropped")))
+    for _, r in ipairs(json("list", "--json", "--archived")) do
+      if r.id == "t-sem-pressa" then
+        eq("dropped", r.archived)
+        eq(false, r.hidden)
+      end
+    end
+    eq(0, (run("delete", "t-sem-pressa")))
+  end)
+
+  it("o doctor acusa prioridade desconhecida, e só ela", function()
+    eq(0, (run("new", "meu-projeto", "t-typo", "Com typo")))
+    set_frontmatter("projects/meu-projeto/tasks/t-typo.md", "prioridade: Alta")
+    local code, out = run("doctor", "--json")
+    eq(1, code)
+    local kinds = {}
+    for _, f in ipairs(vim.json.decode(out).findings) do
+      kinds[#kinds + 1] = f.kind
+    end
+    eq({ "prioridade-desconhecida" }, kinds)
+
+    local typo = vault .. "/projects/meu-projeto/tasks/t-typo.md"
+    vim.fn.writefile(
+      vim.tbl_map(function(l)
+        return l == "prioridade: Alta" and "prioridade: alta" or l
+      end, vim.fn.readfile(typo)),
+      typo
+    )
+    eq(0, (run("doctor")), "alta, exato, é um valor válido")
+    eq(0, (run("delete", "t-typo")))
   end)
 end)
 

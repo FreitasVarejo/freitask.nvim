@@ -17,6 +17,7 @@ M.fs = require("freitask.fs")
 M.path = require("freitask.path")
 M.md = require("freitask.md")
 M.model = require("freitask.model")
+M.meta = require("freitask.meta")
 M.cache = require("freitask.cache")
 M.links = require("freitask.links")
 M.task = require("freitask.task")
@@ -36,6 +37,7 @@ M.ARCHIVED_TYPES = M.config.ARCHIVED_TYPES
 M.ensure_root = M.status.ensure_root
 M.load_status = M.status.load_status
 M.status_meta = M.status.status_meta
+M.is_hidden = M.status.is_hidden
 
 -- caminhos e modelo
 M.split_task_path = M.path.split_task_path

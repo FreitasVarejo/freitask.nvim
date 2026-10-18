@@ -35,8 +35,8 @@ function M.scan_task(path)
     return nil
   end
   -- As linhas são lidas UMA vez e servem às duas extrações: o bloco (status) e
-  -- o frontmatter (posse). Ler de novo para a posse repetiria, por task e por
-  -- build_cache, o custo que esta função existe para evitar.
+  -- o frontmatter (prioridade). Ler de novo para a prioridade repetiria, por
+  -- task e por build_cache, o custo que esta função existe para evitar.
   local lines = fs.read_lines(path)
   local _, _, block = md.first_block(lines)
   block = block or {}
@@ -102,7 +102,10 @@ function M.build_cache()
   end
 end
 
----Tasks cacheadas de um projeto, ordenadas por status e depois id.
+---Tasks cacheadas de um projeto, ordenadas por prioridade (as altas primeiro,
+---qualquer que seja a fase: a fase continua visível pelo ícone), depois por
+---status e depois id. É a única fonte da ordem do CURRENT.md e do `list`, que a
+---TUI lê.
 ---@param project string
 ---@return freitask.Entry[]
 function M.entries_for(project)
@@ -113,6 +116,10 @@ function M.entries_for(project)
     end
   end
   table.sort(list, function(a, b)
+    local ha, hb = meta_.is_high(a.meta), meta_.is_high(b.meta)
+    if ha ~= hb then
+      return ha
+    end
     if a.status_num == b.status_num then
       return a.task_id < b.task_id
     end

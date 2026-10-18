@@ -21,6 +21,7 @@ const HELP: &[(&str, &str)] = &[
     ("r", "renomear o id (arquivo e links)"),
     ("a", "arquivar / desarquivar"),
     ("A", "mostrar / esconder arquivadas"),
+    ("S", "mostrar / esconder Algum dia"),
     ("d", "largar a task (arquiva como dropped)"),
     ("N", "novo projeto"),
     ("c", "abrir o CURRENT.md"),
@@ -36,6 +37,7 @@ fn hl_color(hl: &str) -> Color {
         "DiagnosticWarn" => Color::Yellow,
         "DiagnosticOk" => Color::Green,
         "DiagnosticError" => Color::Red,
+        "Comment" => Color::DarkGray,
         _ => Color::Reset,
     }
 }
@@ -118,6 +120,13 @@ fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
             let color = st.map_or(Color::Red, |s| hl_color(&s.hl_group));
             let icon = st.map_or("?", |s| s.icon.as_str());
             let mut spans = Vec::new();
+            // Uma coluna fixa para a marca da prioridade alta, para a lista não
+            // andar de lado conforme a task.
+            if t.prioridade.is_some() {
+                spans.push(Span::styled("! ", Style::default().fg(Color::Red)));
+            } else {
+                spans.push(Span::raw("  "));
+            }
             if let Some(a) = &t.archived {
                 spans.push(Span::styled(format!("[{a}] "), dim()));
             }
@@ -135,6 +144,9 @@ fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
     let mut title = format!(" Tasks: {project} ");
     if app.show_archived {
         title.push_str("+arquivadas ");
+    }
+    if app.show_hidden {
+        title.push_str("+algum-dia ");
     }
     if !app.filter.is_empty() {
         title.push_str(&format!("/{} ", app.filter));

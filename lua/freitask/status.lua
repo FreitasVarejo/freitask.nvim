@@ -23,6 +23,15 @@ function M.status_meta(num)
   return (M.status and M.status[tostring(num)]) or C.STATUS_INVALID
 end
 
+---Verdadeiro se a fase `num` fica fora do CURRENT.md e da TUI por padrão (o
+---"Algum dia"). Pelo callout e não pelo número, que muda quando o vocabulário
+---cresce.
+---@param num integer|nil
+---@return boolean
+function M.is_hidden(num)
+  return C.HIDDEN_CALLOUTS[M.status_meta(num).callout] == true
+end
+
 ---Garante que projects/ e o status.json existem.
 function M.ensure_root()
   if vim.fn.isdirectory(C.projects) == 0 then
