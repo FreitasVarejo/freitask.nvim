@@ -482,6 +482,42 @@ describe("append_history_moved", function()
   end)
 end)
 
+describe("append_history_renamed", function()
+  local today = os.date("%Y-%m-%d")
+  local entry = "- " .. today .. " — renomeada de `foo` para `bar`"
+
+  it("cria a seção quando ela não existe", function()
+    local lines = { "# Task", "", "corpo", "" }
+    md.append_history_renamed(lines, "foo", "bar")
+    eq({ "# Task", "", "corpo", "", "## Histórico", "", entry }, lines)
+  end)
+
+  it("acrescenta ao FIM da seção existente, depois do arquivamento", function()
+    local lines = {
+      "## Histórico",
+      "",
+      "- 2026-01-01 — arquivada em `archived/done` (feito)",
+      "",
+      "## Outra seção",
+      "conteúdo",
+    }
+    md.append_history_renamed(lines, "foo", "bar")
+    eq("- 2026-01-01 — arquivada em `archived/done` (feito)", lines[3])
+    eq(entry, lines[4])
+    eq("", lines[5], "a linha em branco de separação da seção é preservada")
+    eq("## Outra seção", lines[6], "a entrada nova não pode vazar para depois da próxima seção")
+  end)
+
+  it("é um log: renomear duas vezes guarda os dois nomes antigos", function()
+    local lines = { "corpo" }
+    md.append_history_renamed(lines, "a", "b")
+    md.append_history_renamed(lines, "b", "c")
+    eq(6, #lines)
+    eq("- " .. today .. " — renomeada de `a` para `b`", lines[5])
+    eq("- " .. today .. " — renomeada de `b` para `c`", lines[6])
+  end)
+end)
+
 describe("update_frontmatter_key", function()
   it("atualiza a chave quando ela já existe", function()
     local lines = { "---", "id: velho", "tags: []", "---", "corpo" }

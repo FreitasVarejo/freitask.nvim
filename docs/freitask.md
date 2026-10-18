@@ -58,9 +58,9 @@ O topo de cada arquivo de tarefa é um *callout* do Obsidian de 2 a N linhas:
 
 Depois do bloco vem o corpo livre do arquivo (`## Notas Soltas`, checklists…),
 que a ferramenta **nunca** reescreve. A única coisa que ela escreve fora do
-bloco é o rodapé `## Histórico`, ao arquivar/desarquivar e ao mover de projeto
-— e ainda assim só acrescentando uma linha (ver "Arquivar / desarquivar /
-deletar" e "Mover para outro projeto").
+bloco é o rodapé `## Histórico`, ao arquivar/desarquivar, ao mover de projeto
+e ao renomear o id — e ainda assim só acrescentando uma linha (ver "Arquivar /
+desarquivar / deletar", "Mover para outro projeto" e "Rodapé `## Histórico`").
 
 **Frontmatter YAML** é pulado pela detecção do callout, e hoje carrega a
 prioridade (abaixo). Chaves que o freitask não conhece — as que o obsidian.nvim
@@ -248,7 +248,8 @@ Neovim roda `freitask rebuild` (autocmd do dotfiles).
 
 Renomear o id faz **rename real** do arquivo (`vim.fn.rename`, não
 escrever-o-novo-e-apagar-o-velho) e **migra as referências do vault**
-(`M.retarget_links`) junto com o `id:` do frontmatter. O id novo passa pela
+(`M.retarget_links`) junto com o `id:` do frontmatter, e registra o id antigo
+no `## Histórico`. O id novo passa pela
 mesma validação de uma tarefa nova — kebab-case e livre, inclusive em
 `archived/` —, porque ele é também o nome da branch.
 
@@ -297,8 +298,8 @@ distinguir nada — e criar um diretório depois é trivial, esvaziar um cheio n
 
 #### Rodapé `## Histórico`
 
-Arquivar, desarquivar e mover de projeto acrescentam uma linha datada ao fim
-do arquivo, numa seção `## Histórico` criada na primeira vez:
+Arquivar, desarquivar, mover de projeto e renomear o id acrescentam uma linha
+datada ao fim do arquivo, numa seção `## Histórico` criada na primeira vez:
 
 ```markdown
 ## Histórico
@@ -307,6 +308,7 @@ do arquivo, numa seção `## Histórico` criada na primeira vez:
 - 2026-08-11 — desarquivada, de volta ao board
 - 2026-08-30 — arquivada em `archived/done` (feito)
 - 2026-09-02 — movida de `dotfiles` para `workflow-ia`
+- 2026-09-05 — renomeada de `foo` para `bar`
 ```
 
 É um **log, não uma linha única**: arquivar → desarquivar → rearquivar é um
@@ -314,12 +316,14 @@ ciclo normal, e sobrescrever apagaria justamente o que interessa (quantas vezes,
 e quando você mudou de ideia). As glosas em PT-BR são `done` → feito,
 `dropped` → abandonado, `failed` → falhou; o nome do diretório vem junto porque
 é ele o dado real. Na mudança de projeto, origem e destino são os nomes dos
-projetos, entre crases.
+projetos, entre crases; no rename, o id antigo e o novo. A entrada do rename é
+o único registro de que `foo` um dia foi o id da tarefa, e vale também numa
+arquivada: a de arquivamento que já estava lá continua valendo.
 
 Entradas novas entram no **fim da seção**, não no fim do arquivo — se você
 escrever outra `## seção` depois do histórico, ela continua abaixo. Só o
-arquivamento e a mudança de projeto escrevem ali: renomear o id, editar (`set`)
-ou regenerar o board **não** acrescentam linha. O rodapé também não vaza para o
+arquivamento, a mudança de projeto e o rename escrevem ali: editar (`set`) ou
+regenerar o board **não** acrescentam linha. O rodapé também não vaza para o
 `CURRENT.md`, que reimprime apenas o bloco de callout.
 
 Esta é a **única** exceção à regra de que a ferramenta não reescreve o corpo do
@@ -440,8 +444,9 @@ wikilink da linha 2, o `id:` do frontmatter, o estado de arquivamento) e por
 isso não precisa ser obedecida: precisa ser regenerada. Só duas coisas se
 perdem de verdade:
 
-1. **backlinks externos após um rename** — nada registra que `foo` se chamava
-   `bar`;
+1. **backlinks externos após um rename na mão** — o `rename` da CLI migra as
+   referências do vault e registra o id antigo no `## Histórico`; um `mv` não faz
+   nenhuma das duas coisas, e nada mais registra que `foo` se chamava `bar`;
 2. **as entradas de histórico** — são fatos sobre o passado.
 
 Repare que **arquivar não está nessa lista**: o move preserva o basename, o
@@ -571,11 +576,11 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
    `M.archive_task` / `M.unarchive_task` / `M.move_to_project` / `M.apply_edit`.
    Os quatro chamam `M.retarget_links`, sem a qual os wikilinks do vault ficam
    pendurados; o wikilink da linha 2 é path-qualified e precisa ser reescrito
-   junto; e arquivar/desarquivar/mudar de projeto ainda registram a linha datada
-   em `## Histórico`.
-9. **Não escreva em `## Histórico` à mão** para marcar arquivamento ou mudança
-   de projeto — quem escreve ali é
-   `M.archive_task`/`M.unarchive_task`/`M.move_to_project`, e a fonte de
+   junto; e arquivar/desarquivar/mudar de projeto/renomear ainda registram a
+   linha datada em `## Histórico`.
+9. **Não escreva em `## Histórico` à mão** para marcar arquivamento, mudança de
+   projeto ou rename — quem escreve ali é
+   `M.archive_task`/`M.unarchive_task`/`M.move_to_project`/`M.apply_edit`, e a fonte de
    verdade do estado continua sendo o **caminho**. Uma linha de histórico sem o
    move correspondente é só um texto mentindo sobre onde o arquivo está.
 

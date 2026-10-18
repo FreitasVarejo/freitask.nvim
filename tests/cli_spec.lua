@@ -513,6 +513,30 @@ describe("cli: arquivar, renomear, apagar", function()
     truthy(n:find("[[projects/meu-projeto/tasks/t2|t2]]", 1, true), n)
   end)
 
+  it("rename registra no Histórico o id antigo, depois das entradas que já havia", function()
+    -- É o único lugar que guarda que `t2` um dia se chamou `t1`: sem a linha, o
+    -- link externo que o rename não alcançou não tem de onde descobrir o nome.
+    local body = read("projects/meu-projeto/tasks/t2.md")
+    local rename = body:find("renomeada de `t1` para `t2`", 1, true)
+    local unarchive = body:find("desarquivada, de volta ao board", 1, true)
+    truthy(rename, body)
+    truthy(unarchive and unarchive < rename, "a entrada nova vai depois das antigas: " .. body)
+    eq(1, select(2, body:gsub("## Histórico", "")), "uma seção só")
+  end)
+
+  it("rename de task arquivada guarda o arquivamento e o nome antigo, e o doctor sai 0", function()
+    eq(0, (run("new", "meu-projeto", "t4", "Quatro")))
+    eq(0, (run("archive", "t4", "done")))
+    eq(0, (run("rename", "t4", "t5")))
+    eq(0, vim.fn.filereadable(vault .. "/projects/meu-projeto/tasks/archived/done/t4.md"))
+    local body = read("projects/meu-projeto/tasks/archived/done/t5.md")
+    truthy(body:find("arquivada em `archived/done`", 1, true), body)
+    truthy(body:find("renomeada de `t4` para `t5`", 1, true), body)
+    local code, out = run("doctor")
+    eq(0, code, out)
+    eq(0, (run("delete", "t5")))
+  end)
+
   it("rename recusa id fora de kebab e id já ocupado, até em archived/", function()
     -- Regressão: `rename t "Id Ruim"` criava `Id Ruim.md` — um arquivo e uma
     -- branch que ninguém digita.

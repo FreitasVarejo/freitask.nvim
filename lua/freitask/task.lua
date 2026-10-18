@@ -239,7 +239,8 @@ end
 ---Aplica um modelo editado ao arquivo de uma task e devolve o caminho final.
 ---
 ---Se o id muda, é um RENAME, com tudo que ele arrasta: o arquivo, o `id:` do
----frontmatter e os wikilinks do vault inteiro (`links.retarget_links`). O id é
+---frontmatter, os wikilinks do vault inteiro (`links.retarget_links`) e a
+---entrada `renomeada de` no `## Histórico` (a única que guarda o id antigo). O id é
 ---o nome da BRANCH git também, e por isso passa pela mesma validação de uma
 ---task nova (kebab-case, livre inclusive em archived/) — renomear para
 ---"Minha Task" criaria um arquivo e uma branch que ninguém consegue digitar.
@@ -295,6 +296,7 @@ function M.apply_edit(path, nm)
   -- `id:` do frontmatter (injetado pelo obsidian.nvim) espelha o nome do
   -- arquivo; sem isto ele ficaria apontando para o id antigo.
   md.update_frontmatter_key(lines, "id", nm.id)
+  md.append_history_renamed(lines, old_id, nm.id)
   vim.fn.writefile(lines, new_path)
   cache.remove_cache_entry(path)
   cache.update_cache_entry(new_path)

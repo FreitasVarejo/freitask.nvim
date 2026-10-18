@@ -355,4 +355,18 @@ function M.append_history_moved(lines, from, to)
   append_entry(lines, string.format("- %s — movida de `%s` para `%s`", os.date("%Y-%m-%d"), from, to))
 end
 
+---Acrescenta a entrada de rename ao rodapé `## Histórico`. Função à parte,
+---pelo mesmo motivo de `append_history_moved`: não tem `dest` para caber em
+---`append_history`. É o único registro de que `from` um dia foi o id desta
+---task: o rename reescreve as referências que o vault tem, e nenhuma delas
+---guarda o nome antigo. As entradas moram no mesmo log, na ordem em que
+---aconteceram; a de arquivamento anterior continua valendo.
+---Muta `lines` in place; quem chama grava.
+---@param lines string[]
+---@param from string id antigo
+---@param to string id novo
+function M.append_history_renamed(lines, from, to)
+  append_entry(lines, string.format("- %s — renomeada de `%s` para `%s`", os.date("%Y-%m-%d"), from, to))
+end
+
 return M
