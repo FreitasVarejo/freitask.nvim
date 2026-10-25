@@ -121,6 +121,18 @@ function M.vault_dir(project, archived)
   return string.format("projects/%s/tasks", project)
 end
 
+---Pasta de um projeto, viva (`projects/<p>`) ou encerrada
+---(`projects/_encerrados/<p>`), e o prefixo vault-relative, com a barra final,
+---dos wikilinks que apontam para dentro dela.
+---@param project string
+---@param closed boolean|nil
+---@return string dir, string prefix
+function M.project_dir(project, closed)
+  local rel = closed and string.format("projects/%s/%s/", C.CLOSED_DIR, project)
+    or string.format("projects/%s/", project)
+  return C.vault .. "/" .. rel:sub(1, -2), rel
+end
+
 ---Verdadeiro se a task está arquivada. O CAMINHO é a fonte de verdade (não há
 ---mais flag `archived: true` no frontmatter — ver M.migrate_format).
 ---@param path string

@@ -9,7 +9,8 @@ responsabilidade), que a CLI `freitask` roda sob `nvim -l`, e a **TUI** em
 `tui/` (Rust), que fala com o motor só pela CLI. O Neovim não carrega nada
 daqui: o dotfiles só abre a TUI num float (`<leader>k`) e roda
 `freitask rebuild` ao salvar uma task. Opera **exclusivamente** sob
-`~/ObsidianVault/projects/<projeto>/tasks/`. Para o mapa dos módulos e como
+`~/ObsidianVault/projects/<projeto>/tasks/`; só encerrar e reabrir um projeto
+movem a pasta `projects/<projeto>/` inteira. Para o mapa dos módulos e como
 testar, ver
 [`freitask-internals.md`](freitask-internals.md).
 
@@ -24,6 +25,9 @@ testar, ver
   kebab-case, ex.: `bjju-web`). A presença da pasta é o registro: não há lista
   de projetos em lugar nenhum. As tasks moram junto da spec e das `decisoes/`
   do mesmo projeto, e não numa árvore própria longe do porquê que as justifica.
+- **Projeto encerrado = `projects/_encerrados/<projeto>/`**: fora do painel e de
+  toda listagem, com o caminho como único estado (ver "Encerrar / reabrir um
+  projeto").
 - **`id` da tarefa = nome do arquivo = nome da branch git.** Não existe campo
   "branch" separado — os dois são a mesma coisa (sem prefixo `feat/`).
 - **`CURRENT.md`** é o painel diário, **gerado automaticamente** — não edite as
@@ -322,9 +326,10 @@ arquivada: a de arquivamento que já estava lá continua valendo.
 
 Entradas novas entram no **fim da seção**, não no fim do arquivo — se você
 escrever outra `## seção` depois do histórico, ela continua abaixo. Só o
-arquivamento, a mudança de projeto e o rename escrevem ali: editar (`set`) ou
-regenerar o board **não** acrescentam linha. O rodapé também não vaza para o
-`CURRENT.md`, que reimprime apenas o bloco de callout.
+arquivamento, a mudança de projeto e o rename escrevem ali: editar (`set`),
+regenerar o board e encerrar ou reabrir o projeto **não** acrescentam linha. O
+rodapé também não vaza para o `CURRENT.md`, que reimprime apenas o bloco de
+callout.
 
 Esta é a **única** exceção à regra de que a ferramenta não reescreve o corpo do
 arquivo — e ela só acrescenta, nunca mexe no que já estava lá.
@@ -362,6 +367,45 @@ O motor recusa — saída `1`, mensagem em stderr, nada escrito — quando:
 - o buffer da task tem **alterações não salvas** (só dispara se o motor é
   chamado de dentro de um Neovim com a task aberta).
 
+### Encerrar / reabrir um projeto
+
+`freitask encerrar <projeto>` · `M.close_project(projeto)`, e
+`freitask reabrir <projeto>` · `M.reopen_project(projeto)`.
+
+Projeto que terminou mora em `projects/_encerrados/<projeto>/`. Encerrar leva
+para lá a pasta `projects/<projeto>/` inteira (MOC, spec, `decisoes/`,
+`anexos/` e as tasks arquivadas), e reabrir a traz de volta. O **caminho é o
+único estado**, como o de uma task arquivada: o MOC não ganha campo. Um nível
+abaixo do glob `projects/*/tasks`, o projeto encerrado sai do painel, do
+`list`, do `projects`, da TUI e do `doctor` sem um filtro novo em leitor
+nenhum.
+
+Os dois reescrevem, no vault inteiro, os wikilinks path-qualificados que
+começam por `projects/<projeto>/` (ao reabrir, por
+`projects/_encerrados/<projeto>/`): é `M.retarget_prefix`, a mesma varredura
+de `M.retarget_links`, com as mesmas exceções (`daily/` e `CURRENT.md`). As
+notas da própria pasta entram, e é assim que a linha 2 de cada task acompanha.
+Os links curtos ficam como estão, porque o basename de nada muda. E nenhum dos
+dois escreve no `## Histórico`: quem mudou de lugar foi o projeto, não a task.
+
+`encerrar` recusa (saída `1`, motivo em stderr, nada movido) quando:
+
+- o projeto tem **task ativa**, em qualquer fase, inclusive Algum dia, que o
+  painel esconde; a mensagem as lista. O desfecho de um projeto encerrado está
+  nas tasks, e uma task ativa lá dentro sairia de vista sem desfecho: arquive-as
+  antes;
+- o projeto **não existe** (não há `projects/<projeto>/tasks/`);
+- o nome é **reservado**;
+- `projects/_encerrados/<projeto>/` **já existe**.
+
+`reabrir` recusa quando o projeto **não está encerrado** e quando
+`projects/<projeto>/` **já existe**: reabrir por cima juntaria duas pastas num
+projeto só.
+
+Encerrado, o projeto fica fora do alcance da CLI: as tasks dele não se acham
+pelo id, e um caminho para dentro de `_encerrados/` não passa por
+`split_task_path`. Para mexer nelas, reabra.
+
 ### Referências do Obsidian (`M.retarget_links`)
 
 Arquivar, desarquivar, mudar de projeto e renomear o id são o **mesmo evento** —
@@ -371,12 +415,18 @@ wikilinks. Cobre `[[alvo]]`, `[[alvo|alias]]`, embeds `![[...]]` e sufixos
 `#heading` / `^bloco`; preserva o alias, exceto quando ele **era** o id antigo
 (aí acompanha o rename).
 
+Encerrar e reabrir são o mesmo evento para a pasta de um projeto, e passam por
+`M.retarget_prefix(old, new)`: a mesma varredura, trocando o prefixo
+`projects/<projeto>/` de cada link que começa por ele e deixando o resto do
+link (alias, sufixo, extensão de anexo) como estava.
+
 O Obsidian resolve `[[foo]]` pelo **basename**, em qualquer pasta do vault.
 Daí a assimetria — e é por isso que arquivar e mudar de projeto saem baratos:
 
 | operação | `[[foo]]` | `[[projects/p/tasks/foo\|foo]]` | frontmatter `id:` |
 | --- | --- | --- | --- |
 | arquivar / desarquivar / mudar de projeto | intacto | reescrito | intacto |
+| encerrar / reabrir o projeto | intacto | reescrito | intacto |
 | renomear id | reescrito | reescrito | reescrito |
 
 Ficam **de fora** da varredura, de propósito:
@@ -407,6 +457,8 @@ freitask archive     <id|caminho> done|dropped|failed
 freitask unarchive   <id|caminho>
 freitask rename      <id|caminho> <novo-id>
 freitask move        <id|caminho> <projeto>
+freitask encerrar    <projeto>
+freitask reabrir     <projeto>
 freitask delete      <id|caminho>
 freitask new-project <nome>
 freitask list        [--json] [--archived]
@@ -567,8 +619,9 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 6. **Não edite as seções `## <projeto>` do `CURRENT.md` à mão** — são geradas.
    Edite os arquivos de tarefa; o painel se atualiza ao salvar. Só
    `## Notas Avulsas` é livre.
-7. **Ignore `daily/` e `templates/`** ao varrer projetos, e pule
-   `tasks/*/archived/**` — estão arquivadas, não fazem parte do board ativo.
+7. **Ignore `daily/`, `templates/` e `projects/_encerrados/`** ao varrer
+   projetos, e pule `tasks/*/archived/**` — estão arquivadas, não fazem parte
+   do board ativo.
    O estado de arquivamento é o **caminho**, não uma flag de frontmatter; use
    `M.split_task_path(path)` → `project, id, archived` como guarda único (ele
    devolve `nil` para qualquer coisa fora de padrão) ou `M.is_archived(path)`.
@@ -577,7 +630,9 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
    Os quatro chamam `M.retarget_links`, sem a qual os wikilinks do vault ficam
    pendurados; o wikilink da linha 2 é path-qualified e precisa ser reescrito
    junto; e arquivar/desarquivar/mudar de projeto/renomear ainda registram a
-   linha datada em `## Histórico`.
+   linha datada em `## Histórico`. A pasta de um projeto também não se move na
+   mão para dentro ou para fora de `projects/_encerrados/`: é
+   `freitask encerrar` / `freitask reabrir`, que levam os links junto.
 9. **Não escreva em `## Histórico` à mão** para marcar arquivamento, mudança de
    projeto ou rename — quem escreve ali é
    `M.archive_task`/`M.unarchive_task`/`M.move_to_project`/`M.apply_edit`, e a fonte de
@@ -596,9 +651,11 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
   `vault/.local/bin/freitask` (no dotfiles) são shims sem lógica: **não**
   acrescente regra neles, senão passam a existir duas versões da mesma regra.
 - `links.retarget_links` é chamada por `task.archive_task`,
-  `task.unarchive_task`, `task.move_to_project` e `task.apply_edit` (rename).
-  Qualquer caminho novo que mova ou renomeie um arquivo de task precisa
-  chamá-la também — é o único ponto que conserta as referências do vault.
+  `task.unarchive_task`, `task.move_to_project` e `task.apply_edit` (rename), e
+  `links.retarget_prefix` por `task.close_project` e `task.reopen_project`.
+  Qualquer caminho novo que mova ou renomeie um arquivo de task, ou uma pasta
+  que as contenha, precisa chamar uma delas — são o único ponto que conserta as
+  referências do vault.
 - `doctor.migrate_format()` converte arquivos de formatos antigos para o atual
   (idempotente); rode-o após qualquer mudança de formato, seguido de
   `board.rebuild_current()`. Também migra o **formato legado de arquivamento**

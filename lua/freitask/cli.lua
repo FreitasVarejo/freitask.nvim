@@ -113,6 +113,18 @@ freitask — gestão de tasks do vault do Obsidian
       com `freitask new-project`), projeto reservado, task que já está nele e
       id já ocupado lá (inclusive arquivado).
 
+  freitask encerrar <projeto>
+  freitask reabrir  <projeto>
+      Encerrar leva a pasta projects/<projeto>/ inteira para
+      projects/_encerrados/<projeto>/, que fica fora do painel, do list, do
+      projects e do doctor; reabrir a traz de volta. Os dois reescrevem os
+      wikilinks path-qualificados do vault que apontam para dentro dela (menos
+      daily/ e CURRENT.md), deixam como estão os links curtos e não escrevem no
+      `## Histórico` das tasks. Encerrar recusa projeto com task ativa em
+      qualquer fase, inclusive Algum dia, e as lista; recusa também projeto
+      que não existe, nome reservado e nome já encerrado. Reabrir recusa o que
+      não está encerrado e o nome que já existe em projects/.
+
   freitask new <projeto> <id> "<título>" [--desc "<estado>"]
       Cria uma task em projects/<projeto>/tasks/<id>.md e regenera o painel.
       O <id> é o nome do arquivo E o da branch git: precisa vir em kebab-case,
@@ -147,8 +159,9 @@ freitask — gestão de tasks do vault do Obsidian
       TUI escondem por padrão; só task ativa) e prioridade ("alta" ou null).
 
   freitask projects [--json]
-      Lista os projetos (inclusive os sem task ativa) e quantas tasks ativas
-      cada um tem, as que o painel mostra (as de fase escondida não contam).
+      Lista os projetos (inclusive os sem task ativa; os encerrados não) e
+      quantas tasks ativas cada um tem, as que o painel mostra (as de fase
+      escondida não contam).
 
   freitask statuses [--json]
       O vocabulário de fases do .freitask/status.json, em ordem, com ícone,
@@ -275,6 +288,29 @@ if cmd == "move" then
   end
   T.rebuild_current({ quiet = true })
   say(new)
+  quit(0)
+end
+
+--- encerrar / reabrir --------------------------------------------------------
+if cmd == "encerrar" or cmd == "reabrir" then
+  local pos = parse_flags(2)
+  local project = pos[1] or die("falta o projeto")
+  T.ensure_root()
+  T.load_status()
+
+  -- As recusas (task ativa, projeto que não existe, nome já ocupado…) voltam
+  -- como valor do motor e saem em stderr com o código 1, como as do move.
+  local dir, err
+  if cmd == "encerrar" then
+    dir, err = T.close_project(project)
+  else
+    dir, err = T.reopen_project(project)
+  end
+  if not dir then
+    die(err, 1)
+  end
+  T.rebuild_current({ quiet = true })
+  say(dir)
   quit(0)
 end
 

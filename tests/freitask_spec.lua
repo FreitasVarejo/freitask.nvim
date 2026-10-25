@@ -407,6 +407,52 @@ describe("rewrite_link", function()
   end)
 end)
 
+describe("rewrite_prefix", function()
+  local old, new = "projects/p/", "projects/_encerrados/p/"
+
+  it("troca só o prefixo da pasta, em qualquer profundidade", function()
+    eq("projects/_encerrados/p/tasks/x|x", links.rewrite_prefix("projects/p/tasks/x|x", old, new))
+    eq(
+      "projects/_encerrados/p/tasks/archived/done/x|x",
+      links.rewrite_prefix("projects/p/tasks/archived/done/x|x", old, new)
+    )
+    eq("projects/_encerrados/p/p", links.rewrite_prefix("projects/p/p", old, new), "o MOC também")
+  end)
+
+  it("preserva alias, sufixo, extensão de anexo e o pipe escapado de tabela", function()
+    eq("projects/_encerrados/p/p#Escopo|o projeto", links.rewrite_prefix("projects/p/p#Escopo|o projeto", old, new))
+    eq("projects/_encerrados/p/tasks/x^bloco", links.rewrite_prefix("projects/p/tasks/x^bloco", old, new))
+    eq(
+      "projects/_encerrados/p/anexos/a/f.pdf\\|f.pdf",
+      links.rewrite_prefix("projects/p/anexos/a/f.pdf\\|f.pdf", old, new)
+    )
+    eq(" projects/_encerrados/p/x", links.rewrite_prefix(" projects/p/x", old, new))
+  end)
+
+  it("deixa o link curto, o vizinho de nome parecido e a própria pasta sem barra", function()
+    eq(nil, links.rewrite_prefix("x", old, new), "o Obsidian resolve o link curto por basename")
+    eq(nil, links.rewrite_prefix("projects/p-outro/tasks/x|x", old, new))
+    eq(nil, links.rewrite_prefix("projects/p", old, new))
+    eq(nil, links.rewrite_prefix("outra/projects/p/x", old, new))
+  end)
+
+  it("ida e volta devolvem o link original", function()
+    local inner = "projects/p/tasks/archived/done/x#Para retomar|x"
+    eq(inner, links.rewrite_prefix(links.rewrite_prefix(inner, old, new), new, old))
+  end)
+end)
+
+describe("project_dir", function()
+  it("devolve a pasta e o prefixo dos links, viva e encerrada", function()
+    local dir, prefix = path.project_dir("p")
+    eq(VAULT .. "/projects/p", dir)
+    eq("projects/p/", prefix)
+    dir, prefix = path.project_dir("p", true)
+    eq(VAULT .. "/projects/_encerrados/p", dir)
+    eq("projects/_encerrados/p/", prefix)
+  end)
+end)
+
 describe("append_history", function()
   local today = os.date("%Y-%m-%d")
 

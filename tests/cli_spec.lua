@@ -495,6 +495,209 @@ describe("cli: move", function()
   run("rebuild")
 end)
 
+-- Fica ANTES do bloco de arquivar/renomear/apagar pelo mesmo motivo do move: o
+-- `doctor` precisa sair limpo aqui. Este bloco apaga tudo que cria.
+describe("cli: encerrar e reabrir", function()
+  local P = "enc"
+  local LIVE, CLOSED = "projects/enc", "projects/_encerrados/enc"
+  local FEITA = "/tasks/archived/done/enc-feita.md"
+
+  local function exists(r)
+    return vim.fn.filereadable(vault .. "/" .. r) == 1
+  end
+
+  local function isdir(r)
+    return vim.fn.isdirectory(vault .. "/" .. r) == 1
+  end
+
+  local function write(r, lines)
+    vim.fn.mkdir(vim.fn.fnamemodify(vault .. "/" .. r, ":h"), "p")
+    vim.fn.writefile(lines, vault .. "/" .. r)
+  end
+
+  local function doctor_limpo()
+    local code, out = run("doctor")
+    eq(0, code, out)
+  end
+
+  ---Os projetos que o `projects --json` devolve, e os de todas as tasks do
+  ---`list --json --archived`.
+  local function listed()
+    local projects, tasks = {}, {}
+    for _, r in ipairs(json("projects", "--json")) do
+      projects[r.project] = r.active
+    end
+    for _, r in ipairs(json("list", "--json", "--archived")) do
+      tasks[r.project] = true
+    end
+    return projects, tasks
+  end
+
+  -- O estado de antes de encerrar, para conferir que reabrir o devolve inteiro.
+  local antes = {}
+
+  it("encerrar recusa enquanto houver task ativa, em qualquer fase, e as lista", function()
+    eq(0, (run("new-project", P)))
+    eq(0, (run("new", P, "enc-feita", "Feita")))
+    eq(0, (run("new", P, "enc-um-dia", "Um dia")))
+    eq(0, (run("set", "enc-um-dia", "--status", "quote")))
+
+    local code, out, err, _ = run("encerrar", P)
+    eq(1, code)
+    eq("", out)
+    truthy(err:find("enc-feita (Não iniciada)", 1, true), err)
+    truthy(err:find("enc-um-dia (Algum dia)", 1, true), "a que o painel esconde também conta: " .. err)
+    truthy(isdir(LIVE .. "/tasks"), "recusa não move nada")
+    falsy(isdir(CLOSED))
+
+    eq(0, (run("archive", "enc-feita", "done")))
+    code, _, err = run("encerrar", P)
+    eq(1, code)
+    falsy(err:find("enc-feita", 1, true), "a arquivada não conta: " .. err)
+    truthy(err:find("enc-um-dia", 1, true), err)
+    eq(0, (run("archive", "enc-um-dia", "dropped")))
+  end)
+
+  it("leva a pasta inteira e reescreve os links path-qualificados, não os curtos nem os de daily/", function()
+    write(LIVE .. "/enc.md", {
+      "feita [[projects/enc/tasks/archived/done/enc-feita|enc-feita]] e [[enc-feita]]",
+      "![[projects/enc/anexos/enc-feita/foto.png]]",
+    })
+    write(LIVE .. "/anexos/enc-feita/foto.png", { "não é markdown, vai junto com a pasta" })
+    write("enc-notas/ref.md", {
+      "path [[projects/enc/tasks/archived/done/enc-feita|enc-feita]]",
+      "curto [[enc-feita]]",
+      "moc [[projects/enc/enc#Escopo|o projeto]]",
+      "| tabela | [[projects/enc/anexos/enc-feita/foto.png\\|foto]] |",
+      "vizinho [[projects/enc-outro/nota]]",
+      "outro [[projects/meu-projeto/tasks/t1|t1]]",
+    })
+    -- daily/ são snapshots do board: ficam como estavam.
+    write("daily/2026-01-02.md", { "snapshot [[projects/enc/tasks/enc-feita|enc-feita]]" })
+    antes.feita = vim.fn.readfile(vault .. "/" .. LIVE .. FEITA)
+    antes.ref = read("enc-notas/ref.md")
+    antes.moc = read(LIVE .. "/enc.md")
+
+    local code, out = run("encerrar", P)
+    eq(0, code)
+    eq(vault .. "/" .. CLOSED .. "\n", out)
+    falsy(isdir(LIVE), "a pasta saiu de projects/")
+    truthy(exists(CLOSED .. "/anexos/enc-feita/foto.png"), "o anexo vai junto")
+
+    -- A linha 2 acompanha a pasta, e nada mais muda: quem mudou de lugar foi o
+    -- projeto, não a task, então o ## Histórico não ganha linha.
+    local feita = vim.fn.readfile(vault .. "/" .. CLOSED .. FEITA)
+    eq("> [[projects/_encerrados/enc/tasks/archived/done/enc-feita|enc-feita]]", feita[2])
+    feita[2] = antes.feita[2]
+    eq(antes.feita, feita, "encerrar só reescreve link")
+
+    local ref = read("enc-notas/ref.md")
+    truthy(ref:find("path [[projects/_encerrados/enc/tasks/archived/done/enc-feita|enc-feita]]", 1, true), ref)
+    truthy(ref:find("curto [[enc-feita]]", 1, true), "o link curto segue valendo: " .. ref)
+    truthy(ref:find("moc [[projects/_encerrados/enc/enc#Escopo|o projeto]]", 1, true), ref)
+    truthy(ref:find("[[projects/_encerrados/enc/anexos/enc-feita/foto.png\\|foto]]", 1, true), ref)
+    truthy(ref:find("vizinho [[projects/enc-outro/nota]]", 1, true), "o prefixo é a pasta, com a barra: " .. ref)
+    truthy(ref:find("outro [[projects/meu-projeto/tasks/t1|t1]]", 1, true), ref)
+    local moc = read(CLOSED .. "/enc.md")
+    truthy(
+      moc:find("[[projects/_encerrados/enc/tasks/archived/done/enc-feita|enc-feita]] e [[enc-feita]]", 1, true),
+      moc
+    )
+    truthy(moc:find("![[projects/_encerrados/enc/anexos/enc-feita/foto.png]]", 1, true), moc)
+    eq("snapshot [[projects/enc/tasks/enc-feita|enc-feita]]", read("daily/2026-01-02.md"), "daily/ não se reescreve")
+
+    -- Fora do painel, do `projects` e do `list`, arquivadas incluídas.
+    falsy(read("CURRENT.md"):find("\n## enc\n", 1, true), read("CURRENT.md"))
+    local projects, tasks = listed()
+    eq(nil, projects[P])
+    eq(nil, tasks[P])
+    truthy(projects["meu-projeto"], "os outros seguem lá")
+    -- E fora do alcance da CLI: nem pelo id nem pelo caminho.
+    eq(1, (run("set", "enc-feita", "--title", "Outro")))
+    eq(1, (run("unarchive", vault .. "/" .. CLOSED .. FEITA)))
+    doctor_limpo()
+  end)
+
+  it("reabrir devolve a pasta e os links como estavam", function()
+    local code, out = run("reabrir", P)
+    eq(0, code)
+    eq(vault .. "/" .. LIVE .. "\n", out)
+    falsy(isdir(CLOSED))
+    eq(antes.feita, vim.fn.readfile(vault .. "/" .. LIVE .. FEITA))
+    eq(antes.ref, read("enc-notas/ref.md"))
+    eq(antes.moc, read(LIVE .. "/enc.md"))
+    eq("snapshot [[projects/enc/tasks/enc-feita|enc-feita]]", read("daily/2026-01-02.md"))
+
+    truthy(read("CURRENT.md"):find("\n## enc\n", 1, true), read("CURRENT.md"))
+    local projects, tasks = listed()
+    eq(0, projects[P])
+    truthy(tasks[P])
+    doctor_limpo()
+  end)
+
+  it("encerrar recusa projeto que não existe, nome reservado e nome já encerrado", function()
+    local code, out, err, _ = run("encerrar", "nao-existe")
+    eq(1, code)
+    eq("", out)
+    truthy(err:find("não existe", 1, true), err)
+    falsy(isdir("projects/_encerrados/nao-existe"))
+
+    -- Pasta de projeto sem tasks/ (só spec e decisões) não é projeto do freitask.
+    vim.fn.mkdir(vault .. "/projects/so-moc", "p")
+    code, _, err = run("encerrar", "so-moc")
+    eq(1, code)
+    truthy(err:find("não existe", 1, true), err)
+    truthy(isdir("projects/so-moc"))
+
+    for _, reservado in ipairs({ "daily", "templates" }) do
+      code, _, err = run("encerrar", reservado)
+      eq(1, code, reservado)
+      truthy(err:find("reservado", 1, true), err)
+    end
+
+    vim.fn.mkdir(vault .. "/" .. CLOSED, "p")
+    code, _, err = run("encerrar", P)
+    eq(1, code)
+    truthy(err:find("já está encerrado", 1, true), err)
+    truthy(isdir(LIVE .. "/tasks"), "o vivo fica onde está")
+    vim.fn.delete(vault .. "/" .. CLOSED, "d")
+  end)
+
+  it("reabrir recusa o que não está encerrado e o nome que já existe em projects/", function()
+    local code, out, err, _ = run("reabrir", P)
+    eq(1, code)
+    eq("", out)
+    truthy(err:find("não está encerrado", 1, true), err)
+    truthy(isdir(LIVE))
+
+    eq(0, (run("encerrar", P)))
+    vim.fn.mkdir(vault .. "/" .. LIVE, "p")
+    code, _, err = run("reabrir", P)
+    eq(1, code)
+    truthy(err:find("já existe", 1, true), err)
+    truthy(isdir(CLOSED), "o encerrado fica onde está")
+    vim.fn.delete(vault .. "/" .. LIVE, "d")
+    eq(0, (run("reabrir", P)))
+    doctor_limpo()
+  end)
+
+  it("uso inválido sai 2, e o help lista os dois", function()
+    eq(2, (run("encerrar")))
+    eq(2, (run("reabrir")))
+    local code, out = run("help")
+    eq(0, code)
+    truthy(out:find("freitask encerrar", 1, true), out)
+    truthy(out:find("freitask reabrir", 1, true), out)
+  end)
+
+  vim.fn.delete(vault .. "/" .. LIVE, "rf")
+  vim.fn.delete(vault .. "/projects/_encerrados", "rf")
+  vim.fn.delete(vault .. "/projects/so-moc", "rf")
+  vim.fn.delete(vault .. "/enc-notas", "rf")
+  vim.fn.delete(vault .. "/daily/2026-01-02.md")
+  run("rebuild")
+end)
+
 describe("cli: arquivar, renomear, apagar", function()
   it("arquivada em done não troca de fase por set", function()
     eq(0, (run("archive", "t1", "done")))

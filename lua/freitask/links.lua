@@ -2,7 +2,8 @@
 --
 -- Arquivar, desarquivar, mudar de projeto e renomear o id são o MESMO evento —
 -- "esse arquivo mudou de endereço" — e por isso passam todos por
--- M.retarget_links.
+-- M.retarget_links. Encerrar e reabrir um projeto são o mesmo evento para uma
+-- PASTA inteira, e passam por M.retarget_prefix, que usa a mesma varredura.
 --
 -- O Obsidian resolve `[[foo]]` pelo BASENAME, em qualquer pasta do vault. Daí
 -- a assimetria que a tabela abaixo resume, e que explica por que arquivar é
@@ -11,6 +12,7 @@
 --   operação              [[foo]]      [[projects/p/tasks/foo|foo]]   frontmatter id:
 --   arquivar/desarquivar  intacto      reescrever            intacto
 --   mudar de projeto      intacto      reescrever            intacto
+--   encerrar/reabrir      intacto      reescrever            intacto
 --   renomear id           reescrever   reescrever            reescrever
 
 local C = require("freitask.config")
@@ -70,28 +72,39 @@ function M.rewrite_link(inner, old, new)
   return new_target .. sub .. (new_alias and ("|" .. new_alias) or "")
 end
 
----Reescreve, em todo o vault, os wikilinks que apontavam para `old_path` para
----que apontem para `new_path`. Cobre `[[alvo]]`, `[[alvo|alias]]`, embeds
----`![[...]]` e sufixos `#heading`/`^bloco`, nas formas curta e path-qualified.
----Buffers abertos COM alterações não salvas são pulados (e reportados) em vez
----de sobrescritos — mesma postura do rebuild_current diante de um CURRENT.md
----sujo.
----@param old_path string
----@param new_path string
----@return integer refs, integer files, string[] skipped
-function M.retarget_links(old_path, new_path)
-  local function descr(p)
-    local rel = p:sub(#C.vault + 2):gsub("%.md$", "")
-    return { id = vim.fn.fnamemodify(p, ":t:r"), full = rel }
+---Reescreve um wikilink `inner` cujo alvo começa por `old_prefix` (o caminho
+---vault-relative de uma pasta, com a barra final), trocando só o prefixo.
+---Devolve nil quando o alvo não começa por ele. Puro.
+---
+---Só o começo do miolo é comparado: o prefixo não tem `|`, `#` nem `^`, então
+---começar o miolo por ele é o mesmo que começar o alvo. O resto vai verbatim —
+---alias, sufixo `#`/`^`, extensão de anexo e o `\|` que escapa o alias dentro
+---de uma tabela. Link curto (só o nome) não começa por pasta e fica como está:
+---o Obsidian o resolve pelo basename, que a mudança de pasta não toca.
+---@param inner string
+---@param old_prefix string ex.: `projects/p/`
+---@param new_prefix string ex.: `projects/_encerrados/p/`
+---@return string|nil
+function M.rewrite_prefix(inner, old_prefix, new_prefix)
+  local lead, rest = inner:match("^(%s*)(.*)$")
+  if rest:sub(1, #old_prefix) ~= old_prefix then
+    return nil
   end
-  local old, new = descr(old_path), descr(new_path)
-  if old.full == new.full then
-    return 0, 0, {}
-  end
+  return lead .. new_prefix .. rest:sub(#old_prefix + 1)
+end
 
+---A varredura que as duas reescritas têm em comum: cada wikilink de cada nota
+---elegível (M.ref_candidates) passa por `rewrite`, que devolve o miolo novo ou
+---nil para manter o original. Buffers abertos COM alterações não salvas são
+---pulados (e reportados) em vez de sobrescritos — mesma postura do
+---rebuild_current diante de um CURRENT.md sujo.
+---@param rewrite fun(inner: string): string|nil
+---@param skip table<string, boolean> caminhos que não se reescrevem
+---@return integer refs, integer files, string[] skipped
+local function rewrite_vault(rewrite, skip)
   local refs, files, skipped = 0, 0, {}
   for _, path in ipairs(M.ref_candidates()) do
-    if path ~= old_path and path ~= new_path then
+    if not skip[path] then
       local buf = fs.loaded_buf(path)
       local lines = buf and vim.api.nvim_buf_get_lines(buf, 0, -1, false)
         or fs.read_lines(path)
@@ -101,7 +114,7 @@ function M.retarget_links(old_path, new_path)
         -- gsub com função: o retorno é usado verbatim, então um alias com `%`
         -- não vira referência de captura.
         local replaced = line:gsub("%[%[(.-)%]%]", function(inner)
-          local nl = M.rewrite_link(inner, old, new)
+          local nl = rewrite(inner)
           if not nl then
             return nil -- mantém o original
           end
@@ -137,6 +150,44 @@ function M.retarget_links(old_path, new_path)
     )
   end
   return refs, files, skipped
+end
+
+---Reescreve, em todo o vault, os wikilinks que apontavam para `old_path` para
+---que apontem para `new_path`. Cobre `[[alvo]]`, `[[alvo|alias]]`, embeds
+---`![[...]]` e sufixos `#heading`/`^bloco`, nas formas curta e path-qualified.
+---O próprio arquivo movido fica de fora: quem o move já reescreveu a linha 2.
+---@param old_path string
+---@param new_path string
+---@return integer refs, integer files, string[] skipped
+function M.retarget_links(old_path, new_path)
+  local function descr(p)
+    local rel = p:sub(#C.vault + 2):gsub("%.md$", "")
+    return { id = vim.fn.fnamemodify(p, ":t:r"), full = rel }
+  end
+  local old, new = descr(old_path), descr(new_path)
+  if old.full == new.full then
+    return 0, 0, {}
+  end
+  return rewrite_vault(function(inner)
+    return M.rewrite_link(inner, old, new)
+  end, { [old_path] = true, [new_path] = true })
+end
+
+---Reescreve, em todo o vault, os wikilinks path-qualified que começam por
+---`old_prefix` para que comecem por `new_prefix` — o retarget de uma PASTA
+---inteira, que é o que encerrar e reabrir um projeto fazem. Nada fica de fora
+---além de daily/ e CURRENT.md: as notas da própria pasta, já no endereço novo,
+---também se reescrevem, e é assim que a linha 2 das tasks dela acompanha.
+---@param old_prefix string caminho vault-relative da pasta, com a barra final
+---@param new_prefix string
+---@return integer refs, integer files, string[] skipped
+function M.retarget_prefix(old_prefix, new_prefix)
+  if old_prefix == new_prefix then
+    return 0, 0, {}
+  end
+  return rewrite_vault(function(inner)
+    return M.rewrite_prefix(inner, old_prefix, new_prefix)
+  end, {})
 end
 
 return M

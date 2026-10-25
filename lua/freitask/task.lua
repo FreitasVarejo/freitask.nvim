@@ -1,6 +1,7 @@
 -- freitask.task — as operações sobre o ARQUIVO de uma task.
 --
--- Criar, mover entre ativo e arquivado ou entre projetos, localizar por id.
+-- Criar, mover entre ativo e arquivado ou entre projetos, localizar por id. E,
+-- do projeto, o que é pasta: criar, encerrar e reabrir.
 -- Arquivar e desarquivar são o mesmo motor (move_task) em dois sentidos, e
 -- mudar de projeto (move_to_project) divide com ele o deslocamento do arquivo
 -- (relocate). Nenhum dos três regenera o CURRENT.md, porque quem chama é que
@@ -173,6 +174,104 @@ function M.create_project(name)
     return nil, "não consegui criar " .. dir
   end
   return id
+end
+
+---O deslocamento que encerrar e reabrir têm em comum: a pasta inteira muda de
+---endereço num rename só, e os wikilinks path-qualified que apontavam para
+---dentro dela passam a apontar para o endereço novo (`links.retarget_prefix`).
+---A reescrita roda DEPOIS do rename, e por isso alcança também as notas da
+---própria pasta: é assim que a linha 2 de cada task acompanha.
+---@param src string
+---@param dst string
+---@param old_prefix string
+---@param new_prefix string
+---@return string|nil dst, string|nil err
+local function relocate_project(src, dst, old_prefix, new_prefix)
+  local parent = vim.fn.fnamemodify(dst, ":h")
+  if vim.fn.isdirectory(parent) == 0 and vim.fn.mkdir(parent, "p") == 0 then
+    return nil, "não consegui criar " .. parent
+  end
+  local ok, err = vim.uv.fs_rename(src, dst)
+  if not ok then
+    return nil, string.format("não consegui mover %s para %s: %s", src, dst, tostring(err))
+  end
+  links.retarget_prefix(old_prefix, new_prefix)
+  return dst
+end
+
+---Encerra um projeto: move `projects/<p>/` inteira (MOC, spec, decisões,
+---anexos e as tasks arquivadas) para `projects/_encerrados/<p>/` e reescreve os
+---wikilinks path-qualified do vault que apontavam para dentro dela. Os links
+---curtos ficam: o basename de nada muda.
+---
+---Não escreve no `## Histórico` das tasks: quem mudou de lugar foi o projeto,
+---não a task, e o caminho novo já diz que ele está encerrado.
+---
+---Recusa, devolvendo `nil, err` (a CLI sai 1), nome inválido ou reservado, nome
+---já encerrado, projeto que não existe e projeto com task ativa — em qualquer
+---fase, inclusive a que o painel esconde: o desfecho de um projeto encerrado
+---está nas tasks, e uma task ativa lá dentro sairia do painel, do `list` e do
+---doctor sem desfecho nenhum.
+---
+---Como o resto de `task`, NÃO regenera o CURRENT.md.
+---@param project string
+---@return string|nil dir, string|nil err
+function M.close_project(project)
+  status.ensure()
+  project = vim.trim(project or "")
+  local ok, err = M.validate_project(project)
+  if not ok then
+    return nil, err
+  end
+  local src, old_prefix = path_.project_dir(project)
+  local dst, new_prefix = path_.project_dir(project, true)
+  if vim.uv.fs_stat(dst) then
+    return nil, string.format("o projeto %q já está encerrado: %s existe", project, dst)
+  end
+  if not vim.tbl_contains(cache.list_projects(), project) then
+    return nil, string.format("o projeto %q não existe: não há %s/tasks/", project, src)
+  end
+
+  cache.build_cache()
+  local active = cache.entries_for(project)
+  if #active > 0 then
+    local rows = {}
+    for _, e in ipairs(active) do
+      rows[#rows + 1] = string.format("  %s (%s)", e.task_id, status.status_meta(e.status_num).title)
+    end
+    local msg = "o projeto %q tem task ativa; arquive-a antes de encerrar (`freitask archive <id> <tipo>`):\n%s"
+    return nil, string.format(msg, project, table.concat(rows, "\n"))
+  end
+
+  return relocate_project(src, dst, old_prefix, new_prefix)
+end
+
+---Reabre um projeto encerrado: o caminho inverso de `close_project`, de
+---`projects/_encerrados/<p>/` de volta para `projects/<p>/`, com os wikilinks
+---path-qualified voltando junto.
+---
+---Recusa nome inválido ou reservado, projeto que não está encerrado e nome que
+---já existe em `projects/`: reabrir por cima juntaria duas pastas, e escolher o
+---que vale de cada uma é decisão de quem as conhece.
+---
+---Como o resto de `task`, NÃO regenera o CURRENT.md.
+---@param project string
+---@return string|nil dir, string|nil err
+function M.reopen_project(project)
+  project = vim.trim(project or "")
+  local ok, err = M.validate_project(project)
+  if not ok then
+    return nil, err
+  end
+  local src, old_prefix = path_.project_dir(project, true)
+  local dst, new_prefix = path_.project_dir(project)
+  if vim.fn.isdirectory(src) == 0 then
+    return nil, string.format("o projeto %q não está encerrado: não há %s", project, src)
+  end
+  if vim.uv.fs_stat(dst) then
+    return nil, string.format("já existe %s: reabrir juntaria duas pastas num projeto só; decida antes o que fica", dst)
+  end
+  return relocate_project(src, dst, old_prefix, new_prefix)
 end
 
 ---Apaga o arquivo de uma task. NÃO mexe nas referências do vault: um link para

@@ -18,6 +18,13 @@ M.vault = vim.fn.expand("~/ObsidianVault")
 -- pasta é o registro.
 M.projects = M.vault .. "/projects"
 
+-- Projeto encerrado — o que saiu de circulação — mora em
+-- `projects/_encerrados/<projeto>/`, um nível abaixo do glob `projects/*/tasks`
+-- que define projeto: fica fora do painel, do `list`, do `projects` e do
+-- doctor sem um filtro novo em leitor nenhum. O caminho é o único estado, como
+-- o de uma task arquivada; ver docs/freitask.md, "Encerrar / reabrir".
+M.CLOSED_DIR = "_encerrados"
+
 -- O painel e os snapshots sobem para a raiz do vault. O painel cruza projetos,
 -- então não pertence a nenhum; os snapshots são história do painel.
 M.current = M.vault .. "/CURRENT.md"
