@@ -398,7 +398,7 @@ describe("cli: move", function()
     truthy(err:find("freitask new-project so-spec", 1, true), err)
     falsy(isdir("projects/so-spec/tasks"))
 
-    for _, reservado in ipairs({ "daily", "templates" }) do
+    for _, reservado in ipairs({ "daily", "templates", "_encerrados" }) do
       code, _, err = run("move", "rec", reservado)
       eq(1, code, reservado)
       truthy(err:find("reservado", 1, true), err)
@@ -649,7 +649,7 @@ describe("cli: encerrar e reabrir", function()
     truthy(err:find("não existe", 1, true), err)
     truthy(isdir("projects/so-moc"))
 
-    for _, reservado in ipairs({ "daily", "templates" }) do
+    for _, reservado in ipairs({ "daily", "templates", "_encerrados" }) do
       code, _, err = run("encerrar", reservado)
       eq(1, code, reservado)
       truthy(err:find("reservado", 1, true), err)
@@ -677,6 +677,43 @@ describe("cli: encerrar e reabrir", function()
     truthy(err:find("já existe", 1, true), err)
     truthy(isdir(CLOSED), "o encerrado fica onde está")
     vim.fn.delete(vault .. "/" .. LIVE, "d")
+    eq(0, (run("reabrir", P)))
+    doctor_limpo()
+  end)
+
+  it("new, new-project e move recusam o nome encerrado e apontam o reabrir", function()
+    eq(0, (run("encerrar", P)))
+    local reabra = "freitask reabrir " .. P
+
+    -- O `new` cria em silêncio o projeto que não existe, mas não o encerrado.
+    local code, out, err, _ = run("new", P, "enc-nova", "Nova")
+    eq(1, code)
+    eq("", out)
+    truthy(err:find(reabra, 1, true), err)
+    code, _, err = run("new-project", P)
+    eq(1, code)
+    truthy(err:find(reabra, 1, true), err)
+    local t1 = read("projects/meu-projeto/tasks/t1.md")
+    code, _, err = run("move", "t1", P)
+    eq(1, code)
+    truthy(err:find(reabra, 1, true), "o encerrado não é sugerido ao new-project: " .. err)
+    falsy(err:find("new-project", 1, true), err)
+    eq(t1, read("projects/meu-projeto/tasks/t1.md"), "recusa não escreve nada")
+    falsy(isdir(LIVE), "nada nasceu ao lado do encerrado")
+
+    -- A pasta dos encerrados também não vira projeto, nem por `new` nem por
+    -- `move`, e não se encerra nem se reabre.
+    local function reservado(...)
+      local c, _, e = run(...)
+      eq(1, c, table.concat({ ... }, " "))
+      truthy(e:find("reservado", 1, true), e)
+    end
+    reservado("new", "_encerrados", "enc-x", "X")
+    reservado("move", "t1", "_encerrados")
+    reservado("encerrar", "_encerrados")
+    reservado("reabrir", "_encerrados")
+    falsy(isdir("projects/_encerrados/tasks"))
+
     eq(0, (run("reabrir", P)))
     doctor_limpo()
   end)

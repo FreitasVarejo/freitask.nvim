@@ -37,8 +37,10 @@ M.status_file = M.vault .. "/.freitask/status.json"
 -- Nomes que não podem virar projeto. `daily` e `templates` já não colidiriam
 -- com nada (saíram da árvore de tasks), mas seguem vetados porque reintroduzir
 -- qualquer um deles como projeto traria de volta a ambiguidade que a mudança
--- de layout acabou de remover.
-M.RESERVED = { daily = true, templates = true }
+-- de layout acabou de remover. `_encerrados` é a pasta dos projetos
+-- encerrados: como projeto, ela teria tasks vivas no meio dos que saíram de
+-- circulação.
+M.RESERVED = { daily = true, templates = true, [M.CLOSED_DIR] = true }
 
 -- Tipos de arquivamento = subdiretórios de tasks/<projeto>/archived/.
 -- São três de propósito: `done` e `failed` são deriváveis do callout (ver

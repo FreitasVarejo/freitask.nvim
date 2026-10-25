@@ -36,8 +36,9 @@ testar, ver
   em `.freitask/`, que é configuração e não conteúdo — pasta oculta para o
   Obsidian não a listar junto das notas.
 
-Diretórios **reservados** (não são projetos): `daily/` (arquivo diário) e
-`templates/`. Dentro de um projeto, `archived/` também não é um projeto — é
+Diretórios **reservados** (não são projetos): `daily/` (arquivo diário),
+`templates/` e `_encerrados/` (onde moram os projetos encerrados). Dentro de um
+projeto, `archived/` também não é um projeto — é
 onde ficam as tarefas arquivadas (ver "Arquivar / desarquivar").
 
 ---
@@ -360,7 +361,10 @@ O motor recusa — saída `1`, mensagem em stderr, nada escrito — quando:
 
 - o projeto de destino **não existe**. A mensagem sugere `freitask new-project`:
   um projeto nunca nasce em silêncio por causa de um typo no nome;
-- o projeto é **reservado** (`daily`, `templates`), a mesma noção do `new`;
+- o projeto está **encerrado**. A mensagem aponta `freitask reabrir`, e não o
+  `new-project`, que também recusaria;
+- o projeto é **reservado** (`daily`, `templates`, `_encerrados`), a mesma
+  noção do `new`;
 - a task **já está** nesse projeto;
 - o **id já está ocupado** no destino, ativo ou arquivado em qualquer tipo — o
   id é o nome da branch, e duas tasks com ele no mesmo projeto não se distinguem;
@@ -405,6 +409,11 @@ projeto só.
 Encerrado, o projeto fica fora do alcance da CLI: as tasks dele não se acham
 pelo id, e um caminho para dentro de `_encerrados/` não passa por
 `split_task_path`. Para mexer nelas, reabra.
+
+Um nome encerrado também não volta por outra porta: `new`, `new-project` e
+`move` o recusam e apontam `freitask reabrir <projeto>`. O `new` cria em
+silêncio o projeto que não existe, mas não o encerrado: criá-lo ao lado da
+pasta encerrada daria dois projetos com um nome só, um deles invisível.
 
 ### Referências do Obsidian (`M.retarget_links`)
 
@@ -580,7 +589,8 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 
 1. **Criar tarefa**: `freitask new <projeto> <id> "<título>" [--desc "<estado>"]`.
    É o caminho único onde há shell — ele valida (id kebab-case, projeto não
-   reservado, id livre inclusive em `archived/`; projeto novo é criado), serializa o bloco pelo mesmo
+   reservado, id livre inclusive em `archived/`; projeto novo é criado, menos o
+   encerrado, que se reabre), serializa o bloco pelo mesmo
    código de todo o resto e **regenera o `CURRENT.md`**. Montar o markdown na
    mão deixa o painel para trás, que era o sintoma antigo: task criada por
    arquivo não aparecia no board até alguém salvar outra task no Neovim.

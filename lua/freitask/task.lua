@@ -55,8 +55,24 @@ function M.validate_project(project)
     return false, "projeto não pode conter '/': " .. project
   end
   if C.RESERVED[project] then
-    -- `daily` e `templates` não são projetos; ver o comentário em config.
+    -- `daily`, `templates` e `_encerrados` não são projetos; ver o comentário
+    -- em config.
     return false, string.format("%q é um diretório reservado, não um projeto", project)
+  end
+  return true
+end
+
+---Recusa o nome de um projeto encerrado. `new`, `new-project` e `move` o
+---trariam de volta como projeto vivo ao lado da pasta encerrada — dois
+---projetos com um nome só, um deles invisível —, e quem quer o projeto de
+---volta o reabre, com os links junto. Toca o disco, por isso fica fora de
+---`validate_project`.
+---@param project string
+---@return boolean ok, string|nil err
+local function check_not_closed(project)
+  project = vim.trim(project or "")
+  if vim.fn.isdirectory((path_.project_dir(project, true))) == 1 then
+    return false, string.format("o projeto %q está encerrado; reabra-o com `freitask reabrir %s`", project, project)
   end
   return true
 end
@@ -119,8 +135,13 @@ function M.create_task(project, model)
   if not ok then
     return nil, err
   end
+  ok, err = check_not_closed(project)
+  if not ok then
+    return nil, err
+  end
 
-  -- Projeto que não existe é CRIADO, sem flag. Um projeto é um diretório sob
+  -- Projeto que não existe é CRIADO, sem flag — menos o encerrado, recusado
+  -- acima. Um projeto é um diretório sob
   -- projects/ com tasks/ dentro — a presença da pasta é o registro, e exigir
   -- confirmação para criar a pasta seria inventar um cadastro de projetos que
   -- o layout não tem. O risco do typo (`freitask new dotfile ...`) existe, mas
@@ -156,6 +177,7 @@ end
 ---
 ---Diferente de `create_task`, aqui o projeto JÁ existir é erro — pedir para
 ---criar o que existe é quase sempre um typo no nome, e um "ok" mudo o esconderia.
+---Encerrado também: ele volta por `reopen_project`, com os links junto.
 ---@param name string
 ---@return string|nil id, string|nil err
 function M.create_project(name)
@@ -165,6 +187,10 @@ function M.create_project(name)
   end
   if C.RESERVED[id] then
     return nil, string.format("%q é um diretório reservado, não um projeto", id)
+  end
+  local ok, err = check_not_closed(id)
+  if not ok then
+    return nil, err
   end
   local dir = C.projects .. "/" .. id .. "/tasks"
   if vim.fn.isdirectory(dir) == 1 then
@@ -567,7 +593,8 @@ end
 ---A mudança fica registrada no `## Histórico`.
 ---
 ---Recusa, devolvendo `nil, err` (a CLI sai 1), tudo que deixaria o vault pior:
----projeto reservado, projeto que não existe (a pasta é o registro, e criá-lo em
+---projeto reservado, projeto encerrado (quem o quer de volta roda `freitask
+---reabrir`), projeto que não existe (a pasta é o registro, e criá-lo em
 ---silêncio faria o typo `dotfile` nascer como projeto — quem quer um novo roda
 ---`freitask new-project`), task que já está nele, id já ocupado lá (ativo ou
 ---arquivado em qualquer tipo, porque o id é o nome da branch) e buffer da task
@@ -586,6 +613,12 @@ function M.move_to_project(path, project)
 
   project = vim.trim(project or "")
   local ok, err = M.validate_project(project)
+  if not ok then
+    return nil, err
+  end
+  -- Antes do "não existe": um encerrado também não existe em projects/, e a
+  -- sugestão de `new-project` ali seria recusada logo em seguida.
+  ok, err = check_not_closed(project)
   if not ok then
     return nil, err
   end

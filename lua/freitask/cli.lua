@@ -110,8 +110,9 @@ freitask — gestão de tasks do vault do Obsidian
       Reescreve o wikilink da linha 2 e as referências path-qualificadas do
       vault, registra a mudança no `## Histórico` e deixa como estão os links
       curtos (só o id), que seguem valendo. Recusa projeto que não existe (crie
-      com `freitask new-project`), projeto reservado, task que já está nele e
-      id já ocupado lá (inclusive arquivado).
+      com `freitask new-project`), projeto encerrado (reabra com `freitask
+      reabrir`), projeto reservado, task que já está nele e id já ocupado lá
+      (inclusive arquivado).
 
   freitask encerrar <projeto>
   freitask reabrir  <projeto>
@@ -122,14 +123,17 @@ freitask — gestão de tasks do vault do Obsidian
       daily/ e CURRENT.md), deixam como estão os links curtos e não escrevem no
       `## Histórico` das tasks. Encerrar recusa projeto com task ativa em
       qualquer fase, inclusive Algum dia, e as lista; recusa também projeto
-      que não existe, nome reservado e nome já encerrado. Reabrir recusa o que
-      não está encerrado e o nome que já existe em projects/.
+      que não existe, nome reservado (daily, templates, _encerrados) e nome já
+      encerrado. Reabrir recusa o que não está encerrado e o nome que já
+      existe em projects/. Um nome encerrado não volta por outra porta: new,
+      new-project e move o recusam e apontam o reabrir.
 
   freitask new <projeto> <id> "<título>" [--desc "<estado>"]
       Cria uma task em projects/<projeto>/tasks/<id>.md e regenera o painel.
       O <id> é o nome do arquivo E o da branch git: precisa vir em kebab-case,
       e não é corrigido em silêncio. Recusa projeto reservado e id já existente
-      (inclusive arquivado). Projeto que ainda não existe é criado.
+      (inclusive arquivado). Projeto que ainda não existe é criado; o
+      encerrado não: reabra-o com `freitask reabrir`.
 
   freitask rebuild
       Regenera o CURRENT.md sem tocar em task nenhuma. É o que falta depois que
@@ -145,7 +149,8 @@ freitask — gestão de tasks do vault do Obsidian
       ela ficam penduradas de propósito: o `doctor` as aponta.
 
   freitask new-project <nome>
-      Cria projects/<nome-em-kebab>/tasks/. Projeto já existente é erro.
+      Cria projects/<nome-em-kebab>/tasks/. Projeto já existente ou encerrado
+      é erro.
 
   freitask kebab "<texto>"
       Imprime o id que o motor derivaria do texto (acentos dobrados,
