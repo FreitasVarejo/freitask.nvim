@@ -683,6 +683,7 @@ mod tests {
             path,
             prioridade: None,
             hidden: false,
+            volta_em: None,
         }
     }
 
@@ -776,6 +777,7 @@ mod tests {
         let mut d = data();
         d.tasks.push(Task {
             hidden: true,
+            volta_em: Some("2026-12-01".into()),
             ..task("alfa", "a8", "example", 3, None)
         });
         let mut app = App::new(d);
@@ -783,6 +785,13 @@ mod tests {
         assert_eq!(ids(&app), ["a1", "a2"]);
         app.handle_key(key('S'));
         assert_eq!(ids(&app), ["a1", "a2", "a8"]);
+        app.pane = Pane::Tasks;
+        app.handle_key(key('G'));
+        assert_eq!(
+            app.current_task().unwrap().volta_em.as_deref(),
+            Some("2026-12-01"),
+            "a data de volta vem com a task, para a tela mostrar"
+        );
     }
 
     #[test]

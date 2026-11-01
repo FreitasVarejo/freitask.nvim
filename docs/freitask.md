@@ -120,17 +120,18 @@ volta-em: 2026-12-01
 - **É o primeiro dia visível.** A task fica escondida até a véspera e, no dia da
   data, já aparece: ela volta à meia-noite local. Só o dia conta, sem hora.
 - **Enquanto a data não chega, vale o tratamento de Algum dia:** fora do
-  `CURRENT.md` e da contagem do cabeçalho, escondida na TUI até o `S`, e à mostra
-  em `freitask list` (o JSON traz `hidden: true`).
+  `CURRENT.md` e da contagem do cabeçalho, escondida na TUI até o `S` (que a
+  mostra com a data de volta ao lado), e à mostra em `freitask list` (o JSON traz
+  `hidden: true` e, em `volta_em`, o dia em que ela volta).
 - **Vale em qualquer fase ativa** e vence `prioridade: alta` enquanto a data não
   chega; a prioridade só decide a ordem do que está à mostra.
 - **É lida na hora e nunca gravada.** O motor compara a data com o dia de hoje a
   cada leitura, e quando a data chega nada grava nada na task. Por isso não há
   job que possa falhar e deixá-la escondida (nem timer: duas máquinas gravariam
   o mesmo arquivo sob o Syncthing). O preço é o painel: o `CURRENT.md` só muda
-  quando algo o regenera (`freitask rebuild`, uma escrita da CLI, salvar uma
-  task no Neovim), e num dia sem nenhum dos três ele fica atrasado — isso é
-  aceito.
+  quando algo o regenera (`freitask rebuild`, a TUI ao abrir, uma escrita da CLI,
+  salvar uma task no Neovim), e num dia sem nenhum desses ele fica atrasado —
+  isso é aceito.
 - **Depois da data** o campo fica no arquivo, sem efeito e sem achado no
   `doctor`. Adiar de novo é trocar a data; uma task com várias datas troca o
   campo a cada passo.
@@ -255,8 +256,10 @@ weekday: Monday
 
 - **Auto-regeneração**: salvar qualquer arquivo de tarefa (`BufWritePost`)
   regenera o `CURRENT.md` silenciosamente — tarefas novas/mudanças de status
-  aparecem sozinhas. Se o `CURRENT.md` estiver com edições não salvas, a regen é
-  pulada (sem sobrescrever seu trabalho).
+  aparecem sozinhas. Abrir a TUI também o regenera, e é o que põe o painel em
+  dia quando uma task adiada volta sem que nada tenha sido gravado. Se o
+  `CURRENT.md` estiver com edições não salvas, a regen é pulada (sem
+  sobrescrever seu trabalho).
 - **Arquivo diário**: ao regenerar num dia novo, o painel do dia anterior é
   snapshotado em `daily/YYYY-MM-DD.md` antes de ser recarimbado com a data
   de hoje.
@@ -283,7 +286,7 @@ do arquivo.
 | `r` | renomear o id |
 | `a` | arquivar (o tipo sugerido vem pré-selecionado) ou, numa arquivada, desarquivar |
 | `A` | mostrar / esconder as arquivadas |
-| `S` | mostrar / esconder as de Algum dia e as adiadas |
+| `S` | mostrar / esconder as de Algum dia e as adiadas (com a data de volta ao lado da adiada) |
 | `d` | largar: arquiva como `dropped` (pede `y`) |
 | `N` | novo projeto |
 | `c` | regenerar e abrir o `CURRENT.md` |
@@ -293,7 +296,9 @@ do arquivo.
 
 A TUI **não conhece regra de tarefa**: cada tecla vira um subcomando da CLI
 (`set`, `rename`, `archive`…), e quando o motor recusa, a mensagem dele aparece
-na barra de baixo e o modal volta preenchido para corrigir. As **notas**
+na barra de baixo e o modal volta preenchido para corrigir. Ao abrir, ela roda
+`freitask rebuild` antes de ler as tasks; se o `rebuild` falhar, a TUI abre
+mesmo assim e o motivo vai para a barra. As **notas**
 (linhas 4+) se editam no editor (`e`) — texto livre não cabe num campo.
 
 Abrir uma tarefa com a TUI **dentro do Neovim** a abre no Neovim pai (via

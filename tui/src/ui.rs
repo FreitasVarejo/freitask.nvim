@@ -21,7 +21,7 @@ const HELP: &[(&str, &str)] = &[
     ("r", "renomear o id (arquivo e links)"),
     ("a", "arquivar / desarquivar"),
     ("A", "mostrar / esconder arquivadas"),
-    ("S", "mostrar / esconder Algum dia"),
+    ("S", "mostrar / esconder Algum dia e adiadas"),
     ("d", "largar a task (arquiva como dropped)"),
     ("N", "novo projeto"),
     ("c", "abrir o CURRENT.md"),
@@ -135,6 +135,14 @@ fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
                 t.id.clone(),
                 if t.archived.is_some() { dim() } else { Style::default() },
             ));
+            // A adiada só aparece com `S`, e a data de volta fica colada no id: a
+            // coluna do título é a que o painel estreito corta.
+            if let Some(volta) = &t.volta_em {
+                spans.push(Span::styled(
+                    format!("  volta {volta}"),
+                    Style::default().fg(Color::Yellow),
+                ));
+            }
             spans.push(Span::styled(format!("  {}", t.title), dim()));
             ListItem::new(Line::from(spans))
         })
@@ -146,7 +154,7 @@ fn draw_tasks(f: &mut Frame, app: &App, area: Rect) {
         title.push_str("+arquivadas ");
     }
     if app.show_hidden {
-        title.push_str("+algum-dia ");
+        title.push_str("+algum-dia/adiadas ");
     }
     if !app.filter.is_empty() {
         title.push_str(&format!("/{} ", app.filter));
@@ -190,6 +198,13 @@ fn draw_preview(f: &mut Frame, app: &App, area: Rect) {
                     .map(|a| format!("  ·  archived/{a}"))
                     .unwrap_or_default(),
                 dim(),
+            ),
+            Span::styled(
+                t.volta_em
+                    .as_ref()
+                    .map(|v| format!("  ·  volta em {v}"))
+                    .unwrap_or_default(),
+                Style::default().fg(Color::Yellow),
             ),
         ]),
     ];
@@ -359,7 +374,8 @@ fn draw_confirm(f: &mut Frame, app: &App, kind: ConfirmKind) {
 }
 
 fn draw_help(f: &mut Frame) {
-    let area = centered(f.area(), 50, HELP.len() as u16 + 2);
+    // Larga o bastante para a descrição mais comprida caber inteira (o `S`).
+    let area = centered(f.area(), 58, HELP.len() as u16 + 2);
     f.render_widget(Clear, area);
     let lines: Vec<Line> = HELP
         .iter()
@@ -371,4 +387,117 @@ fn draw_help(f: &mut Frame) {
         })
         .collect();
     f.render_widget(Paragraph::new(lines).block(modal(" Teclas ".into())), area);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::{Data, Project, Status, Task};
+    use ratatui::backend::TestBackend;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::Terminal;
+
+    fn task(id: &str, hidden: bool, volta_em: Option<&str>) -> Task {
+        Task {
+            project: "alfa".into(),
+            id: id.into(),
+            status: "Refinada".into(),
+            status_num: 3,
+            callout: "tip".into(),
+            title: format!("Título {id}"),
+            desc: String::new(),
+            archived: None,
+            suggested_archive: "dropped".into(),
+            path: format!("/v/projects/alfa/tasks/{id}.md"),
+            prioridade: None,
+            hidden,
+            volta_em: volta_em.map(Into::into),
+        }
+    }
+
+    fn app() -> App {
+        App::new(Data {
+            statuses: vec![Status {
+                num: 3,
+                callout: "tip".into(),
+                title: "Refinada".into(),
+                icon: "*".into(),
+                hl_group: String::new(),
+            }],
+            projects: vec![Project {
+                project: "alfa".into(),
+                active: 1,
+            }],
+            tasks: vec![task("normal", false, None), task("adiada", true, Some("2026-12-01"))],
+        })
+    }
+
+    fn key(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)
+    }
+
+    /// A tela inteira como texto, uma string por linha.
+    fn screen(app: &App) -> Vec<String> {
+        let mut terminal = Terminal::new(TestBackend::new(140, 20)).unwrap();
+        terminal.draw(|f| draw(f, app)).unwrap();
+        let buf = terminal.backend().buffer();
+        (0..buf.area.height)
+            .map(|y| (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect()
+    }
+
+    fn row_with<'a>(screen: &'a [String], needle: &str) -> Option<&'a String> {
+        screen.iter().find(|l| l.contains(needle))
+    }
+
+    #[test]
+    fn a_adiada_so_aparece_com_s_e_traz_a_data_de_volta_ao_lado() {
+        let mut app = app();
+        let antes = screen(&app);
+        assert!(row_with(&antes, "normal").is_some());
+        assert!(row_with(&antes, "adiada").is_none(), "sem S a adiada não aparece");
+        assert!(row_with(&antes, "2026-12-01").is_none());
+
+        app.handle_key(key('S'));
+        let depois = screen(&app);
+        let linha = row_with(&depois, "* adiada").expect("com S a adiada aparece");
+        assert!(
+            linha.contains("volta 2026-12-01"),
+            "a data fica na linha da adiada: {linha}"
+        );
+        let normal = row_with(&depois, "* normal").unwrap();
+        assert!(
+            !normal.contains("volta"),
+            "a que não está adiada não ganha data: {normal}"
+        );
+        assert!(
+            row_with(&depois, "+algum-dia/adiadas").is_some(),
+            "o título diz o que o S mostrou"
+        );
+    }
+
+    #[test]
+    fn a_ajuda_do_s_cabe_inteira() {
+        let mut app = app();
+        app.handle_key(key('?'));
+        let tela = screen(&app);
+        assert!(
+            row_with(&tela, "mostrar / esconder Algum dia e adiadas").is_some(),
+            "a linha do S foi cortada: {tela:#?}"
+        );
+    }
+
+    #[test]
+    fn o_preview_da_adiada_diz_quando_ela_volta() {
+        let mut app = app();
+        app.handle_key(key('S'));
+        app.handle_key(key('l'));
+        app.handle_key(key('j'));
+        assert_eq!(app.current_task().unwrap().id, "adiada");
+        let tela = screen(&app);
+        assert!(
+            row_with(&tela, "volta em 2026-12-01").is_some(),
+            "o preview traz a data: {tela:#?}"
+        );
+    }
 }

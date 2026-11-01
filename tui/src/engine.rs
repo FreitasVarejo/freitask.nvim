@@ -26,10 +26,16 @@ pub struct Task {
     /// "alta" ou nada: o motor só devolve o valor que conta.
     #[serde(default)]
     pub prioridade: Option<String>,
-    /// A fase que o motor manda esconder por padrão (o "Algum dia"). A regra é
-    /// dele; a TUI só obedece. Nunca vale para arquivada, que tem o próprio toggle.
+    /// O que o motor manda esconder por padrão: a fase "Algum dia" ou a task
+    /// adiada. A regra é dele; a TUI só obedece. Nunca vale para arquivada, que
+    /// tem o próprio toggle.
     #[serde(default)]
     pub hidden: bool,
+    /// O dia (AAAA-MM-DD) em que a task adiada volta, ou nada: o motor só o
+    /// devolve para quem está adiada agora. A TUI mostra o texto ao lado da
+    /// task; não lê nem compara data nenhuma.
+    #[serde(default)]
+    pub volta_em: Option<String>,
 }
 
 /// Uma linha de `freitask projects --json`.
@@ -114,6 +120,19 @@ impl Engine {
             tasks: self.json(&["list", "--json", "--archived"])?,
         })
     }
+
+    /// O que a TUI faz ao abrir: regenera o painel e só então lê tudo. A task
+    /// adiada volta sozinha, sem nada gravar nela, então num dia sem escrita o
+    /// `CURRENT.md` ficaria com a tela de ontem; abrir a TUI é a ocasião de pôr
+    /// o painel em dia. O `rebuild` vem antes do `load` para que as duas
+    /// leituras concordem.
+    ///
+    /// Se o `rebuild` falhar a TUI abre mesmo assim — o que ela mostra vem do
+    /// `load`, não do painel — e o motivo volta como aviso para a barra.
+    pub fn open(&self) -> Result<(Data, Option<String>), String> {
+        let warning = self.run(&["rebuild"]).err().map(|e| format!("rebuild falhou: {e}"));
+        Ok((self.load()?, warning))
+    }
 }
 
 #[cfg(test)]
@@ -149,6 +168,75 @@ mod tests {
         let tasks: Vec<Task> = serde_json::from_str(raw).unwrap();
         assert_eq!(tasks[0].prioridade, None);
         assert!(tasks[0].hidden);
+    }
+
+    #[test]
+    fn volta_em_chega_so_para_a_adiada() {
+        let raw = r#"[{"project":"p","id":"adiada","status":"Refinada","status_num":3,
+            "callout":"tip","title":"A","desc":"","archived":null,
+            "suggested_archive":"dropped","path":"/v/projects/p/tasks/adiada.md",
+            "hidden":true,"prioridade":null,"volta_em":"2026-12-01"},
+            {"project":"p","id":"normal","status":"Refinada","status_num":3,
+            "callout":"tip","title":"N","desc":"","archived":null,
+            "suggested_archive":"dropped","path":"/v/projects/p/tasks/normal.md",
+            "hidden":false,"prioridade":null,"volta_em":null},
+            {"project":"p","id":"antigo","status":"Refinada","status_num":3,
+            "callout":"tip","title":"O","desc":"","archived":null,
+            "suggested_archive":"dropped","path":"/v/projects/p/tasks/antigo.md"}]"#;
+        let tasks: Vec<Task> = serde_json::from_str(raw).unwrap();
+        assert_eq!(tasks[0].volta_em.as_deref(), Some("2026-12-01"));
+        assert!(tasks[0].hidden);
+        assert_eq!(tasks[1].volta_em, None);
+        // Contrato antigo, sem o campo: a TUI segue lendo.
+        assert_eq!(tasks[2].volta_em, None);
+    }
+
+    #[test]
+    fn abrir_regenera_o_painel_antes_de_ler_e_nao_aborta_se_ele_falhar() {
+        // Um `freitask` de mentira (tests/fake-freitask.sh) que anota cada chamada
+        // e responde o mínimo. Fica num arquivo versionado, e não gerado aqui, para
+        // o teste não correr o risco de executar um arquivo recém-escrito.
+        let dir = std::env::temp_dir().join(format!("freitask-tui-open-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let log = dir.join("chamadas");
+        std::env::set_var("FAKE_FREITASK_LOG", &log);
+        let e = Engine {
+            bin: format!("{}/tests/fake-freitask.sh", env!("CARGO_MANIFEST_DIR")),
+        };
+        let chamadas = || -> Vec<String> {
+            std::fs::read_to_string(&log)
+                .unwrap()
+                .lines()
+                .map(String::from)
+                .collect()
+        };
+
+        std::env::remove_var("FAKE_FREITASK_REBUILD");
+        let (data, aviso) = e.open().unwrap();
+        assert_eq!(aviso, None);
+        assert!(data.tasks.is_empty());
+        assert_eq!(
+            chamadas(),
+            [
+                "rebuild",
+                "statuses --json",
+                "projects --json",
+                "list --json --archived"
+            ],
+            "o rebuild vem primeiro, e depois as três leituras"
+        );
+
+        // Rebuild que falha: a TUI abre, lê tudo, e o motivo vira aviso.
+        std::fs::remove_file(&log).unwrap();
+        std::env::set_var("FAKE_FREITASK_REBUILD", "falha");
+        let (_, aviso) = e.open().unwrap();
+        let aviso = aviso.expect("o rebuild falhou: tem de haver aviso");
+        assert!(aviso.starts_with("rebuild falhou: "), "{aviso}");
+        assert!(aviso.contains("CURRENT.md tem alterações"), "{aviso}");
+        assert_eq!(chamadas().len(), 4, "as leituras rodaram mesmo assim");
+
+        std::env::remove_var("FAKE_FREITASK_REBUILD");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]

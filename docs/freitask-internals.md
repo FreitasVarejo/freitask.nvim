@@ -84,7 +84,7 @@ Tamanho de módulo não está aqui de propósito: contagem em contrato apodrece
 
 | Arquivo | Responsabilidade |
 | --- | --- |
-| `engine.rs` | A porta para a CLI: roda `freitask <args>`, decodifica o JSON, devolve o stderr do motor como erro. `FREITASK_BIN` troca o executável. |
+| `engine.rs` | A porta para a CLI: roda `freitask <args>`, decodifica o JSON, devolve o stderr do motor como erro. `FREITASK_BIN` troca o executável. É também o que a TUI faz ao abrir (`open`): `rebuild` e depois a leitura. |
 | `app.rs` | O estado da tela e o que cada tecla faz. **Puro**: tecla entra, `Effect` sai — é o que os testes cobrem. |
 | `ui.rs` | Desenho (ratatui). Só lê o `App`. |
 | `main.rs` | O laço: executa os efeitos (processo, editor, leitura do preview) e redesenha. Abrir arquivo dentro de um terminal do Neovim (`$NVIM`) vai para o Neovim pai por `--remote-expr`. |
@@ -139,8 +139,11 @@ por `new`, `set`, `list`/`projects`/`statuses --json`, `archive`, `unarchive`,
 contrato JSON, os códigos de saída, os dois formatos de wikilink num arquivo
 que referencia a task, o `## Histórico` e o `CURRENT.md`.
 
-`tui/` tem os próprios testes (`cargo test`), do estado e das teclas; o
-desenho em si se verifica abrindo a TUI.
+`tui/` tem os próprios testes (`cargo test`), do estado e das teclas, do
+contrato JSON e da abertura (`open`, contra o `tui/tests/fake-freitask.sh` no
+lugar do `freitask`). O desenho se verifica abrindo a TUI; só o que dá para
+conferir como texto na tela (a data de volta da adiada) tem teste de render, num
+`TestBackend`.
 
 O que segue **sem** teste automatizado: `doctor --fix`. Para
 o `--fix`, um vault descartável basta — crie o estado quebrado à mão e rode

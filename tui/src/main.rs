@@ -23,7 +23,8 @@ const USAGE: &str = "freitask-tui — TUI do freitask
 Uso: freitask-tui        (ou `freitask` sem argumentos, num terminal)
 
 Fala com o motor só pela CLI `freitask` do PATH; FREITASK_BIN aponta para
-outro executável. `?` dentro da TUI lista as teclas.";
+outro executável. Ao abrir, roda `freitask rebuild` (regenera o CURRENT.md,
+para a task adiada que voltou hoje aparecer). `?` dentro da TUI lista as teclas.";
 
 fn main() -> ExitCode {
     if std::env::args().skip(1).any(|a| a == "-h" || a == "--help") {
@@ -31,14 +32,17 @@ fn main() -> ExitCode {
         return ExitCode::SUCCESS;
     }
     let engine = Engine::new();
-    let data = match engine.load() {
-        Ok(d) => d,
+    let (data, warning) = match engine.open() {
+        Ok(opened) => opened,
         Err(e) => {
             eprintln!("freitask-tui: {e}");
             return ExitCode::from(1);
         }
     };
     let mut app = App::new(data);
+    if let Some(w) = warning {
+        app.error(w);
+    }
     let mut terminal = ratatui::init();
     let result = run(&mut terminal, &mut app, &engine);
     ratatui::restore();

@@ -167,8 +167,9 @@ freitask — gestão de tasks do vault do Obsidian
       project, id, path, archived, status (título da fase), status_num,
       callout, title, desc, suggested_archive, hidden (o que o painel e a TUI
       escondem por padrão: a fase Algum dia ou a task adiada, com `volta-em`
-      num dia que vem; só task ativa) e prioridade ("alta" ou null). A task
-      adiada segue na lista.
+      num dia que vem; só task ativa), prioridade ("alta" ou null) e volta_em
+      (o AAAA-MM-DD em que a adiada volta, ou null para quem não está adiada).
+      A task adiada segue na lista.
 
   freitask projects [--json]
       Lista os projetos (inclusive os sem task ativa; os encerrados não) e
@@ -565,6 +566,10 @@ local function list_row(e, today)
     -- "alta" ou null: só o valor que conta; o resto o doctor acusa. Arquivada
     -- não tem o que priorizar, então a marca não vai com ela.
     prioridade = (e.archived == nil and T.meta.is_high(e.meta)) and T.meta.HIGH or vim.NIL,
+    -- O dia em que a adiada volta, para a TUI mostrá-lo ao lado dela. Só quem
+    -- está adiada AGORA o tem: data passada, inválida ou de arquivada é null, e
+    -- a TUI não compara data nenhuma.
+    volta_em = (e.archived == nil and T.meta.is_postponed(e.meta, today)) and e.meta.volta_em or vim.NIL,
     path = e.path,
   }
 end
