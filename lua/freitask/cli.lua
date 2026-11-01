@@ -140,9 +140,14 @@ freitask — gestão de tasks do vault do Obsidian
       um agente sem shell (o claude.ai pelo MCP) criou o arquivo na mão.
 
   freitask set <id|caminho> [--status <fase>] [--title "<título>"] [--desc "<estado>"]
+                            [--volta-em AAAA-MM-DD]
       Troca a fase (o tipo do callout), o título e/ou a descrição em itálico,
       reserializando o bloco pelo mesmo código de sempre. `--desc ""` apaga a
       descrição. Recusa `done` (quem grava `done` é `archive <id> done`).
+      `--volta-em` adia a task até o dia dado, que é o primeiro em que ela volta
+      a aparecer (grava `volta-em:` no frontmatter; a fase não muda); `""`
+      limpa. Recusa o que não é uma data AAAA-MM-DD de um dia que existe, e não
+      escreve nada, mesmo que outra flag fosse válida.
 
   freitask delete <id|caminho>
       Apaga a task, sem perguntar — quem confirma é quem chama. Referências a
@@ -362,10 +367,11 @@ end
 
 --- set ----------------------------------------------------------------------
 if cmd == "set" then
-  local pos, flags = parse_flags(2, { status = true, title = true, desc = true })
+  local pos, flags = parse_flags(2, { status = true, title = true, desc = true, ["volta-em"] = true })
   local ref = pos[1] or die("falta o id ou caminho da task")
-  if flags.status == nil and flags.title == nil and flags.desc == nil then
-    die("nada a mudar: passe --status, --title e/ou --desc")
+  local volta = flags["volta-em"]
+  if flags.status == nil and flags.title == nil and flags.desc == nil and volta == nil then
+    die("nada a mudar: passe --status, --title, --desc e/ou --volta-em")
   end
   T.load_status()
   local path, err = T.find_task(ref)
@@ -397,10 +403,30 @@ if cmd == "set" then
   if flags.desc then
     nm.desc = vim.trim(flags.desc)
   end
+  -- Tudo é validado antes de qualquer escrita: `--status todo --volta-em
+  -- amanha` recusa por inteiro, em vez de trocar a fase e só então reclamar.
+  local volta_value
+  if volta ~= nil then
+    local verr
+    volta_value, verr = T.check_volta_em(volta)
+    if volta_value == nil then
+      die(verr)
+    end
+  end
 
-  local _, aerr = T.apply_edit(path, nm)
-  if aerr then
-    die(aerr, 1)
+  -- O bloco só é reserializado quando algum campo dele mudou: `--volta-em`
+  -- sozinho mexe no frontmatter e em mais nada.
+  if flags.status ~= nil or flags.title ~= nil or flags.desc ~= nil then
+    local _, aerr = T.apply_edit(path, nm)
+    if aerr then
+      die(aerr, 1)
+    end
+  end
+  if volta ~= nil then
+    local _, werr = T.set_volta_em(path, volta_value)
+    if werr then
+      die(werr, 1)
+    end
   end
   T.rebuild_current({ quiet = true })
   say(path)

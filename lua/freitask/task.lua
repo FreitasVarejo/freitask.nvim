@@ -12,6 +12,7 @@ local cache = require("freitask.cache")
 local fs = require("freitask.fs")
 local links = require("freitask.links")
 local md = require("freitask.md")
+local meta_ = require("freitask.meta")
 local model_ = require("freitask.model")
 local path_ = require("freitask.path")
 local status = require("freitask.status")
@@ -339,6 +340,50 @@ function M.check_status_change(callout, archived)
     return nil, "task em archived/done/ fica `done`; desarquive antes (`freitask unarchive <id>`)"
   end
   return num
+end
+
+---Valida o pedido de `set --volta-em` e devolve o valor a gravar. Puro.
+---
+---Uma data `AAAA-MM-DD` de um dia que existe volta como está; `""` (ou só
+---espaço) pede para limpar o campo e volta `false`, o mesmo valor que
+---`meta.write_volta_em` entende como "remova a chave". Qualquer outra coisa é
+---recusada com o motivo — gravar o que `parse_date` não lê faria a task parecer
+---adiada para quem olha o arquivo e visível para o motor.
+---
+---Data passada é válida: o campo fica no arquivo sem efeito, como depois de a
+---data chegar. O motor não adivinha que foi engano.
+---@param text string
+---@return string|false|nil value, string|nil err
+function M.check_volta_em(text)
+  text = vim.trim(text or "")
+  if text == "" then
+    return false
+  end
+  if not meta_.parse_date(text) then
+    return nil, string.format("data inválida: %q (use AAAA-MM-DD, de um dia que existe; \"\" limpa)", text)
+  end
+  return text
+end
+
+---Grava (ou, com `false`, limpa) a `volta-em` do frontmatter de uma task. Não
+---mexe no bloco nem no resto do arquivo. Vale para arquivada também: o campo
+---fica lá, sem efeito, e o cache nunca a enxerga. Como o resto de `task`, NÃO
+---regenera o CURRENT.md.
+---@param path string
+---@param value string|false `check_volta_em` já validou
+---@return string|nil path, string|nil err
+function M.set_volta_em(path, value)
+  if not path_.split_task_path(path) then
+    return nil, "não é um arquivo de task: " .. path
+  end
+  local lines = fs.read_lines(path)
+  if meta_.write_volta_em(lines, value) then
+    if vim.fn.writefile(lines, path) ~= 0 then
+      return nil, "não consegui escrever " .. path
+    end
+    cache.update_cache_entry(path)
+  end
+  return path
 end
 
 ---Reescreve o bloco de callout de um arquivo no disco (substituindo o primeiro

@@ -49,6 +49,23 @@ local function set_frontmatter(rel, line)
   vim.fn.writefile(vim.list_extend({ "---", line, "---" }, lines), vault .. "/" .. rel)
 end
 
+---Um dia relativo a hoje, `AAAA-MM-DD`. A CLI lê o relógio de quem roda, e o
+---teste não tem como fixá-lo; ao meio-dia, para a hora de verão não empurrar a
+---data. A regra por data, com o relógio fixo, está em freitask_spec.lua.
+local function day(offset)
+  local t = os.date("*t")
+  return os.date("%Y-%m-%d", os.time({ year = t.year, month = t.month, day = t.day + offset, hour = 12 }))
+end
+
+---As tasks do `list --json` por id.
+local function by_id()
+  local out = {}
+  for _, r in ipairs(json("list", "--json")) do
+    out[r.id] = r
+  end
+  return out
+end
+
 describe("cli: projetos", function()
   it("lista vazia é [] e não {}", function()
     local _, out = run("projects", "--json")
@@ -237,18 +254,10 @@ describe("cli: fases novas, prioridade e Algum dia", function()
   end)
 end)
 
--- A task adiada (`volta-em`). Os dias são relativos ao relógio de quem roda: a
--- CLI lê o dia de hoje, e o teste não tem como fixá-lo; a regra por data, com o
--- relógio fixo, está em freitask_spec.lua. Este bloco apaga tudo que cria.
+-- A task adiada (`volta-em`), com o campo escrito à mão. Este bloco apaga tudo
+-- que cria.
 describe("cli: task adiada", function()
   local PROJ = "projects/meu-projeto/tasks/"
-
-  ---Um dia relativo a hoje, `AAAA-MM-DD`. Ao meio-dia, para a hora de verão não
-  ---empurrar a data.
-  local function day(offset)
-    local t = os.date("*t")
-    return os.date("%Y-%m-%d", os.time({ year = t.year, month = t.month, day = t.day + offset, hour = 12 }))
-  end
 
   ---Escreve uma task como o celular faria, à mão: frontmatter e bloco. Nada
   ---avisa o painel, então quem chama roda o `rebuild`.
@@ -262,14 +271,6 @@ describe("cli: task adiada", function()
       "> [[projects/meu-projeto/tasks/" .. id .. "|" .. id .. "]]",
     })
     vim.fn.writefile(lines, vault .. "/" .. PROJ .. id .. ".md")
-  end
-
-  local function by_id()
-    local out = {}
-    for _, r in ipairs(json("list", "--json")) do
-      out[r.id] = r
-    end
-    return out
   end
 
   local function cleanup(ids)
@@ -372,6 +373,140 @@ describe("cli: task adiada", function()
     truthy(read("CURRENT.md"):find("t-vazia", 1, true))
     eq(false, by_id()["t-vazia"].hidden)
     cleanup({ "t-vazia" })
+  end)
+
+  run("rebuild")
+end)
+
+-- `freitask set --volta-em`: a escrita do campo que o bloco acima lê. Este
+-- bloco apaga tudo que cria.
+describe("cli: set --volta-em", function()
+  local PROJ = "projects/meu-projeto/tasks/"
+  local ID = "t-volta"
+  local REL = PROJ .. ID .. ".md"
+
+  local function cria()
+    run("delete", ID) -- sobra de um caso que falhou no meio: não deve derrubar os outros
+    eq(0, (run("new", "meu-projeto", ID, "Volta um dia", "--desc", "esperando dezembro")))
+    return read(REL)
+  end
+
+  local function apaga()
+    eq(0, (run("delete", ID)))
+  end
+
+  it("grava volta-em no frontmatter e a task sai do painel, sem mexer no bloco", function()
+    local antes = cria()
+    local code, out = run("set", ID, "--volta-em", day(30))
+    eq(0, code)
+    eq(vault .. "/" .. REL .. "\n", out, "stdout é só o caminho, como nos outros set")
+
+    local body = read(REL)
+    eq("---\nvolta-em: " .. day(30) .. "\n---\n\n" .. antes, body, "o bloco e o resto ficam como estavam")
+    falsy(read("CURRENT.md"):find(ID, 1, true), "o set regenera o painel, e a adiada fica de fora")
+    local row = by_id()[ID]
+    eq(true, row.hidden)
+    eq("todo", row.callout, "adiar não troca a fase")
+    apaga()
+  end)
+
+  it("aceita --volta-em=DATA e troca a data", function()
+    cria()
+    eq(0, (run("set", ID, "--volta-em=" .. day(10))))
+    eq(0, (run("set", ID, "--volta-em", day(40))))
+    local body = read(REL)
+    eq(1, select(2, body:gsub("volta%-em:", "")), "uma chave só: " .. body)
+    truthy(body:find("volta-em: " .. day(40), 1, true), body)
+    apaga()
+  end)
+
+  it('"" limpa o campo, e a task volta ao painel com o arquivo como era', function()
+    local antes = cria()
+    eq(0, (run("set", ID, "--volta-em", day(30))))
+    falsy(read("CURRENT.md"):find(ID, 1, true))
+
+    eq(0, (run("set", ID, "--volta-em", "")))
+    eq(antes, read(REL), "o frontmatter que só existia por causa do campo some junto")
+    truthy(read("CURRENT.md"):find(ID, 1, true), "a task volta ao painel")
+    eq(false, by_id()[ID].hidden)
+
+    eq(0, (run("set", ID, "--volta-em", "")), "limpar o que já está limpo não é erro")
+    eq(antes, read(REL))
+    apaga()
+  end)
+
+  it("recusa data inválida com 2, diz o porquê e não escreve nada", function()
+    local antes = cria()
+    for _, ruim in ipairs({
+      "2026-12-1",
+      "2026-02-30",
+      "2025-02-29",
+      "2026-13-01",
+      "01/12/2026",
+      "amanhã",
+      "2026-12-01T10:00",
+    }) do
+      local code, out, err = run("set", ID, "--volta-em", ruim)
+      eq(2, code, ruim)
+      eq("", out)
+      truthy(err:find(ruim, 1, true) and err:find("AAAA-MM-DD", 1, true), ruim .. ": " .. err)
+      eq(antes, read(REL), ruim .. " não escreve nada")
+    end
+    apaga()
+  end)
+
+  it("a recusa vale para o comando inteiro: a outra flag, mesmo válida, não é aplicada", function()
+    local antes = cria()
+    local code = run("set", ID, "--status", "question", "--title", "Outro", "--volta-em", "2026-12-1")
+    eq(2, code)
+    eq(antes, read(REL), "nem a fase nem o título mudaram")
+    apaga()
+  end)
+
+  it("junto de outras flags, tudo é aplicado de uma vez", function()
+    cria()
+    eq(0, (run("set", ID, "--status", "tip", "--desc", "pronta para dezembro", "--volta-em", day(30))))
+    local body = read(REL)
+    truthy(body:find("> [!tip] Volta um dia", 1, true), body)
+    truthy(body:find("> _pronta para dezembro_", 1, true), body)
+    truthy(body:find("volta-em: " .. day(30), 1, true), body)
+    apaga()
+  end)
+
+  it("só mexe na própria chave: prioridade e chaves alheias ficam, na ordem", function()
+    cria()
+    local lines = vim.fn.readfile(vault .. "/" .. REL)
+    vim.fn.writefile(vim.list_extend({ "---", "tags: [p]", "prioridade: alta", "---" }, lines), vault .. "/" .. REL)
+    local antes = read(REL)
+
+    eq(0, (run("set", ID, "--volta-em", day(30))))
+    local body = read(REL)
+    truthy(body:find("tags: [p]\nprioridade: alta\nvolta-em: " .. day(30) .. "\n---", 1, true), body)
+    eq("alta", by_id()[ID].prioridade)
+
+    eq(0, (run("set", ID, "--volta-em", "")))
+    eq(antes, read(REL))
+    apaga()
+  end)
+
+  it("data passada é aceita: o campo fica sem efeito e a task aparece", function()
+    cria()
+    eq(0, (run("set", ID, "--volta-em", day(-1))))
+    truthy(read(REL):find("volta-em: " .. day(-1), 1, true))
+    eq(false, by_id()[ID].hidden)
+    truthy(read("CURRENT.md"):find(ID, 1, true))
+    apaga()
+  end)
+
+  it("sem nada a mudar sai 2, task que não existe sai 1, e o help lista a flag", function()
+    cria()
+    eq(2, (run("set", ID)))
+    eq(2, (run("set", ID, "--volta-em")), "falta o valor")
+    eq(1, (run("set", "nao-existe", "--volta-em", day(30))))
+    local code, out = run("help")
+    eq(0, code)
+    truthy(out:find("--volta-em", 1, true), out)
+    apaga()
   end)
 
   run("rebuild")

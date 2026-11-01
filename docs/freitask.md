@@ -134,6 +134,9 @@ volta-em: 2026-12-01
 - **Depois da data** o campo fica no arquivo, sem efeito. Adiar de novo é trocar
   a data; uma task com várias datas troca o campo a cada passo.
 - **Só uma data.** Condição além do dia e ordem entre tasks não moram aqui.
+- **A escrita é `freitask set <id> --volta-em AAAA-MM-DD`**, e `""` limpa o
+  campo; o comando recusa o que não for uma data, pela regra do item seguinte.
+  À mão também vale, para o celular e o claude.ai. A TUI não tem tecla para adiar.
 - **A data é uma data.** Só `AAAA-MM-DD` de um dia que existe vale. `2026-12-1`,
   `01/12/2026` e `2026-02-30` não são datas e **não escondem a task**: a
   comparação é de data, não de texto (como texto, `2026-12-1` ficaria maior que
@@ -504,7 +507,7 @@ a CLI, chamariam `mv`. Ela existe para que o caminho certo seja o mais fácil:
 
 ```bash
 freitask new         <projeto> <id> "<título>" [--desc "<estado>"]
-freitask set         <id|caminho> [--status <fase>] [--title "…"] [--desc "…"]
+freitask set         <id|caminho> [--status <fase>] [--title "…"] [--desc "…"] [--volta-em AAAA-MM-DD]
 freitask archive     <id|caminho> done|dropped|failed
 freitask unarchive   <id|caminho>
 freitask rename      <id|caminho> <novo-id>
@@ -529,7 +532,9 @@ estrutura parseável — é o contrato para agentes e para a TUI. Os avisos do
 motor saem em stderr, uma linha cada; stdout carrega só o dado.
 
 `set` recusa `--status done`: `done` é o que `archive <id> done` grava junto
-com o move. `delete` não pergunta nada — quem confirma é quem chama — e deixa
+com o move. `set --volta-em` recusa (saída `2`) o que não é uma data
+`AAAA-MM-DD` de um dia que existe, sem escrever nada do comando, e `""` limpa o
+campo. `delete` não pergunta nada — quem confirma é quem chama — e deixa
 as referências penduradas de propósito, para o `doctor` apontar.
 
 Implementação: `vault/.local/bin/freitask` (shim bash) →
@@ -691,6 +696,10 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
    `M.archive_task`/`M.unarchive_task`/`M.move_to_project`/`M.apply_edit`, e a fonte de
    verdade do estado continua sendo o **caminho**. Uma linha de histórico sem o
    move correspondente é só um texto mentindo sobre onde o arquivo está.
+10. **Adiar uma task é `volta-em`, não fase nem arquivo.** Com shell,
+    `freitask set <id> --volta-em AAAA-MM-DD` (`""` limpa), que recusa data
+    inválida. Sem shell, a linha `volta-em:` no frontmatter, com `AAAA-MM-DD` de
+    um dia que existe. A task segue em `tasks/`, na mesma fase.
 
 ---
 

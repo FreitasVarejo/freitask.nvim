@@ -14,8 +14,9 @@
 -- de caminho nenhum, então ficariam expostas a ser regeneradas para fora.
 --
 -- A prioridade é escrita à mão, de propósito: não há subcomando para gravá-la,
--- porque o freitask só cresce por dor medida. O que é automático é a vigilância:
--- o doctor acusa o valor que, sem isso, viraria "normal" em silêncio.
+-- porque o freitask só cresce por dor medida. A data de volta tem o `set
+-- --volta-em`, que valida o que grava. O que é automático é a vigilância: o
+-- doctor acusa o valor que, sem isso, viraria "normal" em silêncio.
 
 local md = require("freitask.md")
 
@@ -30,7 +31,8 @@ M.KEYS = { "prioridade" }
 M.HIGH = "alta"
 
 -- A chave da data de volta. Fora de `KEYS` de propósito: `write` grava o estado
--- inteiro da prioridade, e uma gravação dela não pode apagar a data.
+-- inteiro da prioridade, e uma gravação dela não pode apagar a data (nem o
+-- contrário) — cada campo tem o seu escritor.
 M.RETURN_KEY = "volta-em"
 
 ---Lê a prioridade e a data de volta do frontmatter. Valor vazio conta como
@@ -126,6 +128,17 @@ function M.is_postponed(meta, today)
   local back = meta and M.parse_date(meta.volta_em)
   local now = M.parse_date(today)
   return back ~= nil and now ~= nil and back > now
+end
+
+---Escreve a data de volta no frontmatter, ou, com `false`/nil, REMOVE a chave
+---(e o bloco inteiro, se ele esvazia). Só mexe nessa chave: a prioridade e o
+---que não é do freitask ficam como estão. `value` já vem validado (ver
+---`task.check_volta_em`). Muta `lines` in place; quem chama grava.
+---@param lines string[]
+---@param value string|false|nil
+---@return boolean changed
+function M.write_volta_em(lines, value)
+  return md.set_frontmatter(lines, { [M.RETURN_KEY] = value or false })
 end
 
 return M

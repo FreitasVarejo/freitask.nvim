@@ -810,12 +810,66 @@ describe("meta: data de volta", function()
     truthy(meta.parse_date(meta.today()), meta.today())
   end)
 
-  it("a gravação da prioridade não apaga a data de volta", function()
+  it("write_volta_em cria o frontmatter, troca a data e remove a chave", function()
+    local lines = { "> [!todo] x", "> [[x]]" }
+    truthy(meta.write_volta_em(lines, "2026-12-01"))
+    eq({ "---", "volta-em: 2026-12-01", "---", "", "> [!todo] x", "> [[x]]" }, lines)
+    eq("2026-12-01", meta.read(lines).volta_em)
+
+    truthy(meta.write_volta_em(lines, "2027-01-15"))
+    eq("2027-01-15", meta.read(lines).volta_em)
+    falsy(meta.write_volta_em(lines, "2027-01-15"), "mesma data: nada a gravar")
+
+    truthy(meta.write_volta_em(lines, false))
+    eq({ "> [!todo] x", "> [[x]]" }, lines, "o bloco esvaziado some junto")
+    falsy(meta.write_volta_em(lines, false), "limpar o que não existe não cria nem mexe em nada")
+    eq({ "> [!todo] x", "> [[x]]" }, lines)
+  end)
+
+  it("write_volta_em só toca na própria chave: prioridade e chaves alheias ficam", function()
+    local lines = { "---", "id: x", "prioridade: alta", "tags: [p]", "---", "", "> [!todo] x" }
+    meta.write_volta_em(lines, "2026-12-01")
+    eq({ "---", "id: x", "prioridade: alta", "tags: [p]", "volta-em: 2026-12-01", "---", "", "> [!todo] x" }, lines)
+    meta.write_volta_em(lines, nil)
+    eq({ "---", "id: x", "prioridade: alta", "tags: [p]", "---", "", "> [!todo] x" }, lines)
+  end)
+
+  it("a gravação da prioridade não apaga a data de volta, nem o contrário", function()
     local lines = { "---", "volta-em: 2026-12-01", "---", "", "> [!todo] x" }
     meta.write(lines, { prioridade = "alta" })
     eq("2026-12-01", meta.read(lines).volta_em)
     meta.write(lines, {})
     eq("2026-12-01", meta.read(lines).volta_em)
+    meta.write(lines, { prioridade = "alta" })
+    meta.write_volta_em(lines, false)
+    eq("alta", meta.read(lines).prioridade)
+  end)
+end)
+
+describe("check_volta_em", function()
+  it("devolve a data como está, quando é uma data", function()
+    eq("2026-12-01", task.check_volta_em("2026-12-01"))
+    eq("2026-12-01", task.check_volta_em("  2026-12-01  "), "aparada, como --desc")
+    eq("2024-02-29", task.check_volta_em("2024-02-29"))
+  end)
+
+  it("vazio ou só espaço pede para limpar, e devolve false", function()
+    eq(false, (task.check_volta_em("")))
+    eq(false, (task.check_volta_em("   ")))
+    eq(false, (task.check_volta_em(nil)))
+  end)
+
+  it("recusa o que não é uma data, dizendo o valor e o formato", function()
+    local ruins = { "2026-12-1", "2026-02-30", "2025-02-29", "01/12/2026", "amanhã", "2026-12-01T10:00", "hoje" }
+    for _, ruim in ipairs(ruins) do
+      local v, err = task.check_volta_em(ruim)
+      eq(nil, v, ruim)
+      truthy(err and err:find(ruim, 1, true) and err:find("AAAA-MM-DD", 1, true), ruim .. ": " .. tostring(err))
+    end
+  end)
+
+  it("data passada vale: o campo fica no arquivo, sem efeito", function()
+    eq("2020-01-01", task.check_volta_em("2020-01-01"))
   end)
 end)
 
