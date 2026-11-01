@@ -257,18 +257,33 @@ function M.doctor(opts)
         end
       end
 
-      -- 6. Prioridade: só `alta` conta. Outro valor (`Alta`, `urgente`) viraria
-      -- "normal" em silêncio, o mesmo furo que o status 0 fecha para o callout.
-      -- Sem --fix: não se adivinha o que o dono quis dizer. Em arquivada não há
-      -- o que priorizar.
+      -- 6. Frontmatter que o motor lê. Sem --fix em nenhum: não se adivinha o que
+      -- o dono quis dizer. Em arquivada não há o que priorizar nem adiar.
       if not t.archived then
-        local prioridade = meta_.read(lines).prioridade
-        if prioridade and prioridade ~= meta_.HIGH then
+        local fm = meta_.read(lines)
+
+        -- Prioridade: só `alta` conta. Outro valor (`Alta`, `urgente`) viraria
+        -- "normal" em silêncio, o mesmo furo que o status 0 fecha para o callout.
+        if fm.prioridade and fm.prioridade ~= meta_.HIGH then
           add(
             "warn",
             "prioridade-desconhecida",
             t.path,
-            string.format("prioridade %q não é `%s` — a task conta como normal", prioridade, meta_.HIGH)
+            string.format("prioridade %q não é `%s` — a task conta como normal", fm.prioridade, meta_.HIGH)
+          )
+        end
+
+        -- Data de volta: só `AAAA-MM-DD` de um dia que existe adia. Outra coisa
+        -- (`2026-12-1`, `01/12/2026`) NÃO esconde a task — o erro tem de ficar
+        -- à vista, e uma task sumida por typo não avisaria ninguém. Data
+        -- válida, futura ou passada, não é achado: depois da data o campo fica
+        -- no arquivo sem efeito, de propósito.
+        if fm.volta_em and not meta_.parse_date(fm.volta_em) then
+          add(
+            "warn",
+            "volta-em-invalido",
+            t.path,
+            string.format("volta-em %q não é uma data AAAA-MM-DD — a task aparece, sem adiar", fm.volta_em)
           )
         end
       end

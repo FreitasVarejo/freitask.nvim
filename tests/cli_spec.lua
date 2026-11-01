@@ -375,6 +375,69 @@ describe("cli: task adiada", function()
     cleanup({ "t-vazia" })
   end)
 
+  ---Roda o doctor e devolve o código de saída, os achados como `kind path` e as
+  ---mensagens.
+  local function achados()
+    local code, out = run("doctor", "--json")
+    local found, msgs = {}, {}
+    for _, f in ipairs(vim.json.decode(out).findings) do
+      found[#found + 1] = f.kind .. " " .. f.path
+      msgs[#msgs + 1] = f.msg
+    end
+    return code, found, msgs
+  end
+
+  it("o doctor acusa data inválida escrita à mão, e a task segue visível", function()
+    local ruins = { "2999-12-1", "2999-02-30", "01/12/2999", "amanha", "2999-12-01T10:00" }
+    for i, ruim in ipairs(ruins) do
+      local id = "t-doc-" .. i
+      write_task(id, "todo", { "volta-em: " .. ruim })
+      eq(0, (run("rebuild")))
+      truthy(read("CURRENT.md"):find(id, 1, true), ruim .. " deixa a task à vista")
+
+      local code, found, msgs = achados()
+      eq(1, code, ruim)
+      eq({ "volta-em-invalido " .. PROJ .. id .. ".md" }, found, ruim .. ": só esse achado")
+      truthy(msgs[1]:find(ruim, 1, true), "a mensagem diz o valor: " .. msgs[1])
+      cleanup({ id })
+    end
+    eq(0, (run("doctor")))
+  end)
+
+  it("o doctor não conserta a data: --fix deixa o arquivo como está e o achado pendente", function()
+    write_task("t-doc-fix", "todo", { "volta-em: 2999-12-1" })
+    local antes = read(PROJ .. "t-doc-fix.md")
+    local code, out = run("doctor", "--fix")
+    eq(1, code, out)
+    truthy(out:find("volta-em-invalido", 1, true), out)
+    falsy(out:find("[reparado]", 1, true), out)
+    eq(antes, read(PROJ .. "t-doc-fix.md"), "não se adivinha a data que o dono quis")
+
+    -- Corrigida a data (aqui, pelo set), o achado some.
+    eq(0, (run("set", "t-doc-fix", "--volta-em", day(30))))
+    eq(0, (run("doctor")))
+    cleanup({ "t-doc-fix" })
+  end)
+
+  it("o doctor não acusa data válida, futura, de hoje ou passada, nem campo vazio", function()
+    write_task("t-doc-futura", "todo", { "volta-em: " .. day(30) })
+    write_task("t-doc-hoje", "todo", { "volta-em: " .. day(0) })
+    write_task("t-doc-passada", "todo", { "volta-em: " .. day(-30) })
+    write_task("t-doc-vazia", "todo", { "volta-em:" })
+    write_task("t-doc-aspas", "todo", { 'volta-em: "' .. day(30) .. '"' })
+    local code, out = run("doctor")
+    eq(0, code, out)
+    cleanup({ "t-doc-futura", "t-doc-hoje", "t-doc-passada", "t-doc-vazia", "t-doc-aspas" })
+  end)
+
+  it("arquivada não é adiada, então data inválida nela não é achado", function()
+    write_task("t-doc-arq", "todo", { "volta-em: amanha" })
+    eq(0, (run("archive", "t-doc-arq", "dropped")))
+    local code, found = achados()
+    eq(0, code, vim.inspect(found))
+    cleanup({ "t-doc-arq" })
+  end)
+
   run("rebuild")
 end)
 

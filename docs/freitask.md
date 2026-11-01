@@ -131,17 +131,21 @@ volta-em: 2026-12-01
   quando algo o regenera (`freitask rebuild`, uma escrita da CLI, salvar uma
   task no Neovim), e num dia sem nenhum dos três ele fica atrasado — isso é
   aceito.
-- **Depois da data** o campo fica no arquivo, sem efeito. Adiar de novo é trocar
-  a data; uma task com várias datas troca o campo a cada passo.
+- **Depois da data** o campo fica no arquivo, sem efeito e sem achado no
+  `doctor`. Adiar de novo é trocar a data; uma task com várias datas troca o
+  campo a cada passo.
 - **Só uma data.** Condição além do dia e ordem entre tasks não moram aqui.
 - **A escrita é `freitask set <id> --volta-em AAAA-MM-DD`**, e `""` limpa o
   campo; o comando recusa o que não for uma data, pela regra do item seguinte.
-  À mão também vale, para o celular e o claude.ai. A TUI não tem tecla para adiar.
+  À mão também vale, para o celular e o claude.ai. A TUI não tem tecla para
+  adiar.
 - **A data é uma data.** Só `AAAA-MM-DD` de um dia que existe vale. `2026-12-1`,
   `01/12/2026` e `2026-02-30` não são datas e **não escondem a task**: a
   comparação é de data, não de texto (como texto, `2026-12-1` ficaria maior que
   `2026-12-05`), e esconder por erro de digitação faria a task sumir sem aviso.
-  Campo vazio conta como sem data.
+  Em vez disso a task aparece e o `doctor` acusa `volta-em-invalido`, sem
+  `--fix`: o erro tem de ficar visível. Campo vazio conta como sem data, e
+  arquivada não é adiada, então não há o que acusar nela.
 
 Mora no frontmatter pelos mesmos motivos da prioridade: é metadado consultável,
 o celular o edita, e o bloco é reserializado a partir do caminho, que não
@@ -575,6 +579,7 @@ agente que só faz `mv` para `archived/` causa dano **inteiramente reparável**.
 | `status-0` — callout fora do `status.json` | warn | não |
 | `callout-vs-pasta` — em `archived/done/` com callout ≠ `done` | warn | sim |
 | `prioridade-desconhecida` — `prioridade:` diferente de `alta` | warn | não |
+| `volta-em-invalido` — `volta-em:` que não é uma data `AAAA-MM-DD` | warn | não (não se adivinha a data) |
 
 `callout-vs-pasta` só vale para `done`: esse status significa literalmente
 "Arquivada", e um arquivo em `archived/done/` dizendo "Não iniciada" é

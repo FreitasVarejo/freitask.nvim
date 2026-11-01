@@ -16,7 +16,8 @@
 -- A prioridade é escrita à mão, de propósito: não há subcomando para gravá-la,
 -- porque o freitask só cresce por dor medida. A data de volta tem o `set
 -- --volta-em`, que valida o que grava. O que é automático é a vigilância: o
--- doctor acusa o valor que, sem isso, viraria "normal" em silêncio.
+-- doctor acusa o valor que, sem isso, viraria "normal" (a prioridade) ou "não
+-- adiada" (a data) em silêncio.
 
 local md = require("freitask.md")
 
