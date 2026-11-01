@@ -51,6 +51,7 @@ M.build_cache = M.cache.build_cache
 M.update_cache_entry = M.cache.update_cache_entry
 M.remove_cache_entry = M.cache.remove_cache_entry
 M.entries_for = M.cache.entries_for
+M.is_entry_hidden = M.cache.is_hidden
 M.archived_entries_for = M.cache.archived_entries_for
 M.list_projects = M.cache.list_projects
 

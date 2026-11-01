@@ -14,6 +14,7 @@
 -- exportada só para isso; agora são API do módulo onde moram.
 
 local C = require("freitask.config")
+local cache = require("freitask.cache")
 local md = require("freitask.md")
 local model = require("freitask.model")
 local path = require("freitask.path")
@@ -719,6 +720,153 @@ describe("meta", function()
     falsy(meta.is_high({ prioridade = "urgente" }))
     falsy(meta.is_high({}))
     falsy(meta.is_high(nil))
+  end)
+end)
+
+describe("meta: data de volta", function()
+  it("lê volta-em do frontmatter, aparado e sem aspas, e deixa a prioridade em paz", function()
+    local mt = meta.read({ "---", "prioridade: alta", "volta-em: 2026-12-01", "---" })
+    eq("2026-12-01", mt.volta_em)
+    eq("alta", mt.prioridade)
+    eq("2026-12-01", meta.read({ "---", 'volta-em: "2026-12-01"', "---" }).volta_em)
+    eq("2026-12-01", meta.read({ "---", "volta-em:   2026-12-01  ", "---" }).volta_em)
+  end)
+
+  it("campo vazio ou ausente é sem data de volta", function()
+    eq(nil, meta.read({ "---", "volta-em:", "---" }).volta_em)
+    eq(nil, meta.read({ "---", 'volta-em: ""', "---" }).volta_em)
+    eq(nil, meta.read({ "---", "prioridade: alta", "---" }).volta_em)
+    eq(nil, meta.read({ "> [!todo] sem frontmatter" }).volta_em)
+  end)
+
+  it("texto que não é data chega cru, para o doctor poder acusá-lo", function()
+    eq("2026-12-1", meta.read({ "---", "volta-em: 2026-12-1", "---" }).volta_em)
+  end)
+
+  it("parse_date aceita só AAAA-MM-DD de um dia que existe", function()
+    truthy(meta.parse_date("2026-12-01"))
+    truthy(meta.parse_date("2026-12-31"))
+    truthy(meta.parse_date("2024-02-29"), "ano bissexto")
+    truthy(meta.parse_date("2000-02-29"), "divisível por 400 é bissexto")
+    for _, ruim in ipairs({
+      "2026-12-1", -- falta o zero: comparado como texto, passaria 2026-12-05
+      "2026-1-01",
+      "26-12-01",
+      "2026/12/01",
+      "01/12/2026",
+      "2026-13-01",
+      "2026-00-10",
+      "2026-12-00",
+      "2026-12-32",
+      "2026-04-31",
+      "2026-02-30",
+      "2025-02-29",
+      "1900-02-29", -- divisível por 100 e não por 400
+      "2026-12-01T10:00",
+      "2026-12-01 ",
+      " 2026-12-01",
+      "2026-12-01x",
+      "amanhã",
+      "",
+    }) do
+      eq(nil, meta.parse_date(ruim), ("%q não é data"):format(ruim))
+    end
+    eq(nil, meta.parse_date(nil))
+    eq(nil, meta.parse_date(20261201))
+  end)
+
+  it("parse_date ordena como as datas ordenam, na virada de mês e de ano", function()
+    truthy(meta.parse_date("2026-12-05") < meta.parse_date("2026-12-10"))
+    truthy(meta.parse_date("2026-12-31") < meta.parse_date("2027-01-01"))
+    truthy(meta.parse_date("2026-02-28") < meta.parse_date("2026-03-01"))
+    truthy(meta.parse_date("2026-12-01") == meta.parse_date("2026-12-01"))
+  end)
+
+  it("volta-em é o primeiro dia visível: adia até a véspera, e no próprio dia já aparece", function()
+    local mt = { volta_em = "2026-12-01" }
+    truthy(meta.is_postponed(mt, "2026-11-30"), "véspera")
+    truthy(meta.is_postponed(mt, "2026-11-01"))
+    falsy(meta.is_postponed(mt, "2026-12-01"), "no dia da data a task já volta")
+    falsy(meta.is_postponed(mt, "2026-12-02"), "depois da data o campo não tem efeito")
+    falsy(meta.is_postponed(mt, "2027-06-01"))
+  end)
+
+  it("a comparação é de data, não de texto: 2026-12-1 é inválida e não adia", function()
+    -- Como texto, "2026-12-1" > "2026-12-05" (o '1' vence o '0'): a task sumiria.
+    falsy(meta.is_postponed({ volta_em = "2026-12-1" }, "2026-12-05"))
+    falsy(meta.is_postponed({ volta_em = "2026-02-30" }, "2026-01-01"), "dia que não existe não adia")
+    falsy(meta.is_postponed({ volta_em = "01/12/2026" }, "2026-11-01"))
+    falsy(meta.is_postponed({ volta_em = "amanhã" }, "2026-11-01"))
+    truthy(meta.is_postponed({ volta_em = "2026-12-10" }, "2026-12-05"), "a válida segue adiando")
+  end)
+
+  it("sem data de volta, ou sem meta, a task não está adiada", function()
+    falsy(meta.is_postponed({}, "2026-11-01"))
+    falsy(meta.is_postponed({ prioridade = "alta" }, "2026-11-01"))
+    falsy(meta.is_postponed(nil, "2026-11-01"))
+  end)
+
+  it("today é AAAA-MM-DD de um dia que existe", function()
+    truthy(meta.parse_date(meta.today()), meta.today())
+  end)
+
+  it("a gravação da prioridade não apaga a data de volta", function()
+    local lines = { "---", "volta-em: 2026-12-01", "---", "", "> [!todo] x" }
+    meta.write(lines, { prioridade = "alta" })
+    eq("2026-12-01", meta.read(lines).volta_em)
+    meta.write(lines, {})
+    eq("2026-12-01", meta.read(lines).volta_em)
+  end)
+end)
+
+describe("cache.is_hidden", function()
+  local TODAY = "2026-11-10"
+
+  ---Uma entry do cache, só com o que a regra olha.
+  local function entry(callout, volta_em, prioridade)
+    return { status_num = phase(callout), meta = { volta_em = volta_em, prioridade = prioridade } }
+  end
+
+  it("Algum dia segue escondida, com ou sem data", function()
+    truthy(cache.is_hidden(entry("quote"), TODAY))
+    truthy(cache.is_hidden(entry("quote", "2020-01-01"), TODAY), "data passada não a devolve ao painel")
+  end)
+
+  it("a task com volta-em no futuro some em qualquer fase ativa", function()
+    for _, c in ipairs({ "todo", "abstract", "tip", "example", "question", "warning", "check" }) do
+      truthy(cache.is_hidden(entry(c, "2026-12-01"), TODAY), c .. " adiada some")
+      falsy(cache.is_hidden(entry(c), TODAY), c .. " sem data aparece")
+    end
+  end)
+
+  it("a data vence prioridade alta enquanto não chega", function()
+    truthy(cache.is_hidden(entry("example", "2026-12-01", "alta"), TODAY))
+    falsy(cache.is_hidden(entry("example", "2026-12-01", "alta"), "2026-12-01"), "chegou o dia, a alta volta")
+  end)
+
+  it("no dia da data e depois dela a task aparece, sem nada gravado nela", function()
+    -- A MESMA entry, nos três dias: o que muda é só o relógio. Nada escreve na
+    -- task quando a data chega.
+    local e = entry("tip", "2026-12-01")
+    truthy(cache.is_hidden(e, "2026-11-30"))
+    falsy(cache.is_hidden(e, "2026-12-01"))
+    falsy(cache.is_hidden(e, "2026-12-02"))
+    eq("2026-12-01", e.meta.volta_em, "o campo fica, sem efeito")
+  end)
+
+  it("data inválida não esconde", function()
+    for _, ruim in ipairs({ "2026-12-1", "2026-02-30", "01/12/2026", "amanhã" }) do
+      falsy(cache.is_hidden(entry("todo", ruim), "2026-01-01"), ruim .. " deixa a task visível")
+    end
+  end)
+
+  it("o sentinela de status inválido também é adiável, como toda fase ativa", function()
+    falsy(cache.is_hidden({ status_num = 0, meta = {} }, TODAY))
+    truthy(cache.is_hidden({ status_num = 0, meta = { volta_em = "2026-12-01" } }, TODAY))
+  end)
+
+  it("entry sem meta não quebra", function()
+    falsy(cache.is_hidden({ status_num = phase("todo") }, TODAY))
   end)
 end)
 

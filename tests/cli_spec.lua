@@ -237,6 +237,146 @@ describe("cli: fases novas, prioridade e Algum dia", function()
   end)
 end)
 
+-- A task adiada (`volta-em`). Os dias são relativos ao relógio de quem roda: a
+-- CLI lê o dia de hoje, e o teste não tem como fixá-lo; a regra por data, com o
+-- relógio fixo, está em freitask_spec.lua. Este bloco apaga tudo que cria.
+describe("cli: task adiada", function()
+  local PROJ = "projects/meu-projeto/tasks/"
+
+  ---Um dia relativo a hoje, `AAAA-MM-DD`. Ao meio-dia, para a hora de verão não
+  ---empurrar a data.
+  local function day(offset)
+    local t = os.date("*t")
+    return os.date("%Y-%m-%d", os.time({ year = t.year, month = t.month, day = t.day + offset, hour = 12 }))
+  end
+
+  ---Escreve uma task como o celular faria, à mão: frontmatter e bloco. Nada
+  ---avisa o painel, então quem chama roda o `rebuild`.
+  local function write_task(id, callout, front)
+    local lines = { "---" }
+    vim.list_extend(lines, front)
+    vim.list_extend(lines, {
+      "---",
+      "",
+      "> [!" .. callout .. "] Título de " .. id,
+      "> [[projects/meu-projeto/tasks/" .. id .. "|" .. id .. "]]",
+    })
+    vim.fn.writefile(lines, vault .. "/" .. PROJ .. id .. ".md")
+  end
+
+  local function by_id()
+    local out = {}
+    for _, r in ipairs(json("list", "--json")) do
+      out[r.id] = r
+    end
+    return out
+  end
+
+  local function cleanup(ids)
+    for _, id in ipairs(ids) do
+      eq(0, (run("delete", id)))
+    end
+  end
+
+  it("com volta-em no futuro some do CURRENT.md, da contagem e do projects, e segue no list", function()
+    write_task("t-adiada", "example", { "volta-em: " .. day(30) })
+    eq(0, (run("rebuild")))
+
+    local board = read("CURRENT.md")
+    falsy(board:find("t-adiada", 1, true), board)
+    truthy(board:find("tasks/t1", 1, true), board)
+    truthy(board:find("1 tasks em 1 projetos", 1, true), "a contagem do painel não inclui a adiada: " .. board)
+    eq({ { project = "meu-projeto", active = 1 } }, json("projects", "--json"), "projects conta o mesmo que o painel")
+
+    local rows = by_id()
+    truthy(rows["t-adiada"], "a adiada segue em freitask list")
+    eq(true, rows["t-adiada"].hidden, "o JSON manda a TUI esconder")
+    eq("example", rows["t-adiada"].callout, "adiar não muda a fase")
+    eq(false, rows.t1.hidden)
+    local _, texto = run("list")
+    truthy(texto:find("t-adiada", 1, true), "o list de texto também a traz: " .. texto)
+    eq(1, vim.fn.filereadable(vault .. "/" .. PROJ .. "t-adiada.md"), "continua em tasks/, não é arquivar")
+    cleanup({ "t-adiada" })
+  end)
+
+  it("no dia da data a task já aparece, e depois dela também, sem nada gravado nela", function()
+    write_task("t-hoje", "tip", { "volta-em: " .. day(0) })
+    write_task("t-ontem", "tip", { "volta-em: " .. day(-1) })
+    local antes = { read(PROJ .. "t-hoje.md"), read(PROJ .. "t-ontem.md") }
+    eq(0, (run("rebuild")))
+
+    local board = read("CURRENT.md")
+    truthy(board:find("t-hoje", 1, true), "volta-em é o primeiro dia visível: " .. board)
+    truthy(board:find("t-ontem", 1, true), board)
+    truthy(board:find("3 tasks em 1 projetos", 1, true), board)
+    local rows = by_id()
+    eq(false, rows["t-hoje"].hidden)
+    eq(false, rows["t-ontem"].hidden)
+    eq(antes, { read(PROJ .. "t-hoje.md"), read(PROJ .. "t-ontem.md") }, "o motor não grava nada na task")
+    eq(day(0), read(PROJ .. "t-hoje.md"):match("volta%-em: (%S+)"), "o campo fica no arquivo, sem efeito")
+    cleanup({ "t-hoje", "t-ontem" })
+  end)
+
+  it("vale em qualquer fase ativa", function()
+    local ids = {}
+    for _, callout in ipairs({ "todo", "abstract", "tip", "example", "question", "warning", "check" }) do
+      local id = "t-fase-" .. callout
+      ids[#ids + 1] = id
+      write_task(id, callout, { "volta-em: " .. day(30) })
+    end
+    eq(0, (run("rebuild")))
+    local board = read("CURRENT.md")
+    local rows = by_id()
+    for _, id in ipairs(ids) do
+      falsy(board:find(id, 1, true), id .. " devia estar adiada: " .. board)
+      eq(true, rows[id].hidden, id)
+    end
+    cleanup(ids)
+  end)
+
+  it("a data vence prioridade alta enquanto não chega", function()
+    write_task("t-alta-adiada", "example", { "prioridade: alta", "volta-em: " .. day(30) })
+    write_task("t-alta-hoje", "example", { "prioridade: alta", "volta-em: " .. day(0) })
+    eq(0, (run("rebuild")))
+    local board = read("CURRENT.md")
+    falsy(board:find("t-alta-adiada", 1, true), board)
+    truthy(board:find("t-alta-hoje", 1, true), "chegou o dia, a alta volta ao topo")
+    local rows = by_id()
+    eq(true, rows["t-alta-adiada"].hidden)
+    eq("alta", rows["t-alta-adiada"].prioridade, "a prioridade segue na task")
+    eq(false, rows["t-alta-hoje"].hidden)
+    cleanup({ "t-alta-adiada", "t-alta-hoje" })
+  end)
+
+  it("data inválida escrita à mão deixa a task visível", function()
+    -- `2999-12-1` e os outros ficariam "no futuro" se fossem comparados como texto.
+    local ruins = { "2999-12-1", "2999-02-30", "01/12/2999", "amanha" }
+    local ids = {}
+    for i, ruim in ipairs(ruins) do
+      ids[#ids + 1] = "t-ruim-" .. i
+      write_task(ids[i], "todo", { "volta-em: " .. ruim })
+    end
+    eq(0, (run("rebuild")))
+    local board = read("CURRENT.md")
+    local rows = by_id()
+    for i, id in ipairs(ids) do
+      truthy(board:find(id, 1, true), ruins[i] .. " não pode esconder a task: " .. board)
+      eq(false, rows[id].hidden, ruins[i])
+    end
+    cleanup(ids)
+  end)
+
+  it("campo vazio é sem data, e a task aparece", function()
+    write_task("t-vazia", "todo", { "volta-em:" })
+    eq(0, (run("rebuild")))
+    truthy(read("CURRENT.md"):find("t-vazia", 1, true))
+    eq(false, by_id()["t-vazia"].hidden)
+    cleanup({ "t-vazia" })
+  end)
+
+  run("rebuild")
+end)
+
 -- Fica ANTES do bloco de arquivar/renomear/apagar de propósito: aquele termina
 -- num vault com link pendurado (é o que o último caso do bloco confere), e aqui
 -- o `doctor` precisa sair limpo. Este bloco apaga tudo que cria.

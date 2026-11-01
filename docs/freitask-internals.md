@@ -47,9 +47,9 @@ Tamanho de módulo não está aqui de propósito: contagem em contrato apodrece
 | `path` | Tudo que se deriva de um **caminho**: projeto, id, arquivamento, `kebab`. | Ler arquivo. |
 | `md` | Linhas de markdown: blockquote, frontmatter, seção `##`, splice. | Saber o que é uma task. |
 | `model` | **Parser e serializer do bloco.** Puro: linhas entram, `freitask.Model` sai. | Tocar disco, notificar, conhecer buffer. |
-| `cache` | O índice em memória das tasks **ativas**, com o bloco de cada uma. | Enxergar arquivadas (elas são lidas do disco sob demanda). |
+| `cache` | O índice em memória das tasks **ativas**, com o bloco de cada uma, e a regra de qual delas o painel esconde (`is_hidden`: a fase Algum dia ou a task adiada). | Enxergar arquivadas (elas são lidas do disco sob demanda). |
 | `links` | Reescrever os wikilinks do vault quando um arquivo, ou a pasta de um projeto, muda de endereço. | Decidir que ele mudou. |
-| `meta` | A PRIORIDADE no frontmatter (`prioridade: alta`). | Saber a FASE — isso é o callout. |
+| `meta` | A PRIORIDADE e a DATA DE VOLTA no frontmatter (`prioridade: alta`, `volta-em: AAAA-MM-DD`), e o que decide se uma task está adiada. | Saber a FASE — isso é o callout. |
 | `task` | Operações sobre o **arquivo** de uma task: criar, editar (`apply_edit`, que vira rename quando o id muda), mover, apagar, localizar por id. E, do projeto, o que é pasta: criar, encerrar, reabrir. | Regenerar o board — quem chama decide quando. |
 | `board` | O `CURRENT.md`. | Ser fonte de verdade de coisa alguma. |
 | `doctor` | Verificação, reparo e migração de formato. | Adivinhar (não inventa data nem resolve conflito). |
@@ -124,9 +124,10 @@ Cobertura em `freitask_spec.lua`: as funções **puras** — `path.kebab`,
 `model.serialize_block`, o round-trip entre os dois, `md.first_block_range`,
 `md.block_around`, `md.splice`, `md.append_history`,
 `md.update_frontmatter_key`, `links.rewrite_link`, `links.rewrite_prefix`,
-`path.project_dir`, a prioridade de `meta`, o `status.is_hidden` e, da
-criação, `task.validate_new` e `task.template` — a validação foi separada da
-escrita justamente para caber aqui: as regras de um id novo (kebab,
+`path.project_dir`, a prioridade e a data de volta de `meta` (o dia entra por
+parâmetro, para o teste fixar o relógio), o `status.is_hidden`, o
+`cache.is_hidden` e, da criação, `task.validate_new` e `task.template` — a
+validação foi separada da escrita justamente para caber aqui: as regras de um id novo (kebab,
 projeto reservado) são a parte interessante, e `create_task` fica só com o
 disco.
 

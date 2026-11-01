@@ -128,6 +128,21 @@ function M.entries_for(project)
   return list
 end
 
+---Verdadeiro se o painel e a TUI escondem a task por padrão: a fase é de
+---Algum dia, ou ela está adiada (`volta-em` num dia depois de `today`). É a
+---regra única de "escondida" — o CURRENT.md, a contagem, o `list` e o
+---`projects` perguntam aqui, e a TUI a recebe pronta no JSON. Vale para
+---qualquer fase ativa e vence `prioridade: alta`, que só decide a ordem.
+---
+---`today` entra por parâmetro, e não é lido aqui, para que um regen use o mesmo
+---dia do cabeçalho do painel e os testes fixem o relógio.
+---@param entry freitask.Entry
+---@param today string `AAAA-MM-DD`
+---@return boolean
+function M.is_hidden(entry, today)
+  return status.is_hidden(entry.status_num) or meta_.is_postponed(entry.meta, today)
+end
+
 ---Lista de ids de projeto: os diretórios sob projects/ que têm um tasks/
 ---dentro. Um projeto do vault sem pasta de tasks (spec e ADRs, nenhuma frente
 ---aberta) simplesmente não aparece no board — é o estado certo, não uma falta.

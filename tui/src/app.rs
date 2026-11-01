@@ -770,6 +770,22 @@ mod tests {
     }
 
     #[test]
+    fn task_adiada_fica_escondida_ate_o_toggle_qualquer_que_seja_a_fase() {
+        // A TUI obedece ao `hidden` do motor: a adiada está em `example`, uma fase
+        // que o painel mostra, e some do mesmo jeito que o Algum dia.
+        let mut d = data();
+        d.tasks.push(Task {
+            hidden: true,
+            ..task("alfa", "a8", "example", 3, None)
+        });
+        let mut app = App::new(d);
+        let ids = |app: &App| -> Vec<String> { app.visible_tasks().iter().map(|t| t.id.clone()).collect() };
+        assert_eq!(ids(&app), ["a1", "a2"]);
+        app.handle_key(key('S'));
+        assert_eq!(ids(&app), ["a1", "a2", "a8"]);
+    }
+
+    #[test]
     fn o_toggle_de_algum_dia_nao_mexe_nas_arquivadas() {
         let mut d = data();
         d.tasks.push(Task {

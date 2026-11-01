@@ -25,11 +25,13 @@
 ---@field project string|nil sem ele, o link sai no formato legado `[[id]]`
 ---@field archived string|nil tipo de arquivamento; move o alvo do link
 
----A prioridade de uma task, lida do frontmatter. Ortogonal ao status: o callout
----diz em que FASE o trabalho está, isto diz se ele passa na frente. Opcional;
----sem ela a task é normal. Ver freitask.meta.
+---O que o freitask lê do frontmatter de uma task. Ortogonal ao status: o callout
+---diz em que FASE o trabalho está, isto diz se ele passa na frente e até que dia
+---fica fora da tela. Tudo opcional; sem a prioridade a task é normal, e sem a
+---data de volta ela não está adiada. Ver freitask.meta.
 ---@class freitask.Meta
 ---@field prioridade string|nil "alta" é o único valor que conta
+---@field volta_em string|nil o texto de `volta-em`, como está escrito; só adia se for uma data (meta.parse_date)
 
 ---Uma task no cache em memória. `block` é guardado para que o regen do
 ---CURRENT.md não precise reabrir o arquivo.

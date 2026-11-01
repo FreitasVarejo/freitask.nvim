@@ -68,9 +68,9 @@ e ao renomear o id — e ainda assim só acrescentando uma linha (ver "Arquivar 
 desarquivar / deletar", "Mover para outro projeto" e "Rodapé `## Histórico`").
 
 **Frontmatter YAML** é pulado pela detecção do callout, e hoje carrega a
-prioridade (abaixo). Chaves que o freitask não conhece — as que o obsidian.nvim
-injeta, como `aliases`/`tags` — são **preservadas verbatim**: ele nunca reescreve
-linha que não seja sua.
+prioridade e a data de volta (abaixo). Chaves que o freitask não conhece — as
+que o obsidian.nvim injeta, como `aliases`/`tags` — são **preservadas
+verbatim**: ele nunca reescreve linha que não seja sua.
 
 ### Prioridade (`prioridade`)
 
@@ -103,6 +103,46 @@ viraria "normal" em silêncio.
 **Refino e implementação da mesma task nunca rodam em paralelo.** Task em Em
 implementação tem o contrato congelado; refino que chegue no meio vira **task
 nova**, nunca edição da que está em voo.
+
+### Volta em (`volta-em`) — a task adiada
+
+Um campo **opcional** no frontmatter, ortogonal ao status e à prioridade: a fase
+não muda, e o campo diz até que dia a task fica **fora da tela**. Não é
+arquivar — arquivada fecha uma frente e muda de caminho; a adiada segue viva em
+`tasks/`, na mesma fase.
+
+```yaml
+---
+volta-em: 2026-12-01
+---
+```
+
+- **É o primeiro dia visível.** A task fica escondida até a véspera e, no dia da
+  data, já aparece: ela volta à meia-noite local. Só o dia conta, sem hora.
+- **Enquanto a data não chega, vale o tratamento de Algum dia:** fora do
+  `CURRENT.md` e da contagem do cabeçalho, escondida na TUI até o `S`, e à mostra
+  em `freitask list` (o JSON traz `hidden: true`).
+- **Vale em qualquer fase ativa** e vence `prioridade: alta` enquanto a data não
+  chega; a prioridade só decide a ordem do que está à mostra.
+- **É lida na hora e nunca gravada.** O motor compara a data com o dia de hoje a
+  cada leitura, e quando a data chega nada grava nada na task. Por isso não há
+  job que possa falhar e deixá-la escondida (nem timer: duas máquinas gravariam
+  o mesmo arquivo sob o Syncthing). O preço é o painel: o `CURRENT.md` só muda
+  quando algo o regenera (`freitask rebuild`, uma escrita da CLI, salvar uma
+  task no Neovim), e num dia sem nenhum dos três ele fica atrasado — isso é
+  aceito.
+- **Depois da data** o campo fica no arquivo, sem efeito. Adiar de novo é trocar
+  a data; uma task com várias datas troca o campo a cada passo.
+- **Só uma data.** Condição além do dia e ordem entre tasks não moram aqui.
+- **A data é uma data.** Só `AAAA-MM-DD` de um dia que existe vale. `2026-12-1`,
+  `01/12/2026` e `2026-02-30` não são datas e **não escondem a task**: a
+  comparação é de data, não de texto (como texto, `2026-12-1` ficaria maior que
+  `2026-12-05`), e esconder por erro de digitação faria a task sumir sem aviso.
+  Campo vazio conta como sem data.
+
+Mora no frontmatter pelos mesmos motivos da prioridade: é metadado consultável,
+o celular o edita, e o bloco é reserializado a partir do caminho, que não
+carrega data nenhuma.
 
 ### Status 0 — callout sem tipo reconhecido
 
@@ -151,7 +191,9 @@ atropelá-la.
 **Algum dia é escondida por padrão** (`HIDDEN_CALLOUTS` em `config.lua`, e
 `hidden` no `list --json`): o `CURRENT.md` não a imprime nem a conta, e a TUI só
 a mostra com `S`. Continua em `freitask list`, para quem precisa achá-la. É a
-última fase que aparece na ordem; `done` só existe em arquivada.
+última fase que aparece na ordem; `done` só existe em arquivada. A task adiada
+(`volta-em`, acima) é escondida pela mesma regra e pelo mesmo campo `hidden`,
+sem ser dessa fase.
 
 Os callouts de Refinada (`tip`) e Algum dia (`quote`) saem de famílias que o
 Obsidian do celular não confunde com as outras: ele renderiza igual os tipos da
@@ -213,8 +255,9 @@ weekday: Monday
   de hoje.
 - **`## Notas Avulsas`** é a única seção editável à mão que sobrevive à regen.
 - **Ordem e o que não entra**: dentro de cada projeto, as tasks de prioridade
-  alta vêm primeiro e depois a ordem da fase; as de Algum dia não são impressas
-  e não entram na contagem do cabeçalho.
+  alta vêm primeiro e depois a ordem da fase; as de Algum dia e as adiadas
+  (`volta-em` num dia que vem) não são impressas e não entram na contagem do
+  cabeçalho.
 
 ---
 
@@ -233,7 +276,7 @@ do arquivo.
 | `r` | renomear o id |
 | `a` | arquivar (o tipo sugerido vem pré-selecionado) ou, numa arquivada, desarquivar |
 | `A` | mostrar / esconder as arquivadas |
-| `S` | mostrar / esconder as de Algum dia |
+| `S` | mostrar / esconder as de Algum dia e as adiadas |
 | `d` | largar: arquiva como `dropped` (pede `y`) |
 | `N` | novo projeto |
 | `c` | regenerar e abrir o `CURRENT.md` |

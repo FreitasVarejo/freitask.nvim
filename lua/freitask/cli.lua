@@ -160,13 +160,15 @@ freitask — gestão de tasks do vault do Obsidian
   freitask list [--json] [--archived]
       Lista as tasks, as de prioridade alta primeiro. O JSON traz, por task:
       project, id, path, archived, status (título da fase), status_num,
-      callout, title, desc, suggested_archive, hidden (a fase que o painel e a
-      TUI escondem por padrão; só task ativa) e prioridade ("alta" ou null).
+      callout, title, desc, suggested_archive, hidden (o que o painel e a TUI
+      escondem por padrão: a fase Algum dia ou a task adiada, com `volta-em`
+      num dia que vem; só task ativa) e prioridade ("alta" ou null). A task
+      adiada segue na lista.
 
   freitask projects [--json]
       Lista os projetos (inclusive os sem task ativa; os encerrados não) e
-      quantas tasks ativas cada um tem, as que o painel mostra (as de fase
-      escondida não contam).
+      quantas tasks ativas cada um tem, as que o painel mostra (as escondidas
+      não contam).
 
   freitask statuses [--json]
       O vocabulário de fases do .freitask/status.json, em ordem, com ícone,
@@ -453,11 +455,12 @@ if cmd == "projects" then
   T.load_status()
   T.build_cache()
   local rows = {}
+  local today = T.meta.today()
   for _, p in ipairs(T.list_projects()) do
     -- As que o painel mostra: a contagem do CURRENT.md e a da TUI são esta.
     local shown = 0
     for _, e in ipairs(T.entries_for(p)) do
-      if not T.is_hidden(e.status_num) then
+      if not T.is_entry_hidden(e, today) then
         shown = shown + 1
       end
     end
@@ -511,8 +514,9 @@ end
 ---A linha de uma task no `list`. O bloco já está na entry (o cache o guarda
 ---para o regen), então isto não relê arquivo nenhum.
 ---@param e freitask.Entry
+---@param today string `AAAA-MM-DD`, o mesmo dia para todas as linhas
 ---@return table
-local function list_row(e)
+local function list_row(e, today)
   local m = T.parse_block(e.block or {})
   local st = T.status_meta(e.status_num)
   return {
@@ -527,10 +531,11 @@ local function list_row(e)
     desc = m.desc,
     archived = e.archived or vim.NIL,
     suggested_archive = T.suggest_archive_type(e.status_num),
-    -- Regra do motor (a TUI não conhece regra de task): a fase que o painel e a
-    -- TUI escondem por padrão. Só vale para task ativa: a arquivada já tem o
-    -- próprio toggle, e uma largada do "Algum dia" não deve sumir ao mostrá-las.
-    hidden = e.archived == nil and T.is_hidden(e.status_num),
+    -- Regra do motor (a TUI não conhece regra de task): o que o painel e a TUI
+    -- escondem por padrão — a fase "Algum dia" ou a task adiada. Só vale para
+    -- task ativa: a arquivada já tem o próprio toggle, e uma largada do "Algum
+    -- dia" não deve sumir ao mostrá-las.
+    hidden = e.archived == nil and T.is_entry_hidden(e, today),
     -- "alta" ou null: só o valor que conta; o resto o doctor acusa. Arquivada
     -- não tem o que priorizar, então a marca não vai com ela.
     prioridade = (e.archived == nil and T.meta.is_high(e.meta)) and T.meta.HIGH or vim.NIL,
@@ -543,13 +548,14 @@ if cmd == "list" then
   T.load_status()
   T.build_cache()
   local rows = {}
+  local today = T.meta.today()
   for _, p in ipairs(T.list_projects()) do
     for _, e in ipairs(T.entries_for(p)) do
-      rows[#rows + 1] = list_row(e)
+      rows[#rows + 1] = list_row(e, today)
     end
     if flags.archived then
       for _, e in ipairs(T.archived_entries_for(p)) do
-        rows[#rows + 1] = list_row(e)
+        rows[#rows + 1] = list_row(e, today)
       end
     end
   end
