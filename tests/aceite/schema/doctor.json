@@ -1,0 +1,78 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "freitask doctor --json",
+  "description": "O diagnóstico do vault: `ok` é verdadeiro só quando não há achado nenhum (nem reparado), e `findings` lista cada achado, sempre como array.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "findings",
+    "ok"
+  ],
+  "properties": {
+    "ok": {
+      "type": "boolean"
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "fixed",
+          "kind",
+          "level",
+          "msg",
+          "path"
+        ],
+        "properties": {
+          "fixed": {
+            "description": "Verdadeiro quando o `--fix` reparou o achado nesta passagem.",
+            "type": "boolean"
+          },
+          "kind": {
+            "description": "Os 12 checks de hoje, `temporario-orfao` (fatia 5) e os kinds das fatias 9 e 10 (spec §2.2).",
+            "type": "string",
+            "enum": [
+              "sync-conflict",
+              "link-pendurado",
+              "sem-callout",
+              "bloco-dessincronizado",
+              "frontmatter-id",
+              "historico-ausente",
+              "fora-do-padrao",
+              "id-duplicado",
+              "status-0",
+              "callout-vs-pasta",
+              "prioridade-desconhecida",
+              "volta-em-invalido",
+              "temporario-orfao",
+              "dependencia-pendurada",
+              "dependencia-ciclica",
+              "prazo-invalido",
+              "prazo-antes-da-volta"
+            ]
+          },
+          "level": {
+            "type": "string",
+            "enum": [
+              "error",
+              "warn"
+            ]
+          },
+          "msg": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "description": "Caminho relativo ao vault, sem barra inicial.",
+            "type": "string",
+            "minLength": 1,
+            "not": {
+              "pattern": "^/"
+            }
+          }
+        }
+      }
+    }
+  }
+}
