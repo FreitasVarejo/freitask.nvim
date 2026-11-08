@@ -411,7 +411,10 @@ mod tests {
     #[test]
     fn crase_sem_par_nao_esconde_o_resto_da_linha() {
         let texto = "`a` e ` solta [[x]] `[[y]]` fim ` [[z]]\n";
-        let alvos: Vec<&str> = scan(texto).iter().map(|l| &texto[l.target.clone()]).collect();
+        let alvos: Vec<&str> = scan(texto)
+            .iter()
+            .map(|l| &texto[l.target.clone()])
+            .collect();
         // Pares: `a`, `` solta [[x]] ``, `` fim ``; o `[[y]]` fica fora deles.
         assert_eq!(alvos, vec!["y", "z"]);
         let texto = "hoje` da home ([[projects/p/tasks/x|x]]).\n";
