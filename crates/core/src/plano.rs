@@ -17,6 +17,13 @@ pub enum Efeito {
     },
     /// Apaga `rel`, se ele ainda tiver os bytes `antes`.
     Apagar { rel: String, antes: Vec<u8> },
+    /// Move `de` para `para` num `rename` só, se `de` ainda tiver os bytes
+    /// `antes` e `para` não existir (nunca sobrescreve).
+    Mover {
+        de: String,
+        para: String,
+        antes: Vec<u8>,
+    },
 }
 
 pub type Plano = Vec<Efeito>;

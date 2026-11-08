@@ -139,6 +139,49 @@ impl Vault {
         out
     }
 
+    /// As notas em que um deslocamento procura referências, já lidas: todo
+    /// `.md` do vault, como o `glob("**/*.md")` de hoje (nome com `.` na
+    /// frente fica de fora, pasta ou arquivo), menos `daily/` e o
+    /// `CURRENT.md` (o `ref_candidates` de hoje) e menos `*.sync-conflict-*`
+    /// (I7: a cópia de conflito é informação a resolver, não se reescreve).
+    /// Symlink também fica de fora: gravar por cima dele com `rename` o
+    /// trocaria por um arquivo comum.
+    pub fn notas(&self) -> Vec<(String, Vec<u8>)> {
+        let mut out = Vec::new();
+        let mut pilha = vec![String::new()];
+        while let Some(rel_dir) = pilha.pop() {
+            let Ok(it) = std::fs::read_dir(self.caminho(&rel_dir)) else {
+                continue;
+            };
+            for e in it.flatten() {
+                let nome = e.file_name().to_string_lossy().into_owned();
+                if nome.starts_with('.') {
+                    continue;
+                }
+                let rel = if rel_dir.is_empty() {
+                    nome.clone()
+                } else {
+                    format!("{rel_dir}/{nome}")
+                };
+                let Ok(tipo) = e.file_type() else { continue };
+                if tipo.is_dir() {
+                    if rel != config::DAILY_DIR {
+                        pilha.push(rel);
+                    }
+                } else if tipo.is_file()
+                    && nome.ends_with(".md")
+                    && rel != config::CURRENT_FILE
+                    && !nome.contains(".sync-conflict-")
+                    && let Some(b) = self.ler(&rel)
+                {
+                    out.push((rel, b));
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
     /// O índice inteiro: projetos e tasks lidas.
     pub fn indice(&self, vocab: &Vocab) -> Indice {
         let entradas = self

@@ -34,7 +34,8 @@ pub struct Link {
 }
 
 /// Acha os wikilinks fora de código. Linhas que começam com ``` alternam o
-/// bloco cercado; dentro de uma linha, o que está entre crases é pulado.
+/// bloco cercado; dentro de uma linha, o que está entre um par de crases é
+/// pulado (crase sem par é texto).
 pub fn scan(texto: &str) -> Vec<Link> {
     let mut out = Vec::new();
     let mut in_fence = false;
@@ -60,15 +61,15 @@ pub fn scan(texto: &str) -> Vec<Link> {
 fn scan_linha(linha: &str, base: usize, n: usize, out: &mut Vec<Link>) {
     let b = linha.as_bytes();
     let mut i = 0;
-    let mut in_span = false;
     while i < b.len() {
+        // Code span só com crase em par, como o `gsub("`[^`]*`", "")` do
+        // `doctor`: uma crase sem par na linha é texto, e o link depois dela
+        // segue valendo.
         if b[i] == b'`' {
-            in_span = !in_span;
-            i += 1;
-            continue;
-        }
-        if in_span {
-            i += 1;
+            match linha[i + 1..].find('`') {
+                Some(fim) => i += fim + 2,
+                None => i += 1,
+            }
             continue;
         }
         if b[i] == b'[' && i + 1 < b.len() && b[i + 1] == b'[' {
@@ -405,6 +406,16 @@ mod tests {
         let (o, n) = ("projects/p/", "projects/_encerrados/p/");
         let inner = "projects/p/tasks/archived/done/x#Para retomar|x";
         assert_eq!(rp(&rp(inner, o, n).unwrap(), n, o).as_deref(), Some(inner));
+    }
+
+    #[test]
+    fn crase_sem_par_nao_esconde_o_resto_da_linha() {
+        let texto = "`a` e ` solta [[x]] `[[y]]` fim ` [[z]]\n";
+        let alvos: Vec<&str> = scan(texto).iter().map(|l| &texto[l.target.clone()]).collect();
+        // Pares: `a`, `` solta [[x]] ``, `` fim ``; o `[[y]]` fica fora deles.
+        assert_eq!(alvos, vec!["y", "z"]);
+        let texto = "hoje` da home ([[projects/p/tasks/x|x]]).\n";
+        assert_eq!(scan(texto).len(), 1);
     }
 
     #[test]

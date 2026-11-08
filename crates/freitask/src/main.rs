@@ -4,6 +4,7 @@
 //! executa o Neovim no `CURRENT.md`; o resto é a CLI (`cli.rs`).
 
 mod cli;
+mod deslocar;
 mod escrita;
 mod linhas;
 mod usage;

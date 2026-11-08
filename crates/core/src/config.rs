@@ -5,10 +5,16 @@
 /// Pasta dos projetos encerrados, um nível abaixo do glob `projects/*/tasks`.
 pub const CLOSED_DIR: &str = "_encerrados";
 
+/// O painel, na raiz do vault.
+pub const CURRENT_FILE: &str = "CURRENT.md";
+
+/// A pasta dos snapshots diários do painel.
+pub const DAILY_DIR: &str = "daily";
+
 /// Nomes que não podem virar projeto. `daily` e `templates` já não colidiriam
 /// com nada, mas seguem vetados para não reintroduzir a ambiguidade que a
 /// mudança de layout removeu; `_encerrados` é a pasta dos encerrados.
-pub const RESERVED: [&str; 3] = ["daily", "templates", CLOSED_DIR];
+pub const RESERVED: [&str; 3] = [DAILY_DIR, "templates", CLOSED_DIR];
 
 pub fn is_reserved(name: &str) -> bool {
     RESERVED.contains(&name)

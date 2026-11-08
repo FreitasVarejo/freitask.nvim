@@ -14,6 +14,7 @@ use freitask_core::date::Date;
 use freitask_core::operacao::PedidoSet;
 use freitask_vault::{ErroEscrita, Vault};
 
+use crate::deslocar::{self, Pedido};
 use crate::escrita;
 use crate::linhas;
 use crate::usage;
@@ -552,6 +553,42 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
                 return die("falta o id ou caminho da task", 2);
             };
             escrita::delete(&referencia, hoje)
+        }
+        Cmd::Archive { referencia, tipo } => {
+            let Some(referencia) = referencia else {
+                return die("falta o id ou caminho da task", 2);
+            };
+            deslocar::deslocar(&referencia, Pedido::Archive(tipo), hoje)
+        }
+        Cmd::Unarchive { referencia } => {
+            let Some(referencia) = referencia else {
+                return die("falta o id ou caminho da task", 2);
+            };
+            deslocar::deslocar(&referencia, Pedido::Unarchive, hoje)
+        }
+        Cmd::Rename {
+            referencia,
+            novo_id,
+        } => {
+            let Some(referencia) = referencia else {
+                return die("falta o id ou caminho da task", 2);
+            };
+            let Some(novo_id) = novo_id else {
+                return die("falta o novo id", 2);
+            };
+            deslocar::deslocar(&referencia, Pedido::Rename(novo_id), hoje)
+        }
+        Cmd::Move {
+            referencia,
+            projeto,
+        } => {
+            let Some(referencia) = referencia else {
+                return die("falta o id ou caminho da task", 2);
+            };
+            let Some(projeto) = projeto else {
+                return die("falta o projeto de destino", 2);
+            };
+            deslocar::deslocar(&referencia, Pedido::Move(projeto), hoje)
         }
         Cmd::Tui => tui(),
         Cmd::Current => die("`current` ainda não foi portado (fatia 6)", 2),

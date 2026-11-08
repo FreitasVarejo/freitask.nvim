@@ -12,6 +12,7 @@ pub mod board;
 pub mod config;
 pub mod date;
 pub mod deps;
+pub mod deslocar;
 pub mod index;
 pub mod links;
 pub mod md;

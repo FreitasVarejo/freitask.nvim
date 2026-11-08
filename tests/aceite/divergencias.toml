@@ -17,11 +17,11 @@
 
 [[divergencia]]
 id = "D1"
-motivo = "`archive`, `move` e `rename` passam a reescrever `[[…\\|alias]]` dentro de tabela (bug medido em §0; o `retarget_prefix` já fazia certo). A nota com tabela fica com bytes diferentes e o `doctor` do oráculo acusa `link-pendurado` (array `findings` maior, `ok=false`, saída 1) onde o novo não acusa nada."
+motivo = "`archive`, `move` e `rename` passam a reescrever `[[…\\|alias]]` dentro de tabela (bug medido em §0; o `retarget_prefix` já fazia certo). A nota com tabela fica com bytes diferentes e o `doctor` do oráculo acusa `link-pendurado` (array `findings` maior, `ok=false`, saída 1) onde o novo não acusa nada. O aviso `freitask: N referência(s) atualizada(s) em M arquivo(s)` conta só o que foi reescrito: soma os links em tabela e as notas que só os têm; como o stderr não separa isso de D5 (link em código fora da conta), nestes cenários é esta entrada que cobre o aviso."
 teste = "link_em_tabela_acompanha_o_archive_o_move_e_o_rename"
 cenario = '::(tabela|escrita-existente)$'
-onde = '^(arquivo:.*\.md|json:/(ok|findings(/\d+(/\w+)?)?)|codigo)$'
-detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^tamanho A=\d+ B=\d+$|link-pendurado'
+onde = '^(arquivo:.*\.md|json:/(ok|findings(/\d+(/\w+)?)?)|codigo|stderr)$'
+detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^tamanho A=\d+ B=\d+$|link-pendurado|^linha \d+: A="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)" B="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)"$|^0 linhas em A, 1 em B; a primeira a mais em B: "freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)"$'
 
 [[divergencia]]
 id = "D2"
@@ -47,11 +47,11 @@ detalhe = '^bytes diferentes$|\\r'
 
 [[divergencia]]
 id = "D5"
-motivo = "Link dentro de bloco cercado (```) ou de crases não é reescrito por `archive`, `rename` e `move`: a regra que o `doctor` já aplica vale para a reescrita. O oráculo reescreve dentro de código; a nota fica com bytes diferentes, e o `doctor --json` pode divergir em `ok`/`findings`."
+motivo = "Link dentro de bloco cercado (```) ou de crases não é reescrito por `archive`, `rename` e `move`: a regra que o `doctor` já aplica vale para a reescrita. O oráculo reescreve dentro de código; a nota fica com bytes diferentes, o `doctor --json` pode divergir em `ok`/`findings`, e o aviso `freitask: N referência(s) atualizada(s) em M arquivo(s)` deixa de contar esses links. Em `escrita-existente` quem cobre é D1, que vem antes com o mesmo `onde` e `detalhe`."
 teste = ""
-cenario = '::codigo$|^(sintetico-\d+|real)::escrita-existente$'
-onde = '^(arquivo:.*\.md|json:/(ok|findings(/\d+(/\w+)?)?)|codigo)$'
-detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^tamanho A=\d+ B=\d+$|link-pendurado'
+cenario = '::codigo$'
+onde = '^(arquivo:.*\.md|json:/(ok|findings(/\d+(/\w+)?)?)|codigo|stderr)$'
+detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^tamanho A=\d+ B=\d+$|link-pendurado|^linha \d+: A="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)" B="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)"$'
 
 [[divergencia]]
 id = "D6"

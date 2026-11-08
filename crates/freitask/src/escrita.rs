@@ -15,12 +15,12 @@ use freitask_vault::Vault;
 use crate::cli::{die, falha, rebuild, say, travar};
 
 /// O vault do HOME.
-fn vault() -> Result<Vault, ExitCode> {
+pub(crate) fn vault() -> Result<Vault, ExitCode> {
     Vault::do_home().map_err(|e| die(&e, 2))
 }
 
 /// O vocabulário, com o aviso de `status.json` quebrado em stderr.
-fn vocab(vault: &Vault) -> freitask_core::status::Vocab {
+pub(crate) fn vocab(vault: &Vault) -> freitask_core::status::Vocab {
     let (vocab, aviso) = vault.vocab();
     if let Some(a) = aviso {
         eprintln!("{a}");
@@ -30,7 +30,7 @@ fn vocab(vault: &Vault) -> freitask_core::status::Vocab {
 
 /// Os bytes da task, ou a saída 1 com o erro de I/O (permissão, por
 /// exemplo), que não é o mesmo que a task não existir.
-fn ler(vault: &Vault, rel: &str, abs: &str) -> Result<Vec<u8>, ExitCode> {
+pub(crate) fn ler(vault: &Vault, rel: &str, abs: &str) -> Result<Vec<u8>, ExitCode> {
     std::fs::read(vault.caminho(rel)).map_err(|e| die(&format!("não consegui ler {abs}: {e}"), 1))
 }
 
@@ -40,15 +40,15 @@ fn raiz(vault: &Vault) -> String {
 
 /// O alvo de um comando sobre uma task: o caminho relativo ao vault, quando o
 /// arquivo está dentro dele, e o absoluto que o stdout e as mensagens citam.
-struct Alvo {
-    rel: Option<String>,
-    abs: String,
+pub(crate) struct Alvo {
+    pub rel: Option<String>,
+    pub abs: String,
 }
 
 /// Resolve `<id|caminho>` como o `find_task` de hoje: um arquivo que existe
 /// vale como está, mesmo que não seja task (quem recusa é a operação, com
 /// "não é um arquivo de task"); senão o id, único entre ativas e arquivadas.
-fn resolver(vault: &Vault, indice: &Indice, referencia: &str) -> Result<Alvo, String> {
+pub(crate) fn resolver(vault: &Vault, indice: &Indice, referencia: &str) -> Result<Alvo, String> {
     let p = Path::new(referencia);
     if p.is_file() {
         if let Some(rel) = vault.rel_de(referencia) {
@@ -71,7 +71,7 @@ fn resolver(vault: &Vault, indice: &Indice, referencia: &str) -> Result<Alvo, St
 }
 
 /// Regenera o painel depois de uma escrita e imprime o que o comando devolve.
-fn fecha(vault: &Vault, hoje: Date, saida: &str) -> ExitCode {
+pub(crate) fn fecha(vault: &Vault, hoje: Date, saida: &str) -> ExitCode {
     if let Err(e) = rebuild(vault, hoje) {
         return falha(&e);
     }

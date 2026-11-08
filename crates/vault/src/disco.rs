@@ -16,6 +16,8 @@ pub trait Disco {
     /// `fsync` do arquivo.
     fn fsync(&self, p: &Path) -> io::Result<()>;
     fn renomear(&self, de: &Path, para: &Path) -> io::Result<()>;
+    /// `rename` que nunca sobrescreve: `AlreadyExists` se `para` já existe.
+    fn mover(&self, de: &Path, para: &Path) -> io::Result<()>;
     /// `fsync` do diretório, para o `rename` sobreviver a uma queda de luz.
     fn fsync_dir(&self, p: &Path) -> io::Result<()>;
     fn apagar(&self, p: &Path) -> io::Result<()>;
@@ -47,6 +49,20 @@ impl Disco for Real {
 
     fn renomear(&self, de: &Path, para: &Path) -> io::Result<()> {
         std::fs::rename(de, para)
+    }
+
+    fn mover(&self, de: &Path, para: &Path) -> io::Result<()> {
+        use rustix::fs::{CWD, RenameFlags, renameat_with};
+        match renameat_with(CWD, de, CWD, para, RenameFlags::NOREPLACE) {
+            Ok(()) => Ok(()),
+            // Sistema de arquivos sem `RENAME_NOREPLACE`: o `link` também
+            // recusa destino que existe, e o `unlink` tira o nome velho.
+            Err(e) if e == rustix::io::Errno::INVAL || e == rustix::io::Errno::NOSYS => {
+                std::fs::hard_link(de, para)?;
+                std::fs::remove_file(de)
+            }
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn fsync_dir(&self, p: &Path) -> io::Result<()> {
@@ -114,6 +130,11 @@ impl Disco for Falhando<'_> {
         self.dentro.renomear(de, para)
     }
 
+    fn mover(&self, de: &Path, para: &Path) -> io::Result<()> {
+        self.conta()?;
+        self.dentro.mover(de, para)
+    }
+
     fn fsync_dir(&self, p: &Path) -> io::Result<()> {
         self.conta()?;
         self.dentro.fsync_dir(p)
@@ -148,6 +169,16 @@ mod tests {
         Real.renomear(&a, &b).unwrap();
         Real.fsync_dir(&dir.path().join("sub")).unwrap();
         assert_eq!(Real.ler(&a).unwrap(), None);
+        let c = dir.path().join("sub/c");
+        Real.escrever(&c, b"c").unwrap();
+        let e = Real.mover(&b, &c).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::AlreadyExists, "nunca sobrescreve");
+        assert_eq!(Real.ler(&c).unwrap(), Some(b"c".to_vec()));
+        Real.apagar(&c).unwrap();
+        Real.mover(&b, &c).unwrap();
+        assert_eq!(Real.ler(&b).unwrap(), None);
+        assert_eq!(Real.ler(&c).unwrap(), Some(b"x".to_vec()));
+        Real.mover(&c, &b).unwrap();
         Real.apagar(&b).unwrap();
         assert_eq!(Real.ler(&b).unwrap(), None);
         assert!(
@@ -171,9 +202,11 @@ mod tests {
         f.renomear(&a, &dir.path().join("b")).unwrap();
         f.fsync_dir(dir.path()).unwrap();
         f.criar_dir(&dir.path().join("c")).unwrap();
-        f.apagar(&dir.path().join("b")).unwrap();
-        assert_eq!(f.passos(), 7);
-        for passo in 1..=6 {
+        f.mover(&dir.path().join("b"), &dir.path().join("m"))
+            .unwrap();
+        f.apagar(&dir.path().join("m")).unwrap();
+        assert_eq!(f.passos(), 8);
+        for passo in 1..=7 {
             let f = Falhando::no_passo(&Real, passo);
             let p = dir.path().join(format!("p{passo}"));
             let r = [
@@ -182,7 +215,11 @@ mod tests {
                 f.renomear(&p, &dir.path().join(format!("q{passo}"))),
                 f.fsync_dir(dir.path()),
                 f.criar_dir(&dir.path().join(format!("d{passo}"))),
-                f.apagar(&dir.path().join(format!("q{passo}"))),
+                f.mover(
+                    &dir.path().join(format!("q{passo}")),
+                    &dir.path().join(format!("m{passo}")),
+                ),
+                f.apagar(&dir.path().join(format!("m{passo}"))),
             ];
             // Antes do passo, tudo dá certo; no passo, a falha é a injetada
             // (depois dele, o disco real pode falhar por conta própria).

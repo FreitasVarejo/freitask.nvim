@@ -115,6 +115,32 @@ pub fn apagar(disco: &dyn Disco, destino: &Path, antes: &[u8]) -> Result<(), Err
     Ok(())
 }
 
+/// Move `de` para `para` se `de` ainda tem os bytes `antes` e `para` não
+/// existe. Um `rename` só: o arquivo nunca fica com os dois nomes nem com
+/// nenhum. Exceção: num sistema de arquivos sem `RENAME_NOREPLACE`,
+/// `Disco::mover` cai para `link` + `unlink`, e uma queda entre os dois deixa
+/// os dois nomes (o `doctor` acusa o id duplicado).
+pub fn mover(disco: &dyn Disco, de: &Path, para: &Path, antes: &[u8]) -> Result<(), ErroEscrita> {
+    let atual = disco
+        .ler(de)
+        .map_err(|e| ErroEscrita::Io(de.to_path_buf(), e))?;
+    if hash(atual.as_deref()) != hash(Some(antes)) {
+        return Err(ErroEscrita::Conflito(de.to_path_buf()));
+    }
+    match disco.mover(de, para) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(ErroEscrita::Conflito(para.to_path_buf()));
+        }
+        Err(e) => return Err(ErroEscrita::Io(para.to_path_buf(), e)),
+    }
+    sincroniza_pai(disco, para);
+    if de.parent() != para.parent() {
+        sincroniza_pai(disco, de);
+    }
+    Ok(())
+}
+
 /// Executa um plano do `core`, na ordem, com os caminhos relativos a `raiz`.
 /// Para no primeiro erro: o que já foi feito fica (sem journal, spec §1.5), e
 /// o estado intermediário é o que o `doctor` acusa e o `--fix` repara.
@@ -129,6 +155,9 @@ pub fn aplicar(disco: &dyn Disco, raiz: &Path, plano: &[Efeito]) -> Result<(), E
                 gravar(disco, &raiz.join(rel), antes.as_deref(), depois)?;
             }
             Efeito::Apagar { rel, antes } => apagar(disco, &raiz.join(rel), antes)?,
+            Efeito::Mover { de, para, antes } => {
+                mover(disco, &raiz.join(de), &raiz.join(para), antes)?;
+            }
         }
     }
     Ok(())
@@ -323,6 +352,90 @@ mod tests {
         )
         .unwrap();
         assert!(ls(dir.path()).is_empty());
+    }
+
+    /// `59875bf`: o rename de uma task é um `rename` só, e o conteúdo novo vem
+    /// depois. Com uma falha injetada em cada passo, a task existe com UM
+    /// nome só, e uma falha depois do `rename` deixa o conteúdo antigo com o
+    /// nome novo — nunca os dois nomes, nunca nenhum.
+    #[test]
+    fn rename_e_atomico() {
+        let plano = vec![
+            Efeito::CriarDir {
+                rel: "p/tasks/archived/done".into(),
+            },
+            Efeito::Mover {
+                de: "p/tasks/x.md".into(),
+                para: "p/tasks/archived/done/y.md".into(),
+                antes: b"velho".to_vec(),
+            },
+            Efeito::Escrever {
+                rel: "p/tasks/archived/done/y.md".into(),
+                antes: Some(b"velho".to_vec()),
+                depois: b"novo".to_vec(),
+            },
+        ];
+        let mut viu_velho_no_novo = false;
+        for passo in 1..=12 {
+            let dir = tempfile::tempdir().unwrap();
+            std::fs::create_dir_all(dir.path().join("p/tasks")).unwrap();
+            std::fs::write(dir.path().join("p/tasks/x.md"), b"velho").unwrap();
+            let f = Falhando::no_passo(&Real, passo);
+            let r = aplicar(&f, dir.path(), &plano);
+            let x = std::fs::read(dir.path().join("p/tasks/x.md")).ok();
+            let y = std::fs::read(dir.path().join("p/tasks/archived/done/y.md")).ok();
+            match (&x, &y) {
+                (Some(v), None) => assert_eq!(v, b"velho", "passo {passo}"),
+                (None, Some(v)) => {
+                    assert!(v == b"velho" || v == b"novo", "passo {passo}");
+                    viu_velho_no_novo |= v == b"velho";
+                    if r.is_ok() {
+                        assert_eq!(v, b"novo", "passo {passo}");
+                    }
+                }
+                _ => panic!("passo {passo}: x={x:?} y={y:?}"),
+            }
+            let done = dir.path().join("p/tasks/archived/done");
+            let tmps = if done.is_dir() { ls(&done) } else { Vec::new() };
+            assert!(tmps.iter().all(|n| !n.contains(".freitask.")), "{tmps:?}");
+        }
+        assert!(viu_velho_no_novo, "alguma falha cai depois do rename");
+    }
+
+    #[test]
+    fn mover_recusa_origem_mudada_e_destino_ocupado() {
+        let dir = tempfile::tempdir().unwrap();
+        let de = dir.path().join("x.md");
+        let para = dir.path().join("y.md");
+        std::fs::write(&de, b"outro").unwrap();
+        let e = mover(&Real, &de, &para, b"lido").unwrap_err();
+        assert!(matches!(&e, ErroEscrita::Conflito(p) if p == &de));
+        std::fs::write(&para, b"ocupado").unwrap();
+        let e = mover(&Real, &de, &para, b"outro").unwrap_err();
+        assert!(matches!(&e, ErroEscrita::Conflito(p) if p == &para));
+        assert_eq!(e.codigo(), 3);
+        assert_eq!(std::fs::read(&de).unwrap(), b"outro");
+        assert_eq!(std::fs::read(&para).unwrap(), b"ocupado");
+        std::fs::remove_file(&para).unwrap();
+        let sub = dir.path().join("sub");
+        std::fs::create_dir(&sub).unwrap();
+        mover(&Real, &de, &sub.join("z.md"), b"outro").unwrap();
+        assert_eq!(ls(dir.path()), ["sub"]);
+        assert_eq!(std::fs::read(sub.join("z.md")).unwrap(), b"outro");
+        let e = mover(&Real, &de, &para, b"outro").unwrap_err();
+        assert!(
+            matches!(&e, ErroEscrita::Conflito(p) if p == &de),
+            "sumiu: conflito"
+        );
+        let e = mover(
+            &Real,
+            &sub.join("z.md"),
+            &dir.path().join("nao/w.md"),
+            b"outro",
+        )
+        .unwrap_err();
+        assert!(matches!(&e, ErroEscrita::Io(..)));
+        assert_eq!(e.codigo(), 1);
     }
 
     #[test]

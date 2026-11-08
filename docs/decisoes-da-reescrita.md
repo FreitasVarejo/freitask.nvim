@@ -170,6 +170,45 @@ na seção "Testes reavaliados".
     D2, não muda em fatia nenhuma, e faria o diferencial completo da fatia 8
     falhar. Um subagente novo reavalia a entrada contra a spec.
 
+## Fatia 4
+
+33. **O plano de um deslocamento é `CriarDir` (se falta), `Mover`, a
+    gravação do conteúdo novo no endereço novo e uma gravação por nota que
+    cita a task**, nessa ordem, como hoje (arquivo primeiro, links depois,
+    §1.5). `Mover` é um `renameat2(RENAME_NOREPLACE)` com CAS contra os bytes
+    lidos; num sistema de arquivos sem `NOREPLACE`, `link` + `unlink` (o
+    `link` também recusa destino que existe). A gravação seguinte faz CAS
+    contra os mesmos bytes, já no nome novo: uma falha entre as duas deixa o
+    conteúdo antigo com o nome novo (`rename_e_atomico`, `59875bf`), que o
+    `doctor` acusa como `bloco-dessincronizado`.
+34. **As notas em que se procuram referências são os `.md` não ocultos do
+    vault, menos `daily/`, `CURRENT.md` (o `ref_candidates` de hoje),
+    `*.sync-conflict-*` (I7) e symlink.** Symlink fica de fora porque
+    regravar por cima dele com `rename` o trocaria por um arquivo comum; o
+    `glob()` de hoje o seguia. Nenhum corpus do diferencial tem symlink.
+35. **Link em frontmatter continua sendo reescrito, como hoje.** A spec §1.4
+    diz "frontmatter fica fora do scanner", mas não há entrada em
+    `divergencias.toml` para isso e o aceite da fatia 4 o deixou de fora. O
+    vault real tem 530 wikilinks curtos em frontmatter de 172 notas
+    (`related:` de ADRs e reviews, alguns com id de task): tirá-los do
+    scanner faria o `rename` deixá-los pendurados. Fica a paridade até o
+    dono decidir.
+36. **I1, I2 e I5 rodam no crate `vault`** (`tests/deslocamentos.rs`), sobre
+    vaults do gerador gravados num diretório temporário, com os planos do
+    `core` e o executor de verdade. I5 vale para task com bloco canônico e
+    sem `id:` de frontmatter diferente do nome do arquivo: o primeiro
+    deslocamento reserializa o bloco e alinha o `id:`, como hoje (é o que o
+    `doctor --fix` faria). Conferido que as duas propriedades falham com a
+    reescrita de referências desligada e com uma linha do corpo apagada.
+37. **Reavaliação pedida: D1 e D5 não cobrem o aviso em stderr.** No
+    diferencial, `archive`, `unarchive`, `rename` e `move` imprimem
+    `N referência(s) atualizada(s) em M arquivo(s)` com N e M diferentes do
+    oráculo quando a task é citada em tabela (D1: o novo reescreve, o
+    oráculo não) ou em código (D5: o contrário). O `onde` das duas não
+    inclui `stderr`, e o `cenario` da D5 não inclui
+    `patologico-link-em-codigo::escrita-existente`. Os arquivos ficam iguais
+    no fim, a menos de D4. Um subagente novo reavalia as duas entradas.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
@@ -179,3 +218,18 @@ na seção "Testes reavaliados".
   proposto, porque o oráculo só grava um `.md` direto em `daily/`) e o
   `motivo` passou a dizer que o oráculo regenera o painel. O `cenario` segue
   limitado a `::ponto-e-ponto-ponto$`. Hash regravado no mesmo commit.
+- **D1 e D5 (`divergencias.toml`), fatia 4.** Pedido na entrada 37.
+  Veredito do subagente reavaliador: procede com ajuste. Ele refez as
+  trajetórias do oráculo e do novo passo a passo, e os 26 avisos fora da
+  lista vêm só de link em tabela (D1) e em código (D5). Mudanças: as duas
+  entradas ganharam `stderr` no `onde`, e o `detalhe` ganhou só os dois
+  formatos medidos do aviso, sem aceitar "1 linhas em A, 0 em B" (que
+  esconderia um aviso perdido); o `cenario` da D5 ficou `::codigo$`, porque
+  a alternativa `escrita-existente` sempre caía na D1, que vem antes com o
+  mesmo `onde`; o `teste` da D5 continua vazio, porque o aceite da fatia 0
+  exige o nome da tabela §3.7, que não tem linha para a D5. Rodado com a
+  lista nova: 26 diferenças a menos fora da lista e nenhuma a mais. Hash
+  regravado no mesmo commit. O reavaliador também achou um bug fora da
+  lista: crase sem par escondia o resto da linha da reescrita, e o `doctor`
+  de hoje só pula crases em par. Corrigido no scanner (`links::scan_linha`),
+  com teste; o vault real tem 11 linhas assim.
