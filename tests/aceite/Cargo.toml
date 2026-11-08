@@ -46,3 +46,7 @@ path = "f2-leitura/main.rs"
 [[test]]
 name = "f3-escrita"
 path = "f3-escrita/main.rs"
+
+[[test]]
+name = "f4-deslocamentos"
+path = "f4-deslocamentos/main.rs"
