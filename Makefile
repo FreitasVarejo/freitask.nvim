@@ -53,8 +53,11 @@ diff-oraculo:
 	cargo run -q -p diferencial -- --oraculo-vs-oraculo $(DIFF_ARGS)
 
 ## mutantes    cargo mutants no workspace (limiar: 0 missed em core; catraca no resto)
+# TMPDIR em target/: o cargo-mutants copia a árvore para um temporário, e o
+# /tmp desta máquina tem cota pequena (medido: "Disk quota exceeded").
 mutantes: build
-	cargo mutants --workspace --jobs 4 --output target/mutants $(MUTANTS_ARGS)
+	mkdir -p target/tmp
+	TMPDIR=$(CURDIR)/target/tmp cargo mutants --workspace --jobs 4 --output target/mutants $(MUTANTS_ARGS)
 	scripts/mutantes.sh --conferir
 
 ## portoes     tudo acima + hash de tests/aceite + catraca; grava PORTOES.md

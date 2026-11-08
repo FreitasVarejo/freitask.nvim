@@ -112,6 +112,21 @@ fn comuns() -> Vec<(&'static str, Vec<Vec<String>>)> {
             ],
         ),
         (
+            "kebab-e-statuses",
+            vec![
+                p(&["kebab", "Ávida Revisão_final"]),
+                p(&["kebab", "  foo   bar  "]),
+                p(&["kebab", "Fix: the thing!"]),
+                p(&["kebab", "!!!"]),
+                p(&["kebab"]),
+                p(&["statuses"]),
+                p(&["statuses", "--json"]),
+                p(&["help"]),
+                p(&[]),
+                p(&["comando-desconhecido"]),
+            ],
+        ),
+        (
             "doctor",
             vec![
                 p(&["doctor"]),

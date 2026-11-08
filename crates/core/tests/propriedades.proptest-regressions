@@ -1,0 +1,7 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc 957b19e0c3e23a36a22d694833e77b7e50cf737c518ce693f9b5778ee3ea6c29 # shrinks to pares = {"a": " "}, alheia = "aaa"

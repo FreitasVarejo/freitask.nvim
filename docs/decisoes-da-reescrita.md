@@ -72,3 +72,45 @@ na seção "Testes reavaliados".
     sentido ainda, e não há produção para mutar.
 12. **Fatia 0 fecha sem `make mutantes`.** As crates de produção estão vazias
     (não há mutante possível); o alvo passa a rodar a partir da fatia 1.
+
+## Fatia 1
+
+15. **O usage de `freitask help` fica byte a byte o de hoje; `show`, `version` e
+    `help --json` não entram nele.** A spec (§2.1) diz "o usage de hoje" e o
+    diferencial compara o `help` em texto; acrescentar linhas quebraria a
+    paridade sem entrada em `divergencias.toml` (D10 cobre só o que tem cara de
+    comando novo). Os três estão em `docs/freitask.md`, em `freitask <sub>
+    --help` (`usage::EXTRAS`) e na gramática de `help --json`.
+16. **`kebab` aceita texto que começa com `-`.** O aceite da fatia 1 pede
+    `freitask kebab "--foo--bar--"` → `foo-bar`, caso que o Lua recusava por
+    acidente (o `parse_flags` tratava o texto como flag). Não há flag em
+    `kebab` além de `--help`, então o posicional ganha `allow_hyphen_values`, e
+    `--help`/`-h` continuam sendo ajuda por uma checagem explícita no
+    subcomando. Nenhum cenário do diferencial passa texto assim.
+17. **`FREITASK_TODAY` inválida é erro de uso (saída 2) em qualquer comando.**
+    A variável é lida uma vez em `cli::run`; aceitar em silêncio um valor que
+    não é data faria o painel sair com o dia errado sem aviso.
+18. **`bloqueada-por` é gravada crua, sem aspas.** O `yaml_scalar` de hoje põe
+    aspas em valor que começa com `[`, o que faria `[a, b]` virar a string
+    `"[a, b]"` para o Obsidian. `md::set_frontmatter_com(.., citar=false)`
+    grava a lista como lista; as outras chaves seguem pelo `yaml_scalar`.
+19. **Mensagens de erro do clap só onde o Lua não tinha mensagem própria.** Os
+    posicionais são `Option` e a CLI emite as mensagens de hoje (`falta o
+    texto`, `falta o projeto`…); flags com valor têm `num_args = 0..=1` para
+    que `--volta-em` sozinho vire `falta o valor de --volta-em`, como hoje.
+    Flag desconhecida e argumento a mais ficam com a mensagem do clap (spec
+    §2.1).
+
+## Fatia 2
+
+20. **Rascunho corrigido antes de congelar: `desc` ausente é `""`, não `null`.**
+    O autor do aceite da fatia 2 decidiu `null`; o JSON de hoje (medido no
+    oráculo) emite `"desc": ""`, e a spec §2.2 exige a mesma forma. A correção
+    foi pedida ao próprio autor enquanto o rascunho ainda não estava congelado
+    (a tag `aceite/f2-leitura` sela só depois); fica registrada aqui por
+    transparência, com o motivo.
+21. **Comandos que escrevem (`new`, `set`, `rebuild`, …) criam `projects/` e
+    `.freitask/status.json` quando faltam, como o `ensure_root` de hoje.** A
+    leitura pura (I6, D7) é só das leituras e do `doctor` sem `--fix`; o
+    `rebuild` é escrita, o oráculo cria os dois, e nenhuma entrada de
+    `divergencias.toml` cobre um `rebuild` que não os crie. Paridade.
