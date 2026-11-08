@@ -186,13 +186,14 @@ na seção "Testes reavaliados".
     `*.sync-conflict-*` (I7) e symlink.** Symlink fica de fora porque
     regravar por cima dele com `rename` o trocaria por um arquivo comum; o
     `glob()` de hoje o seguia. Nenhum corpus do diferencial tem symlink.
-35. **Link em frontmatter continua sendo reescrito, como hoje.** A spec §1.4
-    diz "frontmatter fica fora do scanner", mas não há entrada em
-    `divergencias.toml` para isso e o aceite da fatia 4 o deixou de fora. O
-    vault real tem 530 wikilinks curtos em frontmatter de 172 notas
-    (`related:` de ADRs e reviews, alguns com id de task): tirá-los do
-    scanner faria o `rename` deixá-los pendurados. Fica a paridade até o
-    dono decidir.
+35. **Link em frontmatter é link de verdade e se reescreve** (decisão do
+    dono, 2026-11-08). `archive`, `rename` e `move` reescrevem `[[…]]` no
+    frontmatter das outras notas, como o Obsidian faz no rename dele, e não
+    por paridade com o Lua. A spec §1.4 ("frontmatter fica fora do scanner")
+    contraria isso: com ela, o `rename` deixaria pendurados os wikilinks
+    curtos de frontmatter (530 em 172 notas no vault real, `related:` de ADRs
+    e reviews). Emenda da §1.4 pendente, a cargo do dono (a spec mora no
+    vault). Sem divergência: o oráculo faz o mesmo.
 36. **I1, I2 e I5 rodam no crate `vault`** (`tests/deslocamentos.rs`), sobre
     vaults do gerador gravados num diretório temporário, com os planos do
     `core` e o executor de verdade. I5 vale para task com bloco canônico e
