@@ -114,3 +114,25 @@ na seção "Testes reavaliados".
     leitura pura (I6, D7) é só das leituras e do `doctor` sem `--fix`; o
     `rebuild` é escrita, o oráculo cria os dois, e nenhuma entrada de
     `divergencias.toml` cobre um `rebuild` que não os crie. Paridade.
+22. **`list`, `show` e `projects` não criam nada, e o oráculo também não.**
+    Medido no `cli.lua`: só `doctor`, `new`, `new-project`, `rebuild`,
+    `encerrar` e `reabrir` chamam `ensure_root`. Por isso D7 só se exercita
+    nos cenários de `doctor` (fatia 5), não nas leituras.
+23. **Regras dos campos novos do `list --json`.** `historico`: as linhas
+    `- AAAA-MM-DD — …` da última seção `## Histórico` (a mesma que o
+    `append_entry` usa), até a próxima `## seção`. `checklist`: itens `- [ ]`,
+    `- [x]`/`- [X]` das linhas depois do bloco (um item dentro do bloco é
+    nota). `notes`: as linhas 4+ do bloco sem o `> `, como o parser já lê.
+    Arquivo em `tasks/` sem callout entra no `list` com `status_num` 0,
+    `title` e `desc` vazios e `callout` do sentinela (`invalid`), como hoje.
+24. **Os testes da seção "As dores" (§3.7) moram na pasta da fatia que os
+    cobre, com o nome da tabela**, não num `tests/aceite/dores.rs` único: um
+    arquivo só não poderia ser congelado por fatia. O relatório final lista
+    onde cada um está.
+25. **A rodada de mutação da fatia 1 completou apesar da cota de disco.** O
+    `cargo mutants` copia a árvore para `$TMPDIR`; o `/tmp` desta máquina é
+    tmpfs com cota, e um worker morreu na cópia com "Disk quota exceeded"
+    (saída 2 do comando), mas os outros cobriram os 642 mutantes planejados:
+    619 mortos, 23 inviáveis, **0 sobreviventes** (`missed.txt` vazio), em
+    `core`, `vault` e no binário. O `Makefile` passou a apontar `TMPDIR` para
+    `target/tmp` para a próxima rodada não depender do `/tmp`.

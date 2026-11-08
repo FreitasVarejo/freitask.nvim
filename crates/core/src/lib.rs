@@ -8,8 +8,11 @@
 //! porque a responsabilidade de cada um já está justificada lá; o que muda é a
 //! linguagem e a fronteira com o disco.
 
+pub mod board;
 pub mod config;
 pub mod date;
+pub mod deps;
+pub mod index;
 pub mod links;
 pub mod md;
 pub mod meta;

@@ -772,6 +772,7 @@ name = "freitask-vault"
 version = "2.0.0"
 dependencies = [
  "freitask-core",
+ "gerador",
  "proptest",
  "rustix 1.1.6",
  "sha2",

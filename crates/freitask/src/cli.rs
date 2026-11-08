@@ -13,6 +13,7 @@ use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use freitask_core::date::Date;
 use freitask_vault::Vault;
 
+use crate::linhas;
 use crate::usage;
 
 #[derive(Parser, Debug)]
@@ -262,7 +263,7 @@ fn tui() -> ExitCode {
     die("a TUI ainda não foi portada (fatia 7)", 2)
 }
 
-fn despachar(cmd: Cmd, _hoje: Date) -> ExitCode {
+fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
     match cmd {
         Cmd::Help { json: false } => {
             println!("{}", usage::USAGE);
@@ -333,6 +334,144 @@ fn despachar(cmd: Cmd, _hoje: Date) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
+        Cmd::List { json, archived } => {
+            let vault = match Vault::do_home() {
+                Ok(v) => v,
+                Err(e) => return die(&e, 2),
+            };
+            let (vocab, aviso) = vault.vocab();
+            if let Some(a) = aviso {
+                eprintln!("{a}");
+            }
+            let indice = vault.indice(&vocab);
+            let linhas = linhas::todas(&indice, archived);
+            if json {
+                let rows: Vec<serde_json::Value> = linhas
+                    .iter()
+                    .map(|e| linhas::linha(&vault, &vocab, &indice, e, hoje))
+                    .collect();
+                say(&serde_json::Value::Array(rows).to_string());
+            } else {
+                let mut out = String::new();
+                for e in &linhas {
+                    out.push_str(&linhas::texto(&vocab, e));
+                    out.push('\n');
+                }
+                print!("{out}");
+                let _ = std::io::stdout().flush();
+            }
+            ExitCode::SUCCESS
+        }
+        Cmd::Show { referencia, json } => {
+            let Some(referencia) = referencia else {
+                return die("falta o id ou caminho da task", 2);
+            };
+            let vault = match Vault::do_home() {
+                Ok(v) => v,
+                Err(e) => return die(&e, 2),
+            };
+            let (vocab, aviso) = vault.vocab();
+            if let Some(a) = aviso {
+                eprintln!("{a}");
+            }
+            let indice = vault.indice(&vocab);
+            let rel = match vault.find_task(&indice, &referencia) {
+                Ok(r) => r,
+                Err(e) => return die(&e, 1),
+            };
+            let Some(e) = indice.por_rel(&rel) else {
+                return die(
+                    &format!("não é um arquivo de task: {}", vault.caminho_str(&rel)),
+                    1,
+                );
+            };
+            let ciclo = freitask_core::deps::ciclo(&indice, &e.task_id);
+            if json {
+                let mut v = linhas::linha(&vault, &vocab, &indice, e, hoje);
+                v["ciclo"] = serde_json::json!(ciclo);
+                say(&v.to_string());
+            } else {
+                let mut out = String::new();
+                for l in &e.block {
+                    out.push_str(l);
+                    out.push('\n');
+                }
+                let deps = freitask_core::deps::dependencias(&indice, e);
+                if !e.meta.bloqueada_por.is_empty() {
+                    out.push_str(&format!(
+                        "bloqueada por: {}\n",
+                        e.meta.bloqueada_por.join(", ")
+                    ));
+                }
+                if !deps.bloqueia.is_empty() {
+                    out.push_str(&format!(
+                        "bloqueia: {} ({})\n",
+                        deps.bloqueia.len(),
+                        deps.bloqueia.join(", ")
+                    ));
+                }
+                if let Some(p) = &e.meta.prazo {
+                    match freitask_core::meta::dias_para_o_prazo(&e.meta, hoje) {
+                        Some(d) if d < 0 => {
+                            out.push_str(&format!("prazo: {p} (vencido há {} dias)\n", -d))
+                        }
+                        Some(d) => out.push_str(&format!("prazo: {p} (em {d} dias)\n")),
+                        None => out.push_str(&format!("prazo: {p} (inválido)\n")),
+                    }
+                }
+                print!("{out}");
+                let _ = std::io::stdout().flush();
+            }
+            if let Some(c) = ciclo {
+                eprintln!("CICLO: {}", c.join(" → "));
+                return ExitCode::from(1);
+            }
+            ExitCode::SUCCESS
+        }
+        Cmd::Projects { json } => {
+            let vault = match Vault::do_home() {
+                Ok(v) => v,
+                Err(e) => return die(&e, 2),
+            };
+            let (vocab, aviso) = vault.vocab();
+            if let Some(a) = aviso {
+                eprintln!("{a}");
+            }
+            let indice = vault.indice(&vocab);
+            let rows: Vec<(String, usize)> = indice
+                .projetos
+                .iter()
+                .map(|p| (p.clone(), indice.mostradas(&vocab, p, hoje)))
+                .collect();
+            if json {
+                let v: Vec<serde_json::Value> = rows
+                    .iter()
+                    .map(|(p, n)| serde_json::json!({ "project": p, "active": n }))
+                    .collect();
+                say(&serde_json::Value::Array(v).to_string());
+            } else {
+                let mut out = String::new();
+                for (p, n) in &rows {
+                    out.push_str(&format!("{} {n}\n", freitask_core::pad_bytes(p, 14)));
+                }
+                print!("{out}");
+                let _ = std::io::stdout().flush();
+            }
+            ExitCode::SUCCESS
+        }
+        Cmd::Rebuild => {
+            let vault = match Vault::do_home() {
+                Ok(v) => v,
+                Err(e) => return die(&e, 2),
+            };
+            match rebuild(&vault, hoje) {
+                Ok(()) => {
+                    say(&vault.caminho_str("CURRENT.md"));
+                    ExitCode::SUCCESS
+                }
+                Err(e) => die(&e, 1),
+            }
+        }
         Cmd::Tui => tui(),
         Cmd::Current => die("`current` ainda não foi portado (fatia 6)", 2),
         Cmd::Outro(args) => {
@@ -350,6 +489,33 @@ fn despachar(cmd: Cmd, _hoje: Date) -> ExitCode {
             2,
         ),
     }
+}
+
+/// Regenera o `CURRENT.md`: garante a raiz (como o `ensure_root` de hoje),
+/// relê o vocabulário e o índice, arquiva o painel de outro dia em `daily/`
+/// e grava o novo só se mudou (§1.5).
+pub fn rebuild(vault: &Vault, hoje: Date) -> Result<(), String> {
+    vault
+        .garantir_raiz()
+        .map_err(|e| format!("não consegui preparar o vault: {e}"))?;
+    let (vocab, aviso) = vault.vocab();
+    if let Some(a) = aviso {
+        eprintln!("{a}");
+    }
+    let indice = vault.indice(&vocab);
+    let anterior = vault.ler("CURRENT.md");
+    let painel = freitask_core::board::render(&vocab, &indice, hoje, anterior.as_deref());
+    if let Some((rel, bytes)) = &painel.daily
+        && !vault.existe(rel)
+    {
+        vault
+            .escrever_se_mudou(rel, bytes)
+            .map_err(|e| format!("não consegui escrever {rel}: {e}"))?;
+    }
+    vault
+        .escrever_se_mudou("CURRENT.md", &painel.bytes)
+        .map_err(|e| format!("não consegui escrever CURRENT.md: {e}"))?;
+    Ok(())
 }
 
 fn nome_do(cmd: &Cmd) -> &'static str {

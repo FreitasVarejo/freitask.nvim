@@ -10,7 +10,7 @@
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
-dir=target/mutants
+dir=target/mutants/mutants.out
 baseline=tests/aceite/mutantes.baseline
 missed="$dir/missed.txt"
 

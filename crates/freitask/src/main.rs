@@ -4,6 +4,7 @@
 //! executa o Neovim no `CURRENT.md`; o resto é a CLI (`cli.rs`).
 
 mod cli;
+mod linhas;
 mod usage;
 
 use std::process::ExitCode;

@@ -1,0 +1,5 @@
+# Catraca de mutação (spec §3.6). Gravado por scripts/mutantes.sh --gravar.
+# Cada sobrevivente fora do core fica listado; linhas 'justificado: <mutante> -- <porquê>'
+# explicam os que não valem um teste. O auditor lê as justificativas.
+resto_missed 0
+core_missed 0
