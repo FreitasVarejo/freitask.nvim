@@ -34,3 +34,7 @@ expect_used = "allow"
 [[test]]
 name = "f0-fundacao"
 path = "f0-fundacao/main.rs"
+
+[[test]]
+name = "f1-core"
+path = "f1-core/main.rs"
