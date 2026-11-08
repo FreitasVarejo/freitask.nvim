@@ -1,3 +1,5 @@
 .luarc.json
 tags
 /tui/target/
+/target/
+/.aceite-rascunho/

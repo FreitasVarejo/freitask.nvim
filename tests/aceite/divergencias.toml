@@ -1,0 +1,95 @@
+# Divergências aprovadas entre o binário novo e o oráculo Lua (spec §3.4,
+# tabela D1–D10). Formato: tests/diferencial/README.md. Regex em string
+# literal ('…') para não escapar duas vezes.
+#
+# A primeira entrada que casa (cenario, onde e, se houver, detalhe) cobre a
+# diferença, então a ordem importa: as entradas vêm da mais específica para a
+# mais larga. D10 fica antes de D8 porque os dois dividem o cenário
+# `help-por-subcomando`: D10 casa só o que tem a cara dos comandos novos
+# (`só B é JSON`, `version`, `show`, `--json` na mensagem do oráculo) e D8 fica
+# com o resto do cenário (`<sub> --help`, `-h`).
+#
+# Formas que o harness produz (tests/diferencial/src/comparar.rs):
+#   onde:    codigo | stdout | stderr | json:<ponteiro RFC 6901> | arquivo:<rel ao vault>
+#   detalhe: "A=1 B=0" (codigo) · "linha N: A=\"…\" B=\"…\"" · "N linhas em A, M em B; …"
+#            "só A é JSON" / "só B é JSON" (stdout) · "só em A: …" / "só em B: …" (json)
+#            "tamanho A=N B=M" (array) · "só em A" / "só em B" / "bytes diferentes" (arquivo)
+
+[[divergencia]]
+id = "D1"
+motivo = "`archive`, `move` e `rename` passam a reescrever `[[…\\|alias]]` dentro de tabela (bug medido em §0; o `retarget_prefix` já fazia certo). A nota com tabela fica com bytes diferentes e o `doctor` do oráculo acusa `link-pendurado` (array `findings` maior, `ok=false`, saída 1) onde o novo não acusa nada."
+teste = "link_em_tabela_acompanha_o_archive_o_move_e_o_rename"
+cenario = '::(tabela|escrita-existente)$'
+onde = '^(arquivo:.*\.md|json:/(ok|findings(/\d+(/\w+)?)?)|codigo)$'
+detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^tamanho A=\d+ B=\d+$|link-pendurado'
+
+[[divergencia]]
+id = "D2"
+motivo = "`new`, `new-project` e `move` recusam `.` e `..` como projeto (saída 1, mensagem de reservado). O oráculo aceita e grava `tasks/<id>.md` na raiz do vault e `projects/..`; depois disso `doctor --json` e `list --json` enxergam coisas diferentes."
+teste = "ponto_e_ponto_ponto_nao_sao_projeto"
+cenario = '::ponto-e-ponto-ponto$'
+onde = '^(codigo|stdout|stderr|json:/.*|arquivo:((tasks|projects)(/.*)?|[^/]+\.md))$'
+
+[[divergencia]]
+id = "D3"
+motivo = "`encerrar` recusa projeto com `*.sync-conflict-*` ou arquivo fora do padrão em `tasks/`, listando-os (bug medido; regra do AGENTS.md do vault). O oráculo move `projects/c` para `projects/_encerrados/c` mesmo assim; o novo sai 1 e não move, e o `doctor`/`list` seguintes refletem a árvore diferente."
+teste = "encerrar_recusa_sync_conflict_e_fora_do_padrao"
+cenario = '::encerrar-com-conflito$'
+onde = '^(codigo|stdout|stderr|json:/.*|arquivo:projects/(c|_encerrados(/c)?)(/.*)?)$'
+
+[[divergencia]]
+id = "D4"
+motivo = "CRLF, BOM e ausência de `\\n` final são preservados: bytes que o comando não devia tocar. O oráculo reserializa o arquivo em LF, sem BOM e com `\\n` final; o novo só troca o trecho que o comando pediu. Aparece como `bytes diferentes` em task (inclusive depois de `archive`) e, se o oráculo deixar `\\r` escapar num campo, no JSON."
+teste = "crlf_sobrevive_ao_set"
+cenario = '::set-preserva-bytes$|^(sintetico-\d+|real)::(escrita-existente|doctor-fix|fix-idempotente|rebuild)$'
+onde = '^(arquivo:.*\.md|json:/\d+/(title|desc))$'
+detalhe = '^bytes diferentes$|\\r'
+
+[[divergencia]]
+id = "D5"
+motivo = "Link dentro de bloco cercado (```) ou de crases não é reescrito por `archive`, `rename` e `move`: a regra que o `doctor` já aplica vale para a reescrita. O oráculo reescreve dentro de código; a nota fica com bytes diferentes, e o `doctor --json` pode divergir em `ok`/`findings`."
+teste = ""
+cenario = '::codigo$|^(sintetico-\d+|real)::escrita-existente$'
+onde = '^(arquivo:.*\.md|json:/(ok|findings(/\d+(/\w+)?)?)|codigo)$'
+detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^tamanho A=\d+ B=\d+$|link-pendurado'
+
+[[divergencia]]
+id = "D6"
+motivo = "`rebuild` e qualquer escrita sem mudança não gravam (§1.5): o mtime fica igual. O manifesto do diferencial compara sha256 dos bytes, não mtime, então o harness não enxerga esta divergência; fica registrada e o teste próprio a fixa."
+teste = "rebuild_sem_mudanca_nao_grava"
+cenario = '::rebuild$'
+onde = '^arquivo:CURRENT\.md$'
+detalhe = 'mtime'
+observavel = false
+
+[[divergencia]]
+id = "D7"
+motivo = "`doctor` sem `--fix` e as leituras (`list`, `projects`, `statuses`, `kebab`, `help`) são leitura pura (I6): não criam `projects/` nem `.freitask/status.json`. O oráculo cria os dois ao abrir o vault (`check.sh` desvia disso à mão hoje); no manifesto aparecem `só em A`."
+teste = "doctor_sem_fix_nao_cria_nada"
+cenario = '::(leituras|doctor|leitura-pura-sem-vault)$'
+onde = '^arquivo:(projects|\.freitask(/status\.json)?)$'
+detalhe = '^só em A$'
+
+[[divergencia]]
+id = "D10"
+motivo = "Adições que o oráculo não tem: `new --json`, `show [--json]`, `version [--json]`, `help --json`, os campos novos do `list --json` (`notes`, `historico`, `checklist`, `bloqueada_por`, `bloqueada`, `bloqueia`, `prazo`, `dias_para_o_prazo`; `ciclo` no `show`), os kinds novos do `doctor` (`temporario-orfao`, `dependencia-pendurada`, `dependencia-ciclica`, `prazo-invalido`, `prazo-antes-da-volta`) e a saída 3 (conflito de escrita ou lock). No JSON aparecem como `só em B`; em `help-por-subcomando`, o oráculo recusa o comando ou a flag que não conhece (stderr com o nome) ou imprime texto onde o novo imprime JSON, e a task criada por `new --json` existe só em B."
+teste = "new_json_devolve_caminho_projeto_e_id"
+cenario = '.*'
+onde = '^(json:(/\d+)?/(notes|historico|checklist|bloqueada_por|bloqueada|bloqueia|prazo|dias_para_o_prazo|ciclo)|json:/findings(/\d+(/\w+)?)?|codigo|stdout|stderr|arquivo:projects/[^/]+/tasks/diff-json\.md)$'
+detalhe = '^só em B|temporario-orfao|dependencia-pendurada|dependencia-ciclica|prazo-invalido|prazo-antes-da-volta|^A=\d+ B=3$|^só B é JSON$|"freitask: [^"]*(version|show|--json)'
+
+[[divergencia]]
+id = "D8"
+motivo = "`<sub> --help` e `<sub> -h` imprimem o trecho do usage do subcomando e saem 0, sem abrir o vault. Hoje o oráculo executa o subcomando (`doctor --help` roda o doctor) ou falha por falta de argumento (saída 2, mensagem em stderr). Neste cenário também ficam aqui as saídas dos comandos novos que D10 não casou pelo detalhe."
+teste = "help_por_subcomando_nao_executa"
+cenario = '::help-por-subcomando$'
+onde = '^(codigo|stdout|stderr)$'
+
+[[divergencia]]
+id = "D9"
+motivo = "Chaves do JSON em ordem alfabética (`serde_json` sem `preserve_order`); o oráculo sai na ordem do `pairs()`. O harness decodifica o JSON e compara como valor, então nunca enxerga esta divergência; nenhum consumidor depende da ordem."
+teste = ""
+cenario = '.*'
+onde = '^stdout$'
+detalhe = 'ordem das chaves'
+observavel = false

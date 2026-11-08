@@ -1,0 +1,17 @@
+[package]
+name = "gerador"
+description = "Vaults sintéticos e patológicos, determinísticos, para o diferencial e as propriedades"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[dependencies]
+
+[lints.clippy]
+unwrap_used = "allow"
+expect_used = "allow"

@@ -1,0 +1,53 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/core",
+  "crates/vault",
+  "crates/freitask",
+  "tests/aceite",
+  "tests/gerador",
+  "tests/diferencial",
+]
+
+[workspace.package]
+version = "2.0.0"
+edition = "2024"
+# O stable do dia em que a reescrita começou (08/11/2026). O setup.sh do
+# dotfiles instala o rustup onde o cargo da distro for mais velho que isto.
+rust-version = "1.99"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+freitask-core = { path = "crates/core" }
+freitask-vault = { path = "crates/vault" }
+gerador = { path = "tests/gerador" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+rustix = { version = "1", features = ["fs"] }
+ratatui = "0.29"
+toml = "1"
+regex = "1"
+insta = "1"
+proptest = "1"
+proptest-state-machine = "0.9"
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+jsonschema = "0.60"
+portable-pty = "0.9"
+vt100 = "0.15"
+
+# `unwrap`/`expect` fora de `#[cfg(test)]` são proibidos (spec §3, `make check`):
+# cada crate de produção herda estes lints; os módulos de teste os liberam com
+# `#![allow(clippy::unwrap_used, clippy::expect_used)]`.
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+
+[profile.dev]
+# Testes de propriedade e o diferencial rodam o binário centenas de vezes.
+opt-level = 1

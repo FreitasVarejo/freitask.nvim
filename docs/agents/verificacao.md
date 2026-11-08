@@ -6,6 +6,7 @@ porquê de cada portão estão em `docs/freitask-internals.md`, "Ao mexer".
 
 ```portoes
 *                     tests/run.sh
+Cargo.*|crates/**|tests/**/*.rs|Makefile|scripts/**  make check && make test
 lua/**|tests/**       luacheck lua tests
 tui/**                cd tui && cargo test
 tui/**                cd tui && cargo fmt --check && cargo clippy --all-targets -- -D warnings

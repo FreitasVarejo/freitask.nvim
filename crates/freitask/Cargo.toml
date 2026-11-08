@@ -1,0 +1,32 @@
+[package]
+name = "freitask"
+description = "CLI e TUI do freitask: gestão de tasks em Markdown sobre o vault do Obsidian"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "freitask"
+path = "src/main.rs"
+
+[dependencies]
+freitask-core = { workspace = true }
+freitask-vault = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+clap = { workspace = true }
+chrono = { workspace = true }
+ratatui = { workspace = true }
+
+[dev-dependencies]
+insta = { workspace = true }
+proptest = { workspace = true }
+tempfile = { workspace = true }
+portable-pty = { workspace = true }
+vt100 = { workspace = true }
+gerador = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,29 @@
+{
+  "permissions": {
+    "deny": [
+      "Edit(tests/aceite/**)",
+      "Write(tests/aceite/**)",
+      "MultiEdit(tests/aceite/**)",
+      "NotebookEdit(tests/aceite/**)",
+      "Edit(**/snapshots/**)",
+      "Write(**/snapshots/**)",
+      "MultiEdit(**/snapshots/**)",
+      "Edit(tests/diferencial/goldens/**)",
+      "Write(tests/diferencial/goldens/**)",
+      "MultiEdit(tests/diferencial/goldens/**)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/scripts/trava-bash.sh"
+          }
+        ]
+      }
+    ]
+  }
+}
