@@ -9,9 +9,15 @@ use std::path::{Path, PathBuf};
 
 use freitask_core::config;
 use freitask_core::index::{self, Indice};
+use freitask_core::operacao::Visao;
+use freitask_core::plano::Efeito;
 use freitask_core::status::Vocab;
 
+pub mod disco;
 pub mod escrita;
+pub mod trava;
+
+pub use escrita::ErroEscrita;
 
 /// O vault em disco. Só guarda a raiz; cada operação lê o que precisa na hora.
 #[derive(Debug, Clone)]
@@ -180,32 +186,67 @@ impl Vault {
 
     /// Garante `projects/` e `.freitask/status.json`, como o `ensure_root` de
     /// hoje: só os comandos que escrevem chamam isto.
-    pub fn garantir_raiz(&self) -> std::io::Result<()> {
-        std::fs::create_dir_all(self.caminho("projects"))?;
-        let status = self.caminho(".freitask/status.json");
-        if !status.exists() {
-            std::fs::create_dir_all(self.caminho(".freitask"))?;
+    pub fn garantir_raiz(&self) -> Result<(), ErroEscrita> {
+        let projects = self.caminho("projects");
+        std::fs::create_dir_all(&projects).map_err(|e| ErroEscrita::Io(projects, e))?;
+        if !self.existe(".freitask/status.json") {
+            let dir = self.caminho(".freitask");
+            std::fs::create_dir_all(&dir).map_err(|e| ErroEscrita::Io(dir, e))?;
             // Com `\n` final, como o `writefile` de hoje grava (uma linha por elemento).
             let mut bytes = config::DEFAULT_STATUS_JSON.as_bytes().to_vec();
             bytes.push(b'\n');
-            escrita::escrever_atomico(&status, &bytes)?;
+            self.gravar(".freitask/status.json", None, &bytes)?;
         }
         Ok(())
     }
 
-    /// Grava `rel` só se o conteúdo mudou (§1.5): sem mudança, nem o mtime.
-    pub fn escrever_se_mudou(&self, rel: &str, bytes: &[u8]) -> std::io::Result<bool> {
+    /// Grava `rel` com CAS contra `antes` (o que foi lido; `None` se não
+    /// existia). Sem mudança, não grava nem toca o mtime (§1.5). Devolve se
+    /// gravou.
+    pub fn gravar(
+        &self,
+        rel: &str,
+        antes: Option<&[u8]>,
+        depois: &[u8],
+    ) -> Result<bool, ErroEscrita> {
         let destino = self.caminho(rel);
-        if let Ok(atual) = std::fs::read(&destino)
-            && atual == bytes
+        // A pasta que falta nasce junto (o `daily/` do primeiro snapshot).
+        if antes != Some(depois)
+            && let Some(pai) = destino.parent()
+            && !pai.is_dir()
         {
-            return Ok(false);
+            std::fs::create_dir_all(pai).map_err(|e| ErroEscrita::Io(pai.to_path_buf(), e))?;
         }
-        if let Some(pai) = destino.parent() {
-            std::fs::create_dir_all(pai)?;
-        }
-        escrita::escrever_atomico(&destino, bytes)?;
-        Ok(true)
+        escrita::gravar(&disco::Real, &destino, antes, depois)
+    }
+
+    /// Executa um plano do `core` no disco de verdade.
+    pub fn aplicar(&self, plano: &[Efeito]) -> Result<(), ErroEscrita> {
+        escrita::aplicar(&disco::Real, &self.raiz, plano)
+    }
+
+    /// Toma o lock de escrita (spec §1.5), do `$XDG_RUNTIME_DIR` ou do
+    /// `~/.local/state`, esperando até `trava::ESPERA`.
+    pub fn travar() -> Result<trava::Trava, trava::ErroTrava> {
+        let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
+        let home = std::env::var("HOME").ok();
+        let Some(caminho) = trava::caminho(xdg.as_deref(), home.as_deref()) else {
+            return Err(trava::ErroTrava::Io(
+                PathBuf::from("freitask.lock"),
+                std::io::Error::other("nem XDG_RUNTIME_DIR nem HOME estão definidos"),
+            ));
+        };
+        trava::tomar(&caminho, trava::ESPERA)
+    }
+}
+
+impl Visao for Vault {
+    fn arquivo_existe(&self, rel: &str) -> bool {
+        self.caminho(rel).is_file()
+    }
+
+    fn dir_existe(&self, rel: &str) -> bool {
+        self.caminho(rel).is_dir()
     }
 }
 
@@ -316,16 +357,22 @@ mod tests {
     }
 
     #[test]
-    fn escrever_se_mudou_nao_toca_o_mtime_quando_igual() {
+    fn gravar_nao_toca_o_mtime_quando_igual_e_aplicar_executa_o_plano() {
         let dir = tempfile::tempdir().unwrap();
         let v = Vault::em(dir.path());
-        assert!(v.escrever_se_mudou("a/b.md", b"x").unwrap());
+        assert!(
+            v.gravar("a/b.md", None, b"x").unwrap(),
+            "cria a pasta que falta"
+        );
+        v.aplicar(&[Efeito::CriarDir { rel: "c/d".into() }])
+            .unwrap();
+        assert!(dir.path().join("c/d").is_dir());
         let m1 = std::fs::metadata(dir.path().join("a/b.md"))
             .unwrap()
             .modified()
             .unwrap();
         std::thread::sleep(std::time::Duration::from_millis(20));
-        assert!(!v.escrever_se_mudou("a/b.md", b"x").unwrap());
+        assert!(!v.gravar("a/b.md", Some(b"x"), b"x").unwrap());
         assert_eq!(
             std::fs::metadata(dir.path().join("a/b.md"))
                 .unwrap()
@@ -333,12 +380,28 @@ mod tests {
                 .unwrap(),
             m1
         );
-        assert!(v.escrever_se_mudou("a/b.md", b"y").unwrap());
+        assert!(v.gravar("a/b.md", Some(b"x"), b"y").unwrap());
         assert_eq!(std::fs::read(dir.path().join("a/b.md")).unwrap(), b"y");
         assert!(
             std::fs::read_dir(dir.path().join("a")).unwrap().count() == 1,
             "sem temporário sobrando"
         );
+        assert!(matches!(
+            v.gravar("a/b.md", Some(b"x"), b"z").unwrap_err(),
+            ErroEscrita::Conflito(_)
+        ));
+    }
+
+    #[test]
+    fn visao_distingue_arquivo_e_pasta() {
+        let dir = tempfile::tempdir().unwrap();
+        gerador::minimo().gravar(dir.path()).unwrap();
+        let v = Vault::em(dir.path());
+        assert!(v.arquivo_existe("projects/p/tasks/t1.md"));
+        assert!(!v.arquivo_existe("projects/p/tasks"));
+        assert!(v.dir_existe("projects/p/tasks"));
+        assert!(!v.dir_existe("projects/p/tasks/t1.md"));
+        assert!(!v.dir_existe("projects/nao"));
     }
 
     #[test]

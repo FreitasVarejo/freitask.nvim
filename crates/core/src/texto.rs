@@ -99,18 +99,39 @@ impl Doc {
         out
     }
 
-    /// Troca as linhas por `novas`, mantendo BOM, fim de linha dominante e a
-    /// presença do `\n` final. É o que toda operação de linhas usa para gravar:
-    /// o conteúdo muda, a forma do arquivo não.
+    /// Troca as linhas por `novas`, mantendo BOM, o fim de cada linha que
+    /// não mudou e a presença do `\n` final. É o que toda operação de linhas
+    /// usa para gravar: o conteúdo muda, a forma do arquivo não.
+    ///
+    /// As linhas iguais do começo e do fim (prefixo e sufixo comuns) guardam o
+    /// fim de linha que tinham; as do meio, que são as novas ou trocadas,
+    /// herdam o dominante. Assim um arquivo com fins misturados só muda nas
+    /// linhas que o comando tocou (I2).
     pub fn com_linhas(&self, novas: Vec<String>) -> Doc {
         let dominante = self.eol_dominante();
-        let eols = (0..novas.len())
-            .map(|i| self.eols.get(i).copied().unwrap_or(dominante))
+        let fim_de = |i: usize| self.eols.get(i).copied().unwrap_or(dominante);
+        let (n, m) = (self.lines.len(), novas.len());
+        let prefixo = self
+            .lines
+            .iter()
+            .zip(&novas)
+            .take_while(|(a, b)| a == b)
+            .count();
+        let cabe = n.min(m) - prefixo;
+        let sufixo = (0..cabe)
+            .take_while(|j| self.lines[n - 1 - j] == novas[m - 1 - j])
+            .count();
+        let eols = (0..m)
+            .map(|i| {
+                if i < prefixo {
+                    fim_de(i)
+                } else if i >= m - sufixo {
+                    fim_de(i + n - m)
+                } else {
+                    dominante
+                }
+            })
             .collect();
-        // Um arquivo que acabava sem `\n` continua assim, exceto quando a
-        // operação acrescentou linhas no fim: aí a última linha antiga ganha o
-        // fim que faltava, senão colaria na nova. (Quem acrescenta é quem decide;
-        // aqui só se preserva o estado para o mesmo número de linhas.)
         Doc {
             bom: self.bom,
             lines: novas,
@@ -185,6 +206,40 @@ mod tests {
         let d = Doc::parse(b"a\nb").unwrap();
         let e = d.com_linhas(vec!["a".into(), "c".into()]);
         assert_eq!(e.to_bytes(), b"a\nc");
+    }
+
+    #[test]
+    fn linha_intocada_guarda_o_proprio_fim_em_arquivo_misto() {
+        let d = Doc::parse(b"a\r\nb\nc\r\nd\n").unwrap();
+        // Uma linha nova no meio: `a` e `b` (prefixo) e `c`, `d` (sufixo)
+        // guardam os fins; a nova herda o dominante (empate: LF).
+        let e = d.com_linhas(vec![
+            "a".into(),
+            "b".into(),
+            "x".into(),
+            "c".into(),
+            "d".into(),
+        ]);
+        assert_eq!(e.to_bytes(), b"a\r\nb\nx\nc\r\nd\n");
+        // Uma linha a menos no meio.
+        let e = d.com_linhas(vec!["a".into(), "c".into(), "d".into()]);
+        assert_eq!(e.to_bytes(), b"a\r\nc\r\nd\n");
+        // Linha trocada no lugar herda o dominante, não o fim da antiga.
+        let d = Doc::parse(b"a\r\nb\r\nc\n").unwrap();
+        let e = d.com_linhas(vec!["a".into(), "B".into(), "c".into()]);
+        assert_eq!(e.to_bytes(), b"a\r\nB\r\nc\n");
+        // Sem mudança, os mesmos bytes.
+        let d = Doc::parse(b"a\nb\r\nc").unwrap();
+        assert_eq!(d.com_linhas(d.lines.clone()).to_bytes(), b"a\nb\r\nc");
+    }
+
+    #[test]
+    fn linha_acrescentada_depois_da_ultima_sem_fim_herda_o_dominante() {
+        let d = Doc::parse(b"a\r\nb").unwrap();
+        let e = d.com_linhas(vec!["a".into(), "b".into(), "c".into()]);
+        assert_eq!(e.to_bytes(), b"a\r\nb\r\nc");
+        let e = d.com_linhas(vec!["z".into(), "a".into(), "b".into()]);
+        assert_eq!(e.to_bytes(), b"z\r\na\r\nb");
     }
 
     #[test]

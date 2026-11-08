@@ -25,10 +25,10 @@ detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^tamanho A=\d+ B=\d+$|l
 
 [[divergencia]]
 id = "D2"
-motivo = "`new`, `new-project` e `move` recusam `.` e `..` como projeto (saída 1, mensagem de reservado). O oráculo aceita e grava `tasks/<id>.md` na raiz do vault e `projects/..`; depois disso `doctor --json` e `list --json` enxergam coisas diferentes."
+motivo = "`new`, `new-project` e `move` recusam `.` e `..` como projeto (saída 1, mensagem de reservado). O oráculo aceita e grava `tasks/<id>.md` na raiz do vault e `projects/..`, e roda o `rebuild`, que reescreve `CURRENT.md` e, se ele for de outro dia, o arquiva em `daily/<data>.md`; o novo recusa antes e não regenera nada. Depois disso `doctor --json` e `list --json` enxergam coisas diferentes."
 teste = "ponto_e_ponto_ponto_nao_sao_projeto"
 cenario = '::ponto-e-ponto-ponto$'
-onde = '^(codigo|stdout|stderr|json:/.*|arquivo:((tasks|projects)(/.*)?|[^/]+\.md))$'
+onde = '^(codigo|stdout|stderr|json:/.*|arquivo:((tasks|projects)(/.*)?|daily(/[^/]+\.md)?|[^/]+\.md))$'
 
 [[divergencia]]
 id = "D3"

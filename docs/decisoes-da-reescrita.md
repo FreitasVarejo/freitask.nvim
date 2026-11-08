@@ -136,3 +136,46 @@ na seção "Testes reavaliados".
     619 mortos, 23 inviáveis, **0 sobreviventes** (`missed.txt` vazio), em
     `core`, `vault` e no binário. O `Makefile` passou a apontar `TMPDIR` para
     `target/tmp` para a próxima rodada não depender do `/tmp`.
+
+## Fatia 3
+
+26. **Os cenários de task existente da fatia 3 são os que a D4 já cobre.**
+    O gerador grava task em CRLF, com BOM e sem `\n` final, e a D4 só casa os
+    cenários nomeados no `cenario` dela. Por isso o harness ganhou só
+    `escrita-basica` e `recusas-escrita` (arquivo novo e recusas), e o `set`
+    sobre task existente se confere em `escrita-existente` e
+    `set-preserva-bytes`, lidos até o primeiro passo de fatia futura.
+27. **D7 sai do portão da fatia 3 e fica com a fatia 5.** A D7 é sobre o
+    `doctor` sem `--fix`, que só existe na fatia 5; o aceite da fatia 3 não a
+    testa.
+28. **`new` e `new-project` garantem a raiz antes de validar, como o
+    `ensure_root` de hoje; `new-project` não regenera o painel.** Paridade
+    medida no oráculo; o aceite da fatia 3 roda as recusas num vault que já
+    tem a raiz.
+29. **O lock é tomado depois da checagem de argumentos e antes de abrir o
+    vault.** Erro de uso (falta argumento, flag sem valor, nada a mudar) não
+    espera pelo lock; tudo o que lê o vault para escrever, sim.
+30. **`Vault::gravar` cria a pasta pai que falta**, como o
+    `escrever_se_mudou` da fatia 2 fazia (o primeiro `daily/`). Os planos do
+    `core` continuam pedindo a pasta com `CriarDir` explícito.
+31. **`set --prazo` e `set --bloqueada-por` saem 2 com "ainda não foram
+    portados"** até as fatias 9 e 10; o clap já os conhece por causa do
+    `help --json`.
+32. **Reavaliação pedida: o `onde` da D2 não cobre `daily/`.** No cenário
+    `ponto-e-ponto-ponto` dos sintéticos 3, 5, 7 e 8, o oráculo aceita
+    `new .. diff-y`, roda o `rebuild` e arquiva o `CURRENT.md` de outro dia em
+    `daily/<data>.md`; o novo recusa (D2) e não regenera. O manifesto acusa
+    `arquivo:daily` e `arquivo:daily/2026-01-02.md` "só em A", fora do `onde`
+    congelado (`(tasks|projects)(/.*)?|[^/]+\.md`). É consequência direta da
+    D2, não muda em fatia nenhuma, e faria o diferencial completo da fatia 8
+    falhar. Um subagente novo reavalia a entrada contra a spec.
+
+## Testes reavaliados
+
+- **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
+  subagente reavaliador: procede (§3.4 item 5; o `daily/` "só em A" decorre
+  da recusa aprovada, conferido no oráculo num HOME temporário). Mudança: o
+  `onde` ganhou `daily(/[^/]+\.md)?` (mais estreito que o `daily(/.*)?`
+  proposto, porque o oráculo só grava um `.md` direto em `daily/`) e o
+  `motivo` passou a dizer que o oráculo regenera o painel. O `cenario` segue
+  limitado a `::ponto-e-ponto-ponto$`. Hash regravado no mesmo commit.

@@ -1,56 +1,347 @@
-//! Gravação atômica (spec §1.5): temporário oculto na mesma pasta, `fsync` do
-//! arquivo, `rename`, `fsync` do diretório. O Syncthing detecta mudança por
-//! mtime/tamanho e só vê o arquivo final; um leitor nunca encontra o destino
-//! pela metade. O CAS (conferir o hash antes do `rename`) entra na fatia 3.
+//! Gravação atômica com CAS (spec §1.5). Toda escrita no vault passa por
+//! `gravar`:
+//!
+//! 1. o chamador leu `B0` (`antes`; `None` se o arquivo não existia);
+//! 2. se `B1 == B0`, nada se grava e o mtime fica;
+//! 3. escreve `.freitask.<nome>.<pid>.tmp` na mesma pasta e faz `fsync`;
+//! 4. relê o destino; se o sha256 não é mais o de `B0`, apaga o temporário e
+//!    devolve conflito (saída 3): nada foi gravado;
+//! 5. `rename` e `fsync` do diretório.
+//!
+//! O Syncthing detecta mudança por mtime/tamanho e só vê o arquivo final; um
+//! leitor nunca encontra o destino pela metade.
 
-use std::io::Write;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-/// Grava `bytes` em `destino` de uma vez só.
-pub fn escrever_atomico(destino: &Path, bytes: &[u8]) -> std::io::Result<()> {
+use freitask_core::plano::Efeito;
+use sha2::{Digest, Sha256};
+
+use crate::disco::Disco;
+
+/// Por que uma gravação não aconteceu.
+#[derive(Debug)]
+pub enum ErroEscrita {
+    /// O arquivo mudou entre a leitura e a gravação (CAS). Nada foi gravado;
+    /// repetir o comando é seguro.
+    Conflito(PathBuf),
+    /// O disco recusou um passo.
+    Io(PathBuf, std::io::Error),
+}
+
+impl ErroEscrita {
+    /// O código de saída da CLI: 3 para conflito (spec §2.4), 1 para o resto.
+    pub fn codigo(&self) -> u8 {
+        match self {
+            ErroEscrita::Conflito(_) => 3,
+            ErroEscrita::Io(..) => 1,
+        }
+    }
+}
+
+impl std::fmt::Display for ErroEscrita {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ErroEscrita::Conflito(p) => write!(
+                f,
+                "{} mudou durante a gravação; nada foi gravado, repita o comando",
+                p.display()
+            ),
+            ErroEscrita::Io(p, e) => write!(f, "não consegui gravar {}: {e}", p.display()),
+        }
+    }
+}
+
+fn hash(b: Option<&[u8]>) -> Option<[u8; 32]> {
+    b.map(|b| Sha256::digest(b).into())
+}
+
+/// O temporário de `destino`: oculto, na mesma pasta (o `rename` não cruza
+/// sistema de arquivos), com o pid para dois processos não colidirem.
+pub fn temporario(destino: &Path) -> PathBuf {
     let pai = destino.parent().unwrap_or(Path::new("."));
     let nome = destino
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let tmp = pai.join(format!(".freitask.{nome}.{}.tmp", std::process::id()));
-    let resultado = (|| {
-        let mut f = std::fs::File::create(&tmp)?;
-        f.write_all(bytes)?;
-        f.sync_all()?;
-        std::fs::rename(&tmp, destino)?;
-        if let Ok(dir) = std::fs::File::open(pai) {
-            // Falha no fsync do diretório não desfaz o rename: só perde a
-            // garantia de durabilidade imediata, e o arquivo já está lá.
-            let _ = dir.sync_all();
-        }
-        Ok(())
-    })();
-    if resultado.is_err() {
-        let _ = std::fs::remove_file(&tmp);
+    pai.join(format!(".freitask.{nome}.{}.tmp", std::process::id()))
+}
+
+/// Grava `depois` em `destino` com CAS contra `antes`. Devolve se gravou.
+pub fn gravar(
+    disco: &dyn Disco,
+    destino: &Path,
+    antes: Option<&[u8]>,
+    depois: &[u8],
+) -> Result<bool, ErroEscrita> {
+    if antes == Some(depois) {
+        return Ok(false);
     }
-    resultado
+    let io = |e| ErroEscrita::Io(destino.to_path_buf(), e);
+    let tmp = temporario(destino);
+    let desfaz = |e: ErroEscrita| {
+        // O temporário pode nem ter nascido; o erro que importa é o original.
+        let _ = disco.apagar(&tmp);
+        e
+    };
+    disco.escrever(&tmp, depois).map_err(|e| desfaz(io(e)))?;
+    disco.fsync(&tmp).map_err(|e| desfaz(io(e)))?;
+    let atual = disco.ler(destino).map_err(|e| desfaz(io(e)))?;
+    if hash(atual.as_deref()) != hash(antes) {
+        return Err(desfaz(ErroEscrita::Conflito(destino.to_path_buf())));
+    }
+    disco.renomear(&tmp, destino).map_err(|e| desfaz(io(e)))?;
+    sincroniza_pai(disco, destino);
+    Ok(true)
+}
+
+/// `fsync` do diretório depois de `rename` ou `remove`. Uma falha aqui não
+/// desfaz nada: o vault já está no estado novo, só sem a garantia de
+/// durabilidade imediata.
+fn sincroniza_pai(disco: &dyn Disco, p: &Path) {
+    if let Some(pai) = p.parent() {
+        let _ = disco.fsync_dir(pai);
+    }
+}
+
+/// Apaga `destino` se ele ainda tem os bytes `antes`.
+pub fn apagar(disco: &dyn Disco, destino: &Path, antes: &[u8]) -> Result<(), ErroEscrita> {
+    let io = |e| ErroEscrita::Io(destino.to_path_buf(), e);
+    let atual = disco.ler(destino).map_err(io)?;
+    if hash(atual.as_deref()) != hash(Some(antes)) {
+        return Err(ErroEscrita::Conflito(destino.to_path_buf()));
+    }
+    disco.apagar(destino).map_err(io)?;
+    sincroniza_pai(disco, destino);
+    Ok(())
+}
+
+/// Executa um plano do `core`, na ordem, com os caminhos relativos a `raiz`.
+/// Para no primeiro erro: o que já foi feito fica (sem journal, spec §1.5), e
+/// o estado intermediário é o que o `doctor` acusa e o `--fix` repara.
+pub fn aplicar(disco: &dyn Disco, raiz: &Path, plano: &[Efeito]) -> Result<(), ErroEscrita> {
+    for efeito in plano {
+        match efeito {
+            Efeito::CriarDir { rel } => {
+                let p = raiz.join(rel);
+                disco.criar_dir(&p).map_err(|e| ErroEscrita::Io(p, e))?;
+            }
+            Efeito::Escrever { rel, antes, depois } => {
+                gravar(disco, &raiz.join(rel), antes.as_deref(), depois)?;
+            }
+            Efeito::Apagar { rel, antes } => apagar(disco, &raiz.join(rel), antes)?,
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+    use crate::disco::{Falhando, Real};
 
-    #[test]
-    fn grava_e_nao_deixa_temporario() {
-        let dir = tempfile::tempdir().unwrap();
-        let destino = dir.path().join("x.md");
-        escrever_atomico(&destino, b"a\r\nb").unwrap();
-        assert_eq!(std::fs::read(&destino).unwrap(), b"a\r\nb");
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    fn ls(dir: &Path) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        v.sort();
+        v
     }
 
     #[test]
-    fn falha_na_pasta_que_nao_existe_e_erro_sem_lixo() {
+    fn grava_arquivo_novo_e_nao_deixa_temporario() {
         let dir = tempfile::tempdir().unwrap();
-        let destino = dir.path().join("nao/existe/x.md");
-        assert!(escrever_atomico(&destino, b"a").is_err());
-        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+        let destino = dir.path().join("x.md");
+        assert!(gravar(&Real, &destino, None, b"a\r\nb").unwrap());
+        assert_eq!(std::fs::read(&destino).unwrap(), b"a\r\nb");
+        assert_eq!(ls(dir.path()), ["x.md"]);
+    }
+
+    #[test]
+    fn sem_mudanca_nao_grava_nem_toca_o_mtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("x.md");
+        std::fs::write(&destino, b"igual").unwrap();
+        let velho =
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_600_000_000);
+        std::fs::File::options()
+            .write(true)
+            .open(&destino)
+            .unwrap()
+            .set_modified(velho)
+            .unwrap();
+        assert!(!gravar(&Real, &destino, Some(b"igual"), b"igual").unwrap());
+        assert_eq!(
+            std::fs::metadata(&destino).unwrap().modified().unwrap(),
+            velho
+        );
+    }
+
+    /// I9: o arquivo mudou entre a leitura e a gravação → conflito, nada
+    /// gravado, nenhum temporário.
+    #[test]
+    fn cas_recusa_quando_o_arquivo_mudou_desde_a_leitura() {
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("x.md");
+        std::fs::write(&destino, b"de outro escritor").unwrap();
+        let e = gravar(&Real, &destino, Some(b"o que li"), b"novo").unwrap_err();
+        assert!(matches!(&e, ErroEscrita::Conflito(p) if p == &destino));
+        assert_eq!(e.codigo(), 3);
+        assert_eq!(std::fs::read(&destino).unwrap(), b"de outro escritor");
+        assert_eq!(ls(dir.path()), ["x.md"]);
+        // Criar por cima de um arquivo que apareceu também é conflito.
+        let e = gravar(&Real, &destino, None, b"novo").unwrap_err();
+        assert!(matches!(e, ErroEscrita::Conflito(_)));
+        // E sumir depois da leitura também.
+        let sumiu = dir.path().join("sumiu.md");
+        assert!(matches!(
+            gravar(&Real, &sumiu, Some(b"x"), b"y").unwrap_err(),
+            ErroEscrita::Conflito(_)
+        ));
+        assert_eq!(ls(dir.path()), ["x.md"]);
+    }
+
+    #[test]
+    fn apagar_com_cas() {
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("x.md");
+        std::fs::write(&destino, b"b").unwrap();
+        assert!(matches!(
+            apagar(&Real, &destino, b"outro").unwrap_err(),
+            ErroEscrita::Conflito(_)
+        ));
+        assert!(destino.exists());
+        apagar(&Real, &destino, b"b").unwrap();
+        assert!(!destino.exists());
+        assert!(matches!(
+            apagar(&Real, &destino, b"b").unwrap_err(),
+            ErroEscrita::Conflito(_)
+        ));
+    }
+
+    /// I8: com a falha em cada passo de uma gravação, o arquivo fica com o
+    /// conteúdo antigo ou com o novo, nunca pela metade, e nenhum temporário
+    /// sobra (exceto quando a falha é no próprio `apagar` do temporário, que
+    /// só acontece depois de uma falha anterior, e não há segunda falha).
+    #[test]
+    fn falha_em_cada_passo_deixa_o_antigo_ou_o_novo() {
+        // Passos de uma gravação: escrever tmp (1), fsync (2), rename (3),
+        // fsync dir (4). O 5 não existe: é a gravação sem falha nenhuma.
+        for passo in 1..=5 {
+            let dir = tempfile::tempdir().unwrap();
+            let destino = dir.path().join("x.md");
+            std::fs::write(&destino, b"antigo").unwrap();
+            let f = Falhando::no_passo(&Real, passo);
+            let r = gravar(&f, &destino, Some(b"antigo"), b"novo");
+            let agora = std::fs::read(&destino).unwrap();
+            match passo {
+                1..=3 => {
+                    assert!(matches!(r, Err(ErroEscrita::Io(..))), "passo {passo}");
+                    assert_eq!(agora, b"antigo", "passo {passo}");
+                }
+                // 4: a falha no fsync do diretório chega depois do rename, o
+                // arquivo já é o novo e a gravação conta como feita. 5: sem
+                // falha.
+                _ => {
+                    assert!(r.unwrap(), "passo {passo}");
+                    assert_eq!(agora, b"novo", "passo {passo}");
+                }
+            }
+            assert_eq!(
+                ls(dir.path()),
+                ["x.md"],
+                "temporário sobrou no passo {passo}"
+            );
+        }
+    }
+
+    #[test]
+    fn falha_ao_apagar_deixa_o_arquivo() {
+        let dir = tempfile::tempdir().unwrap();
+        let destino = dir.path().join("x.md");
+        std::fs::write(&destino, b"b").unwrap();
+        let f = Falhando::no_passo(&Real, 1);
+        assert!(matches!(
+            apagar(&f, &destino, b"b").unwrap_err(),
+            ErroEscrita::Io(..)
+        ));
+        assert!(destino.exists());
+        // Falha no fsync do diretório depois do remove: apagado mesmo assim.
+        let f = Falhando::no_passo(&Real, 2);
+        apagar(&f, &destino, b"b").unwrap();
+        assert!(!destino.exists());
+    }
+
+    /// I8 entre arquivos: um plano com pasta e arquivo para no passo que
+    /// falha; o que veio antes fica, o que vem depois não acontece.
+    #[test]
+    fn plano_para_no_primeiro_erro() {
+        let plano = vec![
+            Efeito::CriarDir {
+                rel: "p/tasks".into(),
+            },
+            Efeito::Escrever {
+                rel: "p/tasks/x.md".into(),
+                antes: None,
+                depois: b"x".to_vec(),
+            },
+            Efeito::Escrever {
+                rel: "p/tasks/y.md".into(),
+                antes: None,
+                depois: b"y".to_vec(),
+            },
+        ];
+        // Sem falha: tudo.
+        let dir = tempfile::tempdir().unwrap();
+        aplicar(&Real, dir.path(), &plano).unwrap();
+        assert_eq!(ls(&dir.path().join("p/tasks")), ["x.md", "y.md"]);
+        // Falha na pasta: nada.
+        let dir = tempfile::tempdir().unwrap();
+        let e = aplicar(&Falhando::no_passo(&Real, 1), dir.path(), &plano).unwrap_err();
+        assert!(matches!(&e, ErroEscrita::Io(p, _) if p.ends_with("p/tasks")));
+        assert_eq!(e.codigo(), 1);
+        assert!(!dir.path().join("p").exists());
+        // Falha no rename do primeiro arquivo (passo 4): só a pasta.
+        let dir = tempfile::tempdir().unwrap();
+        aplicar(&Falhando::no_passo(&Real, 4), dir.path(), &plano).unwrap_err();
+        assert!(ls(&dir.path().join("p/tasks")).is_empty());
+        // Falha no rename do segundo (passo 4 + 4 = 8): só o primeiro.
+        let dir = tempfile::tempdir().unwrap();
+        aplicar(&Falhando::no_passo(&Real, 8), dir.path(), &plano).unwrap_err();
+        assert_eq!(ls(&dir.path().join("p/tasks")), ["x.md"]);
+        // Apagar no plano.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("z.md"), b"z").unwrap();
+        aplicar(
+            &Real,
+            dir.path(),
+            &[Efeito::Apagar {
+                rel: "z.md".into(),
+                antes: b"z".to_vec(),
+            }],
+        )
+        .unwrap();
+        assert!(ls(dir.path()).is_empty());
+    }
+
+    #[test]
+    fn mensagens_dizem_o_caminho() {
+        let c = ErroEscrita::Conflito(PathBuf::from("/v/x.md"));
+        assert_eq!(
+            c.to_string(),
+            "/v/x.md mudou durante a gravação; nada foi gravado, repita o comando"
+        );
+        let i = ErroEscrita::Io(PathBuf::from("/v/x.md"), std::io::Error::other("cheio"));
+        assert_eq!(i.to_string(), "não consegui gravar /v/x.md: cheio");
+    }
+
+    #[test]
+    fn temporario_e_oculto_e_na_mesma_pasta() {
+        let t = temporario(Path::new("/v/p/x.md"));
+        assert_eq!(
+            t,
+            PathBuf::from(format!("/v/p/.freitask.x.md.{}.tmp", std::process::id()))
+        );
     }
 }

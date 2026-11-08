@@ -11,8 +11,10 @@ use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
 use freitask_core::date::Date;
-use freitask_vault::Vault;
+use freitask_core::operacao::PedidoSet;
+use freitask_vault::{ErroEscrita, Vault};
 
+use crate::escrita;
 use crate::linhas;
 use crate::usage;
 
@@ -160,14 +162,14 @@ const ESCREVEM: &[&str] = &[
     "rebuild",
 ];
 
-fn say(s: &str) {
+pub fn say(s: &str) {
     let mut out = std::io::stdout().lock();
     let _ = out.write_all(s.as_bytes());
     let _ = out.write_all(b"\n");
     let _ = out.flush();
 }
 
-fn die(msg: &str, code: u8) -> ExitCode {
+pub fn die(msg: &str, code: u8) -> ExitCode {
     let _ = std::io::stdout().flush();
     eprintln!("freitask: {msg}");
     ExitCode::from(code)
@@ -460,6 +462,10 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             ExitCode::SUCCESS
         }
         Cmd::Rebuild => {
+            let _trava = match travar() {
+                Ok(t) => t,
+                Err(c) => return c,
+            };
             let vault = match Vault::do_home() {
                 Ok(v) => v,
                 Err(e) => return die(&e, 2),
@@ -469,8 +475,83 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
                     say(&vault.caminho_str("CURRENT.md"));
                     ExitCode::SUCCESS
                 }
-                Err(e) => die(&e, 1),
+                Err(e) => falha(&e),
             }
+        }
+        Cmd::New {
+            projeto,
+            id,
+            titulo,
+            desc,
+            json,
+        } => {
+            let desc = match valor("desc", desc) {
+                Ok(d) => d,
+                Err(c) => return c,
+            };
+            let Some(projeto) = projeto else {
+                return die("falta o projeto", 2);
+            };
+            let Some(id) = id else {
+                return die("falta o id", 2);
+            };
+            let Some(titulo) = titulo else {
+                return die("falta o título", 2);
+            };
+            if json {
+                return die("`new --json` ainda não foi portado nesta fatia", 2);
+            }
+            escrita::new(&projeto, &id, &titulo, desc.as_deref().unwrap_or(""), hoje)
+        }
+        Cmd::NewProject { nome } => {
+            let Some(nome) = nome else {
+                return die("falta o nome do projeto", 2);
+            };
+            escrita::new_project(&nome)
+        }
+        Cmd::Set {
+            referencia,
+            status,
+            title,
+            desc,
+            volta_em,
+            prazo,
+            bloqueada_por,
+        } => {
+            let mut pedido = PedidoSet::default();
+            for (flag, alvo, valor_cru) in [
+                ("status", &mut pedido.status, status),
+                ("title", &mut pedido.title, title),
+                ("desc", &mut pedido.desc, desc),
+                ("volta-em", &mut pedido.volta_em, volta_em),
+            ] {
+                match valor(flag, valor_cru) {
+                    Ok(v) => *alvo = v,
+                    Err(c) => return c,
+                }
+            }
+            if prazo.is_some() || bloqueada_por.is_some() {
+                return die(
+                    "`--prazo` e `--bloqueada-por` ainda não foram portados nesta fatia",
+                    2,
+                );
+            }
+            let Some(referencia) = referencia else {
+                return die("falta o id ou caminho da task", 2);
+            };
+            if pedido.vazio() {
+                return die(
+                    "nada a mudar: passe --status, --title, --desc e/ou --volta-em",
+                    2,
+                );
+            }
+            escrita::set(&referencia, &pedido, hoje)
+        }
+        Cmd::Delete { referencia } => {
+            let Some(referencia) = referencia else {
+                return die("falta o id ou caminho da task", 2);
+            };
+            escrita::delete(&referencia, hoje)
         }
         Cmd::Tui => tui(),
         Cmd::Current => die("`current` ainda não foi portado (fatia 6)", 2),
@@ -493,11 +574,9 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
 
 /// Regenera o `CURRENT.md`: garante a raiz (como o `ensure_root` de hoje),
 /// relê o vocabulário e o índice, arquiva o painel de outro dia em `daily/`
-/// e grava o novo só se mudou (§1.5).
-pub fn rebuild(vault: &Vault, hoje: Date) -> Result<(), String> {
-    vault
-        .garantir_raiz()
-        .map_err(|e| format!("não consegui preparar o vault: {e}"))?;
+/// e grava o novo só se mudou (§1.5), com CAS contra o painel que leu.
+pub fn rebuild(vault: &Vault, hoje: Date) -> Result<(), ErroEscrita> {
+    vault.garantir_raiz()?;
     let (vocab, aviso) = vault.vocab();
     if let Some(a) = aviso {
         eprintln!("{a}");
@@ -508,14 +587,30 @@ pub fn rebuild(vault: &Vault, hoje: Date) -> Result<(), String> {
     if let Some((rel, bytes)) = &painel.daily
         && !vault.existe(rel)
     {
-        vault
-            .escrever_se_mudou(rel, bytes)
-            .map_err(|e| format!("não consegui escrever {rel}: {e}"))?;
+        vault.gravar(rel, None, bytes)?;
     }
-    vault
-        .escrever_se_mudou("CURRENT.md", &painel.bytes)
-        .map_err(|e| format!("não consegui escrever CURRENT.md: {e}"))?;
+    vault.gravar("CURRENT.md", anterior.as_deref(), &painel.bytes)?;
     Ok(())
+}
+
+/// A falha de uma gravação: a mensagem e o código (3 para conflito).
+pub fn falha(e: &ErroEscrita) -> ExitCode {
+    die(&e.to_string(), e.codigo())
+}
+
+/// Toma o lock de escrita, ou devolve a saída (3 se ficou ocupado).
+pub fn travar() -> Result<freitask_vault::trava::Trava, ExitCode> {
+    Vault::travar().map_err(|e| die(&e.to_string(), e.codigo()))
+}
+
+/// O valor de uma flag que leva valor: `--x` sozinho é `falta o valor de --x`
+/// (saída 2), como o `parse_flags` de hoje.
+fn valor(flag: &str, v: Option<Option<String>>) -> Result<Option<String>, ExitCode> {
+    match v {
+        Some(None) => Err(die(&format!("falta o valor de --{flag}"), 2)),
+        Some(Some(s)) => Ok(Some(s)),
+        None => Ok(None),
+    }
 }
 
 fn nome_do(cmd: &Cmd) -> &'static str {
