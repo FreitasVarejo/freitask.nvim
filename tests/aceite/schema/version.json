@@ -1,0 +1,22 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "freitask version --json",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "freitask",
+    "json"
+  ],
+  "properties": {
+    "freitask": {
+      "description": "Versão do binário (semver).",
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$"
+    },
+    "json": {
+      "description": "Versão do contrato JSON; muda só por decisão do dono.",
+      "type": "integer",
+      "minimum": 1
+    }
+  }
+}

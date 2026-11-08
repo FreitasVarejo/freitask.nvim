@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "freitask projects --json",
+  "description": "Array alfabético de projetos (pastas de projects/ com tasks/, fora reservados e encerrados).",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "active",
+      "project"
+    ],
+    "properties": {
+      "active": {
+        "description": "Tasks ativas que o painel mostra (sem Algum dia nem adiadas).",
+        "type": "integer",
+        "minimum": 0
+      },
+      "project": {
+        "type": "string",
+        "minLength": 1
+      }
+    }
+  }
+}

@@ -38,3 +38,7 @@ path = "f0-fundacao/main.rs"
 [[test]]
 name = "f1-core"
 path = "f1-core/main.rs"
+
+[[test]]
+name = "f2-leitura"
+path = "f2-leitura/main.rs"
