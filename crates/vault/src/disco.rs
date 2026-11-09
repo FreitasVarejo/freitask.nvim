@@ -18,6 +18,9 @@ pub trait Disco {
     fn renomear(&self, de: &Path, para: &Path) -> io::Result<()>;
     /// `rename` que nunca sobrescreve: `AlreadyExists` se `para` já existe.
     fn mover(&self, de: &Path, para: &Path) -> io::Result<()>;
+    /// `rename` de uma PASTA que nunca sobrescreve nem junta: `AlreadyExists`
+    /// se `para` já existe.
+    fn mover_pasta(&self, de: &Path, para: &Path) -> io::Result<()>;
     /// `fsync` do diretório, para o `rename` sobreviver a uma queda de luz.
     fn fsync_dir(&self, p: &Path) -> io::Result<()>;
     fn apagar(&self, p: &Path) -> io::Result<()>;
@@ -65,6 +68,17 @@ impl Disco for Real {
         }
     }
 
+    fn mover_pasta(&self, de: &Path, para: &Path) -> io::Result<()> {
+        use rustix::fs::{CWD, RenameFlags, renameat_with};
+        match renameat_with(CWD, de, CWD, para, RenameFlags::NOREPLACE) {
+            Ok(()) => Ok(()),
+            Err(e) if e == rustix::io::Errno::INVAL || e == rustix::io::Errno::NOSYS => {
+                mover_pasta_sem_noreplace(de, para)
+            }
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn fsync_dir(&self, p: &Path) -> io::Result<()> {
         std::fs::File::open(p)?.sync_all()
     }
@@ -76,6 +90,21 @@ impl Disco for Real {
     fn criar_dir(&self, p: &Path) -> io::Result<()> {
         std::fs::create_dir_all(p)
     }
+}
+
+/// O `mover_pasta` num sistema de arquivos sem `RENAME_NOREPLACE`: pasta não
+/// tem `link`, então confere que o destino não existe e faz o `rename`. Entre
+/// os dois passos outro processo pode criar o destino (o lock só vale entre
+/// dois `freitask`); o `rename` de uma pasta sobre uma pasta que não está
+/// vazia falha, e sobre uma vazia a substitui sem perder nada.
+pub fn mover_pasta_sem_noreplace(de: &Path, para: &Path) -> io::Result<()> {
+    if std::fs::symlink_metadata(para).is_ok() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!("{} já existe", para.display()),
+        ));
+    }
+    std::fs::rename(de, para)
 }
 
 /// Um disco que delega a outro e falha UMA vez, no passo de número `passo`
@@ -135,6 +164,11 @@ impl Disco for Falhando<'_> {
         self.dentro.mover(de, para)
     }
 
+    fn mover_pasta(&self, de: &Path, para: &Path) -> io::Result<()> {
+        self.conta()?;
+        self.dentro.mover_pasta(de, para)
+    }
+
     fn fsync_dir(&self, p: &Path) -> io::Result<()> {
         self.conta()?;
         self.dentro.fsync_dir(p)
@@ -190,6 +224,46 @@ mod tests {
     }
 
     #[test]
+    fn mover_pasta_leva_o_conteudo_e_nunca_junta_nem_sobrescreve() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a");
+        Real.criar_dir(&a.join("tasks")).unwrap();
+        Real.escrever(&a.join("tasks/x.md"), b"x").unwrap();
+        let b = dir.path().join("enc/b");
+        Real.criar_dir(&dir.path().join("enc")).unwrap();
+        Real.mover_pasta(&a, &b).unwrap();
+        assert_eq!(
+            Real.ler(&b.join("tasks/x.md")).unwrap(),
+            Some(b"x".to_vec())
+        );
+        assert!(!a.exists());
+        for ocupado in [dir.path().join("vazia"), dir.path().join("arq")] {
+            if ocupado.ends_with("vazia") {
+                Real.criar_dir(&ocupado).unwrap();
+            } else {
+                Real.escrever(&ocupado, b"o").unwrap();
+            }
+            let e = Real.mover_pasta(&b, &ocupado).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::AlreadyExists, "{ocupado:?}");
+            let e = mover_pasta_sem_noreplace(&b, &ocupado).unwrap_err();
+            assert_eq!(e.kind(), io::ErrorKind::AlreadyExists, "{ocupado:?}");
+            assert!(e.to_string().ends_with("já existe"));
+            assert!(b.join("tasks/x.md").is_file(), "a origem fica");
+        }
+        let c = dir.path().join("c");
+        mover_pasta_sem_noreplace(&b, &c).unwrap();
+        assert_eq!(
+            Real.ler(&c.join("tasks/x.md")).unwrap(),
+            Some(b"x".to_vec())
+        );
+        assert!(!b.exists());
+        assert!(
+            Real.mover_pasta(&b, &dir.path().join("d")).is_err(),
+            "origem que falta"
+        );
+    }
+
+    #[test]
     fn falhando_falha_so_no_passo_pedido_e_conta_os_que_mudam() {
         let dir = tempfile::tempdir().unwrap();
         let a = dir.path().join("a");
@@ -206,6 +280,15 @@ mod tests {
             .unwrap();
         f.apagar(&dir.path().join("m")).unwrap();
         assert_eq!(f.passos(), 8);
+        let f = Falhando::no_passo(&Real, 1);
+        assert!(
+            f.mover_pasta(&dir.path().join("c"), &dir.path().join("c2"))
+                .is_err()
+        );
+        f.mover_pasta(&dir.path().join("c"), &dir.path().join("c2"))
+            .unwrap();
+        assert_eq!(f.passos(), 2);
+        assert!(dir.path().join("c2").is_dir());
         for passo in 1..=7 {
             let f = Falhando::no_passo(&Real, passo);
             let p = dir.path().join(format!("p{passo}"));

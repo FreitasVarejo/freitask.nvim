@@ -210,6 +210,104 @@ na seção "Testes reavaliados".
     `patologico-link-em-codigo::escrita-existente`. Os arquivos ficam iguais
     no fim, a menos de D4. Um subagente novo reavalia as duas entradas.
 
+## Fatia 5
+
+38. **O `doctor` é um `core::doctor::diagnosticar` puro sobre uma
+    fotografia do vault** (as notas com os bytes, os `*.sync-conflict-*` e os
+    temporários), que devolve os achados e o plano com CAS contra os bytes
+    lidos. Sem `--fix` ele não toma o lock nem chama `garantir_raiz`: é
+    leitura, e um vault sem `projects/` dá "vault consistente" sem criar
+    nada. Com `--fix`: lock, raiz, plano, painel. A ordem dos checks e o texto
+    das mensagens são os do `doctor.lua`; o `msg` do `id-duplicado` usa
+    `freitask_core::lua_q`, que imita o `%q` do LuaJIT (conferido no `nvim`).
+39. **A marca `[reconstruído pelo doctor; data real desconhecida]` vai na
+    própria linha do histórico que o `--fix` reconstrói.** O `doctor.lua:253`
+    a cola na última linha do arquivo, que é outra seção quando o histórico
+    não é a última: o texto da marca acaba fora do histórico. O novo
+    acrescenta a linha inteira (data, destino, rótulo, marca) no fim da seção
+    Histórico. Sem entrada no `divergencias.toml`: nenhuma diferença fora da
+    lista no diferencial vem daí.
+40. **O que o `doctor` lê.** Desce em todas as pastas menos as ocultas
+    (`.freitask/` é a exceção, só para temporário órfão) e não segue symlink
+    de pasta (um laço não trava a varredura); segue symlink de arquivo. As
+    notas incluem `daily/`, `CURRENT.md` e os `*.sync-conflict-*`, como o
+    `glob` de hoje; o `link-pendurado` pula `daily/`. Temporário órfão é
+    `.freitask.*.tmp` (o formato da decisão de escrita) em qualquer pasta
+    visitada.
+41. **`sync-conflict` acusa qualquer extensão em qualquer lugar sob
+    `projects/`, inclusive `_encerrados/`** (I7). O `doctor.lua` só olha
+    `projects/*/tasks/**.md`. A diferença não aparece no diferencial (nenhum
+    corpus gerado tem conflito fora de `tasks/`, conferido com `find`), por
+    isso não tem entrada. O
+    `encerrar` usa o mesmo predicado na D3.
+42. **`md::tem_entrada_de_arquivamento` confere só dígitos na data**
+    (`- dddd-dd-dd — arquivada em`), como o padrão Lua `%d%d%d%d%-%d%d%-%d%d`.
+    A versão da fatia 4 exigia data válida, e uma entrada `2026-13-45` virava
+    `historico-ausente`, o que o `--fix` "repararia" com uma segunda entrada.
+43. **Task que não é UTF-8 fica fora dos checks por task** (callout, bloco,
+    frontmatter, histórico), como fica fora do índice desde a fatia 2. Ela
+    ainda conta no `sync-conflict`, no `fora-do-padrao` e no `id-duplicado`.
+    Nenhum corpus tem task assim.
+44. **`encerrar` e `reabrir` são `core::projeto`; o plano é `CriarDir` (se a
+    mãe falta), `MoverPasta` e uma gravação por nota que cita o projeto.**
+    `MoverPasta` é efeito novo: `renameat2(RENAME_NOREPLACE)` da pasta
+    inteira, com recusa se o destino existe (`Conflito`), e `fsync` das duas
+    mães. Sem `NOREPLACE`, confere com `symlink_metadata` e faz `rename` (a
+    janela entre as duas fica sob o lock; `link` não serve para pasta). A
+    reescrita é `links::rewrite_prefix` de `projects/<p>/` para o endereço
+    novo sobre `Vault::notas()`, e a nota que mora dentro da pasta movida é
+    gravada no endereço novo com CAS contra os mesmos bytes. A recusa da D3
+    vem depois da de task ativa, na ordem dos checks do `close_project`:
+    quem tem task ativa recebe a mensagem que já conhece.
+45. **O harness compara os achados do `doctor` como multiconjunto, e não
+    ordenados** (substitui a canonização da decisão 7). Ordenar e comparar
+    posição a posição fazia um achado a mais num lado deslocar todos os
+    seguintes: 2086 diferenças fora da lista no primeiro diferencial parcial,
+    quase todas eco de uns poucos `link-pendurado`. Agora cada achado que só
+    um lado tem vira uma diferença `achado só em A: …` ou `achado só em B: …`
+    (em `json:/findings` e em `stdout`, onde o par de linhas vira uma só), e o
+    resto do JSON e do texto se compara como antes. A chave de cada achado
+    é o objeto inteiro, no formato do texto (`level` alinhado em 6, `kind`,
+    `path`, `msg`, `fixed`, valor não string em JSON, chave ausente `∅`,
+    chave fora do contrato como `+k=v`). Uma primeira versão deixava `level`
+    e as chaves extras de fora e engolia o recuo da segunda linha do texto;
+    o auditor e a skill `verificar` acharam, e os testes do `comparar.rs`
+    prendem a correção. `make diff-oraculo` segue com 0 divergências nos 290
+    cenários.
+46. **Reavaliação pedida: D1 e D3 não cobrem as consequências medidas na
+    fatia 5.** Com o `doctor` portado, o diferencial parcial da fatia acusa
+    889 diferenças fora da lista, todas de duas causas:
+    - D1 (link `[[…\|…]]` em tabela): o `doctor.lua` corta o alvo no
+      primeiro `|` e acusa `link-pendurado` com alvo terminado em `\`; o novo
+      usa a regra do `links::scan` e não acusa. Daí o achado "só em A", a
+      saída 1 contra 0, `ok` false contra true e a linha de resumo, nos
+      cenários `doctor`, `doctor-fix`, `fix-idempotente`, `rebuild`,
+      `escrita-nova` e `recusas` de todo corpus com tabela (o `cenario` de
+      hoje é só `::(tabela|escrita-existente)$`).
+    - D3 (`encerrar` recusa `sync-conflict`): no cenário
+      `encerrar-com-conflito`, o oráculo encerra e o novo recusa; o
+      `list --json --archived` seguinte tem tamanho diferente e o
+      `CURRENT.md` regenerado só existe em A. O `onde` de hoje não tem
+      `json:` na raiz nem `CURRENT.md`.
+
+    Rodado com a lista candidata: 0 fora da lista nos cenários da fatia e
+    nos das fatias anteriores. Um subagente novo reavalia as duas entradas e
+    a decisão 45 (veredito em "Testes reavaliados").
+
+47. **I3 roda no crate `vault`** (`tests/doctor.rs`), sobre vaults do
+    gerador (com um temporário órfão a cada três sementes), com o
+    `diagnosticar` do `core` e o executor de verdade; o painel fica de fora
+    (é a I4). A propriedade: o segundo `--fix` tem plano vazio, nada
+    `fixed` e deixa a árvore igual; depois do `--fix` só sobram os kinds sem
+    reparo (`sync-conflict`, `link-pendurado`, `sem-callout`,
+    `fora-do-padrao`, `id-duplicado`, `status-0`, `prioridade-desconhecida`,
+    `volta-em-invalido`), e nenhum achado deles aparece por causa do fix. Não
+    é "os mesmos de antes": o `link-pendurado` da linha do link no bloco some
+    quando o bloco é reserializado com o endereço certo (semente 1). A lista
+    da spec (§3.2) é mais curta porque cita `dependencia-ciclica`, da fatia
+    9, e não conta os avisos que o `doctor.lua` também nunca repara. Conferido
+    que a propriedade falha com `tem_entrada_de_arquivamento` sempre falsa.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
@@ -234,3 +332,78 @@ na seção "Testes reavaliados".
   lista: crase sem par escondia o resto da linha da reescrita, e o `doctor`
   de hoje só pula crases em par. Corrigido no scanner (`links::scan_linha`),
   com teste; o vault real tem 11 linhas assim.
+- **D1, D3 e o harness do `doctor` (`divergencias.toml`,
+  `tests/diferencial/`), fatia 5.** Pedido nas entradas 45 e 46. O subagente
+  reavaliador montou um emulador do `cobrir` que reproduz os dois relatórios
+  exatamente (congelada: 889 fora; candidata: 0) e testou 11 regressões
+  fictícias. Os vereditos:
+  - **Harness: procede com ajuste.** A chave do multiconjunto não perde
+    nada (depois da correção da decisão 45), mas o prefixo `só em B: `
+    colidia com o `^só em B` da D10 (`cenario = '.*'`): qualquer achado a
+    mais no novo, de qualquer kind, ficaria coberto, inclusive o
+    `link-pendurado` de uma regressão da própria D1. Antes ele virava
+    `tamanho A=n B=n+1`, fora da lista. Mudança: o achado sai como
+    `achado só em A/B: …`, e o cabeçalho do `divergencias.toml` e o
+    `tests/diferencial/README.md` registram a forma.
+  - **D1: procede com ajuste.** As 889 diferenças têm duas causas só: 887 da
+    D1 (`doctor.lua:327` corta o alvo no primeiro `|`; §1.4 e o teste da D1
+    na §3.7 pedem "o `doctor` sai 0") e 2 da D3. Mas a candidata, com
+    `cenario`, `onde` e `detalhe` independentes, levava `arquivo:*.md` e
+    `stderr` para seis cenários em 21 corpora: cobria 7 das 11 regressões
+    fictícias (`CURRENT.md` diferente, bytes do `--fix`, o `doctor` sem `--fix`
+    gravando nota) e tirava da D4 as 20 diferenças de CRLF do `doctor-fix`.
+    Cortar por corpus não serve: 21 dos 23 corpora não reais têm
+    `[[projects/…\|…]]`. Mudança: a lista ganhou cláusulas
+    `[[divergencia.tambem]]` (`tests/diferencial/src/divergencias.rs`, com
+    teste). A cláusula principal da D1 fica nos cenários congelados, com o
+    `arquivo:` restrito a `notas/` e `tasks/`. A `tambem` cobre só
+    `codigo`, `stdout` e `json:/(ok|findings)` nos cenários do `doctor`, com
+    o achado preso a alvo `projects/<p>/tasks/…\` e o resumo às duas formas
+    medidas (`linha 1: A="" B="freitask: vault consistente."` e o par de
+    contagens na linha 2). O `motivo` passou a explicar o falso positivo
+    sem escrita. Resultado: 9 das 11 regressões fictícias ficam fora da
+    lista; as duas que passam (saída e resumo sozinhos) nunca vêm sem o
+    `achado só em`, que é avaliado à parte. O teste da fatia 0 aceita a
+    chave nova (lê `toml::Table`).
+  - **D3: procede.** O `cenario` segue `::encerrar-com-conflito$`; o `onde`
+    ganhou a raiz `json:` (`tamanho A=4 B=5` do `list --json --archived`) e
+    `arquivo:CURRENT.md` (o `encerrar` do oráculo roda o `rebuild` depois de
+    mover; o novo recusa antes). O `motivo` cita o `CURRENT.md`.
+
+  Rodado com a lista nova e o harness ajustado: 216 cenários, 47335
+  diferenças, 0 fora da lista; D1 1309, D3 92, D4 20 (volta a ser
+  exercitada). Hash regravado no mesmo commit. O reavaliador também notou
+  que, no texto, a posição das linhas de achado em relação às de resumo não
+  se compara (resíduo de antes, não piorado).
+- **D1, cenários `set-preserva-bytes` e `ambiguo` (`divergencias.toml`),
+  fatia 5.** A rodada parcial dos dois vereditos anteriores não incluía dois
+  cenários que também rodam `doctor --json`. A rodada completa do
+  `make portoes` acusou 5 diferenças fora da lista ali, todas o falso
+  positivo da D1 em `notas/ref.md` linha 3 (`tests/gerador/src/lib.rs`, o
+  `minimo()` de que todo patológico parte). Pedido: pôr os dois cenários na
+  `tambem` da D1. Veredito de um subagente reavaliador novo: **procede com
+  ajuste**. O `set-preserva-bytes` entra na `tambem` geral: lá os passos de
+  `set` e `archive` saem 0 no oráculo, e um `A=1 B=0` não pode vir de
+  regressão do novo. O `ambiguo` ganha uma `tambem` própria, só
+  `json:/findings` com o mesmo regex do achado, porque a geral levaria
+  `codigo ^A=1 B=0$` para a recusa de id ambíguo do passo 1. Ele mediu
+  isso com um binário de embrulho que saía 0 nessa recusa: com a candidata a
+  regressão sumia, com a ajustada ela fica fora da lista. Resultado na
+  rodada completa: 143 fora da lista, todas no `help-por-subcomando`, passos
+  11 e 12, depois do `new --json` do passo 10, que o novo ainda recusa
+  (`cli.rs`, "ainda não foi portado"). É o critério da fatia 4: 0 fora da
+  lista antes do primeiro comando de fatia futura. Hash regravado no mesmo
+  commit.
+
+  O reavaliador deixou três pendências para fatias futuras:
+  - Na fatia que portar o `new --json`: das 143, 83 somem com o port (o
+    oráculo grava a task e roda o `rebuild`, que arquiva o `CURRENT.md` em
+    `daily/` e copia para o painel o bloco com endereço errado do
+    `sintetico-1`). As outras 60 `link-pendurado` com alvo em `\` e 6
+    `ok` continuam: são D1, e o `help-por-subcomando` precisa entrar na D1
+    com `onde = '^json:/(ok|findings)$'` (o `codigo` já fica com a D8).
+  - O `motivo` da D10 diz que `diff-json.md` existe "só em B", e hoje ela
+    aparece "só em A". Isso se acerta na mesma fatia.
+  - A `tambem` geral da D1 cobre `codigo ^A=1 B=0$` em todos os passos de
+    `recusas`. Um novo que aceitasse em silêncio uma recusa, mantendo a
+    mensagem no stderr, passaria. Vale um reavaliador olhar à parte.

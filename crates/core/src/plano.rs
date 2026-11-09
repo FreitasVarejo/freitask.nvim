@@ -24,6 +24,10 @@ pub enum Efeito {
         para: String,
         antes: Vec<u8>,
     },
+    /// Move a PASTA `de` para `para` num `rename` só, se `para` não existir
+    /// (nunca sobrescreve nem junta duas pastas). É o `encerrar` e o
+    /// `reabrir`: o projeto inteiro muda de endereço de uma vez.
+    MoverPasta { de: String, para: String },
 }
 
 pub type Plano = Vec<Efeito>;

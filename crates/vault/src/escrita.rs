@@ -141,6 +141,24 @@ pub fn mover(disco: &dyn Disco, de: &Path, para: &Path, antes: &[u8]) -> Result<
     Ok(())
 }
 
+/// Move a pasta `de` para `para` se `para` não existe. Um `rename` só: a
+/// pasta nunca fica com os dois endereços nem com nenhum, e nunca se junta a
+/// outra.
+pub fn mover_pasta(disco: &dyn Disco, de: &Path, para: &Path) -> Result<(), ErroEscrita> {
+    match disco.mover_pasta(de, para) {
+        Ok(()) => {}
+        Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(ErroEscrita::Conflito(para.to_path_buf()));
+        }
+        Err(e) => return Err(ErroEscrita::Io(de.to_path_buf(), e)),
+    }
+    sincroniza_pai(disco, para);
+    if de.parent() != para.parent() {
+        sincroniza_pai(disco, de);
+    }
+    Ok(())
+}
+
 /// Executa um plano do `core`, na ordem, com os caminhos relativos a `raiz`.
 /// Para no primeiro erro: o que já foi feito fica (sem journal, spec §1.5), e
 /// o estado intermediário é o que o `doctor` acusa e o `--fix` repara.
@@ -157,6 +175,9 @@ pub fn aplicar(disco: &dyn Disco, raiz: &Path, plano: &[Efeito]) -> Result<(), E
             Efeito::Apagar { rel, antes } => apagar(disco, &raiz.join(rel), antes)?,
             Efeito::Mover { de, para, antes } => {
                 mover(disco, &raiz.join(de), &raiz.join(para), antes)?;
+            }
+            Efeito::MoverPasta { de, para } => {
+                mover_pasta(disco, &raiz.join(de), &raiz.join(para))?;
             }
         }
     }
@@ -400,6 +421,48 @@ mod tests {
             assert!(tmps.iter().all(|n| !n.contains(".freitask.")), "{tmps:?}");
         }
         assert!(viu_velho_no_novo, "alguma falha cai depois do rename");
+    }
+
+    #[test]
+    fn mover_pasta_recusa_destino_ocupado_e_sincroniza_as_duas_maes() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("projects/a");
+        std::fs::create_dir_all(a.join("tasks")).unwrap();
+        std::fs::write(a.join("tasks/x.md"), b"x").unwrap();
+        let enc = dir.path().join("projects/_encerrados");
+        std::fs::create_dir_all(enc.join("a")).unwrap();
+        let e = mover_pasta(&Real, &a, &enc.join("a")).unwrap_err();
+        assert!(matches!(&e, ErroEscrita::Conflito(p) if p == &enc.join("a")));
+        assert_eq!(e.codigo(), 3);
+        std::fs::remove_dir(enc.join("a")).unwrap();
+        // Mães diferentes: o rename e o fsync de cada mãe.
+        let f = Falhando::no_passo(&Real, 99);
+        mover_pasta(&f, &a, &enc.join("a")).unwrap();
+        assert_eq!(f.passos(), 3);
+        assert_eq!(std::fs::read(enc.join("a/tasks/x.md")).unwrap(), b"x");
+        // Mesma mãe: um fsync só.
+        let f = Falhando::no_passo(&Real, 99);
+        mover_pasta(&f, &enc.join("a"), &enc.join("b")).unwrap();
+        assert_eq!(f.passos(), 2);
+        // Falha no rename: nada muda, e é erro de I/O da origem.
+        let f = Falhando::no_passo(&Real, 1);
+        let e = mover_pasta(&f, &enc.join("b"), &a).unwrap_err();
+        assert!(matches!(&e, ErroEscrita::Io(p, _) if p == &enc.join("b")));
+        assert!(enc.join("b/tasks/x.md").is_file());
+        // Falha no fsync depois do rename: movida mesmo assim.
+        let f = Falhando::no_passo(&Real, 2);
+        mover_pasta(&f, &enc.join("b"), &a).unwrap();
+        assert!(a.join("tasks/x.md").is_file());
+        aplicar(
+            &Real,
+            dir.path(),
+            &[Efeito::MoverPasta {
+                de: "projects/a".into(),
+                para: "projects/_encerrados/a".into(),
+            }],
+        )
+        .unwrap();
+        assert!(enc.join("a/tasks/x.md").is_file());
     }
 
     #[test]

@@ -15,8 +15,10 @@ HOME), compara stdout, stderr e código, e no fim o manifesto
 
 Normalização: o prefixo do HOME vira `<HOME>`; stdout que os dois lados
 decodificam como JSON é comparado como valor, com ponteiro por diferença; os
-achados do `doctor` são ordenados por (kind, path, msg) porque o Lua os emite
-na ordem de `pairs()`.
+achados do `doctor` (em `json:/findings` e no texto) se comparam como
+multiconjunto, porque o Lua os emite na ordem de `pairs()`: cada achado que só
+um lado tem vira `achado só em A: <level> <kind> <path> …` ou `achado só em B:
+…`, e o resto se compara como antes.
 
 ## `tests/aceite/divergencias.toml`
 
@@ -31,10 +33,17 @@ cenario = "regex sobre `<corpus>::<cenario>`"
 onde = "regex sobre `codigo` | `stdout` | `stderr` | `json:<ponteiro>` | `arquivo:<rel>`"
 detalhe = "regex opcional sobre o detalhe (ex.: `só em B`, `A=1 B=0`)"
 observavel = true   # false para o que o harness não enxerga (ordem de chaves, mtime)
+
+[[divergencia.tambem]]   # opcional: outra combinação de cenario, onde e detalhe
+cenario = "…"
+onde = "…"
+detalhe = "…"
 ```
 
-A primeira entrada que casa (cenário, onde e, se houver, detalhe) cobre a
-diferença. Na rodada completa (`--corpus todos`, sem `--cenarios`, sem
+A primeira entrada que casa (cenário, onde e, se houver, detalhe, na cláusula
+principal ou numa `tambem`) cobre a diferença. A `tambem` existe porque as três
+regex são independentes: uma causa com formas diferentes em cenários
+diferentes, numa cláusula só, levaria cada forma para todos os cenários. Na rodada completa (`--corpus todos`, sem `--cenarios`, sem
 `--parcial`), entrada que não cobriu nada falha: a lista não acumula entrada
 morta. Os nomes dos cenários estão em `src/cenarios.rs` (`comuns` e
 `especificos`); os ponteiros JSON seguem o RFC 6901 (`/0/notes`,

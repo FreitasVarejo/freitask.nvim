@@ -5,6 +5,7 @@
 
 mod cli;
 mod deslocar;
+mod doctor;
 mod escrita;
 mod linhas;
 mod usage;

@@ -590,6 +590,19 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             };
             deslocar::deslocar(&referencia, Pedido::Move(projeto), hoje)
         }
+        Cmd::Doctor { fix, json, quiet } => crate::doctor::doctor(fix, json, quiet, hoje),
+        Cmd::Encerrar { projeto } => {
+            let Some(projeto) = projeto else {
+                return die("falta o projeto", 2);
+            };
+            deslocar::projeto(&projeto, true, hoje)
+        }
+        Cmd::Reabrir { projeto } => {
+            let Some(projeto) = projeto else {
+                return die("falta o projeto", 2);
+            };
+            deslocar::projeto(&projeto, false, hoje)
+        }
         Cmd::Tui => tui(),
         Cmd::Current => die("`current` ainda não foi portado (fatia 6)", 2),
         Cmd::Outro(args) => {
@@ -602,10 +615,6 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
                 2,
             )
         }
-        outro => die(
-            &format!("`{}` ainda não foi portado nesta fatia", nome_do(&outro)),
-            2,
-        ),
     }
 }
 
@@ -647,33 +656,6 @@ fn valor(flag: &str, v: Option<Option<String>>) -> Result<Option<String>, ExitCo
         Some(None) => Err(die(&format!("falta o valor de --{flag}"), 2)),
         Some(Some(s)) => Ok(Some(s)),
         None => Ok(None),
-    }
-}
-
-fn nome_do(cmd: &Cmd) -> &'static str {
-    match cmd {
-        Cmd::Tui => "tui",
-        Cmd::Current => "current",
-        Cmd::Doctor { .. } => "doctor",
-        Cmd::Archive { .. } => "archive",
-        Cmd::Unarchive { .. } => "unarchive",
-        Cmd::Rename { .. } => "rename",
-        Cmd::Move { .. } => "move",
-        Cmd::Encerrar { .. } => "encerrar",
-        Cmd::Reabrir { .. } => "reabrir",
-        Cmd::New { .. } => "new",
-        Cmd::Rebuild => "rebuild",
-        Cmd::Set { .. } => "set",
-        Cmd::Show { .. } => "show",
-        Cmd::Delete { .. } => "delete",
-        Cmd::NewProject { .. } => "new-project",
-        Cmd::Kebab { .. } => "kebab",
-        Cmd::List { .. } => "list",
-        Cmd::Projects { .. } => "projects",
-        Cmd::Statuses { .. } => "statuses",
-        Cmd::Version { .. } => "version",
-        Cmd::Help { .. } => "help",
-        Cmd::Outro(_) => "?",
     }
 }
 

@@ -1,13 +1,15 @@
-//! Os comandos que mudam uma task de endereço: `archive`, `unarchive`,
-//! `rename` e `move`. Mesmo fluxo dos outros que escrevem (lock, leitura,
-//! plano do `core`, execução com CAS, painel), mais o aviso de quantas
-//! referências o plano reescreveu, em stderr, como hoje.
+//! Os comandos que mudam uma task de endereço (`archive`, `unarchive`,
+//! `rename`, `move`) e os que mudam um projeto inteiro (`encerrar`,
+//! `reabrir`). Mesmo fluxo dos outros que escrevem (lock, leitura, plano do
+//! `core`, execução com CAS, painel), mais o aviso de quantas referências o
+//! plano reescreveu, em stderr, como hoje.
 
 use std::process::ExitCode;
 
 use freitask_core::date::Date;
 use freitask_core::deslocar::{self, Contexto, Deslocamento};
 use freitask_core::path;
+use freitask_core::projeto;
 use freitask_vault::Vault;
 
 use crate::cli::{die, falha, travar};
@@ -100,4 +102,46 @@ fn executa(vault: &Vault, hoje: Date, d: &Deslocamento) -> ExitCode {
         eprintln!("freitask: {a}");
     }
     fecha(vault, hoje, &vault.caminho_str(&d.novo_rel))
+}
+
+/// `encerrar` (`fechar = true`) e `reabrir`. Como hoje, a raiz é garantida
+/// antes de validar; as recusas saem 1.
+pub fn projeto(nome: &str, fechar: bool, hoje: Date) -> ExitCode {
+    let _trava = match travar() {
+        Ok(t) => t,
+        Err(c) => return c,
+    };
+    let vault = match vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    if let Err(e) = vault.garantir_raiz() {
+        return falha(&e);
+    }
+    let vocab = vocab(&vault);
+    let notas = vault.notas();
+    let raiz = vault.raiz().to_string_lossy().into_owned();
+    let cx = projeto::Contexto {
+        vocab: &vocab,
+        visao: &vault,
+        raiz: &raiz,
+        notas: &notas,
+    };
+    let r = if fechar {
+        let indice = vault.indice(&vocab);
+        // Nome inválido (`..`, `a/b`) não é listado: o `encerrar` o recusa
+        // antes de olhar os arquivos, e listar seria sair do vault.
+        let nome_t = freitask_core::trim(nome);
+        let arquivos = match freitask_core::task::validate_project(nome_t) {
+            Ok(()) => vault.arquivos_sob(&path::project_dir(nome_t, false).0),
+            Err(_) => Vec::new(),
+        };
+        projeto::encerrar(&cx, &indice, nome, &arquivos)
+    } else {
+        projeto::reabrir(&cx, nome)
+    };
+    match r {
+        Err(e) => die(&e, 1),
+        Ok(d) => executa(&vault, hoje, &d),
+    }
 }

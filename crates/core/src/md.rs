@@ -368,14 +368,38 @@ pub fn append_history_renamed(lines: &mut Vec<String>, from: &str, to: &str, tod
     );
 }
 
-/// Verdadeiro se há uma linha de arquivamento no log (`^%- %d%d%d%d%-%d%d%-%d%d — arquivada em`).
+/// A marca da linha que o `doctor --fix` reconstrói: inventar a data real
+/// seria pior que não ter a linha.
+pub const MARCA_RECONSTRUIDA: &str = "[reconstruído pelo doctor; data real desconhecida]";
+
+/// A entrada de arquivamento reconstruída pelo `doctor --fix`, com o dia de
+/// hoje e a marca NA PRÓPRIA LINHA, no fim da seção `## Histórico`. O Lua
+/// colava a marca na última linha do arquivo, que não é a entrada quando há
+/// outra seção depois do histórico (decisão 39 do log da reescrita).
+pub fn append_history_reconstruida(lines: &mut Vec<String>, dest: &str, today: Date) {
+    let entry = format!(
+        "- {today} — arquivada em `archived/{dest}` ({}) {MARCA_RECONSTRUIDA}",
+        crate::config::archived_label(dest)
+    );
+    append_entry(lines, entry);
+}
+
+/// Verdadeiro se há uma linha de arquivamento no log
+/// (`^%- %d%d%d%d%-%d%d%-%d%d — arquivada em`). Só dígitos, como o padrão do
+/// Lua: `2026-13-45` conta, porque o que o `doctor` cobra é a linha existir,
+/// não a data ser válida.
 pub fn tem_entrada_de_arquivamento(lines: &[String]) -> bool {
     lines.iter().any(|l| {
-        // `get`, não fatia direta: um acento cruzando o byte 12 derrubaria o processo.
-        l.starts_with("- ")
-            && l.get(2..12).and_then(Date::parse).is_some()
-            && l.get(12..)
-                .is_some_and(|r| r.starts_with(" — arquivada em"))
+        let b = l.as_bytes();
+        let digitos = |r: std::ops::Range<usize>| b[r].iter().all(u8::is_ascii_digit);
+        b.len() >= 12
+            && b.starts_with(b"- ")
+            && digitos(2..6)
+            && b[6] == b'-'
+            && digitos(7..9)
+            && b[9] == b'-'
+            && digitos(10..12)
+            && b[12..].starts_with(" — arquivada em".as_bytes())
     })
 }
 
@@ -788,6 +812,55 @@ mod tests {
         assert!(
             !tem_entrada_de_arquivamento(&v(&["- lavar o cão", "- ação — arquivada em x"])),
             "multibyte não derruba"
+        );
+        assert!(
+            tem_entrada_de_arquivamento(&v(&["- 2026-13-45 — arquivada em x"])),
+            "só dígitos, como o Lua: a data não precisa existir"
+        );
+        for quase in [
+            "- 2026-01-01 — desarquivada",
+            "- 2026/01-01 — arquivada em x",
+            "- 2026-01/01 — arquivada em x",
+            "- 20a6-01-01 — arquivada em x",
+            "- 2026-0a-01 — arquivada em x",
+            "- 2026-01-0a — arquivada em x",
+            "* 2026-01-01 — arquivada em x",
+            "- 2026-01-01 - arquivada em x",
+            "- 2026-01-01",
+            "- 2026-01-0",
+        ] {
+            assert!(!tem_entrada_de_arquivamento(&v(&[quase])), "{quase}");
+        }
+    }
+
+    #[test]
+    fn historico_reconstruido_leva_a_marca_na_propria_linha() {
+        let mut l = v(&[
+            "corpo",
+            "",
+            "## Histórico",
+            "",
+            "- a",
+            "",
+            "## Depois",
+            "",
+            "x",
+        ]);
+        append_history_reconstruida(&mut l, "failed", hoje());
+        assert_eq!(
+            l,
+            v(&[
+                "corpo",
+                "",
+                "## Histórico",
+                "",
+                "- a",
+                "- 2026-11-08 — arquivada em `archived/failed` (falhou) [reconstruído pelo doctor; data real desconhecida]",
+                "",
+                "## Depois",
+                "",
+                "x"
+            ])
         );
     }
 }

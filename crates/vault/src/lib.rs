@@ -8,6 +8,7 @@
 use std::path::{Path, PathBuf};
 
 use freitask_core::config;
+use freitask_core::doctor::{self, Fotografia};
 use freitask_core::index::{self, Indice};
 use freitask_core::operacao::Visao;
 use freitask_core::plano::Efeito;
@@ -182,6 +183,80 @@ impl Vault {
         out
     }
 
+    /// O que o `doctor` lê, numa varredura só (decisões 40 e 41 do log):
+    /// - todo `.md` fora de nome oculto, como o `glob("**/*.md")` de hoje
+    ///   (inclusive `daily/`, `CURRENT.md` e as cópias de conflito);
+    /// - todo arquivo sob `projects/` com `.sync-conflict-` no nome;
+    /// - os `.freitask.<nome>.<pid>.tmp` das pastas em que o freitask grava:
+    ///   as não ocultas e a `.freitask/` da raiz (o `status.json`).
+    ///
+    /// Symlink de arquivo é lido pelo alvo, como o `glob()`; symlink de pasta
+    /// não é seguido (um laço travaria a varredura). Só lê.
+    pub fn fotografia_do_doctor(&self) -> Fotografia {
+        let mut foto = Fotografia::default();
+        let mut pilha = vec![String::new()];
+        while let Some(rel_dir) = pilha.pop() {
+            let Ok(it) = std::fs::read_dir(self.caminho(&rel_dir)) else {
+                continue;
+            };
+            for e in it.flatten() {
+                let nome = e.file_name().to_string_lossy().into_owned();
+                let rel = juntar(&rel_dir, &nome);
+                let Ok(tipo) = e.file_type() else { continue };
+                if tipo.is_dir() {
+                    if !nome.starts_with('.') || rel == ".freitask" {
+                        pilha.push(rel);
+                    }
+                    continue;
+                }
+                if doctor::eh_temporario(&nome) {
+                    if let Some(b) = self.ler(&rel) {
+                        foto.temporarios.push((rel, b));
+                    }
+                    continue;
+                }
+                if nome.starts_with('.') || rel_dir.starts_with('.') {
+                    continue;
+                }
+                if rel.starts_with("projects/") && doctor::eh_conflito(&rel) {
+                    foto.conflitos.push(rel.clone());
+                }
+                if nome.ends_with(".md")
+                    && self.caminho(&rel).is_file()
+                    && let Some(b) = self.ler(&rel)
+                {
+                    foto.notas.push((rel, b));
+                }
+            }
+        }
+        foto.notas.sort();
+        foto.conflitos.sort();
+        foto.temporarios.sort();
+        foto
+    }
+
+    /// Os caminhos (relativos ao vault) de todos os arquivos sob `rel_dir`,
+    /// inclusive os ocultos, em ordem. Symlink de pasta não é seguido.
+    pub fn arquivos_sob(&self, rel_dir: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        let mut pilha = vec![rel_dir.to_string()];
+        while let Some(dir) = pilha.pop() {
+            let Ok(it) = std::fs::read_dir(self.caminho(&dir)) else {
+                continue;
+            };
+            for e in it.flatten() {
+                let rel = juntar(&dir, &e.file_name().to_string_lossy());
+                if e.file_type().is_ok_and(|t| t.is_dir()) {
+                    pilha.push(rel);
+                } else {
+                    out.push(rel);
+                }
+            }
+        }
+        out.sort();
+        out
+    }
+
     /// O índice inteiro: projetos e tasks lidas.
     pub fn indice(&self, vocab: &Vocab) -> Indice {
         let entradas = self
@@ -290,6 +365,14 @@ impl Visao for Vault {
 
     fn dir_existe(&self, rel: &str) -> bool {
         self.caminho(rel).is_dir()
+    }
+}
+
+fn juntar(dir: &str, nome: &str) -> String {
+    if dir.is_empty() {
+        nome.to_string()
+    } else {
+        format!("{dir}/{nome}")
     }
 }
 
@@ -445,6 +528,97 @@ mod tests {
         assert!(v.dir_existe("projects/p/tasks"));
         assert!(!v.dir_existe("projects/p/tasks/t1.md"));
         assert!(!v.dir_existe("projects/nao"));
+    }
+
+    #[test]
+    fn fotografia_do_doctor_le_notas_conflitos_e_temporarios() {
+        let dir = tempfile::tempdir().unwrap();
+        let w = |rel: &str, b: &str| {
+            let p = dir.path().join(rel);
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(p, b).unwrap();
+        };
+        w("CURRENT.md", "c");
+        w("daily/d.md", "d");
+        w("projects/p/tasks/t.md", "t");
+        w("projects/p/tasks/t.sync-conflict-1.md", "tc");
+        w("projects/p/anexos/f.sync-conflict-1.pdf", "pdf");
+        w("projects/p/anexos/f.pdf", "pdf");
+        w("inbox/n.sync-conflict-1.md", "nc");
+        w("inbox/.oculta.md", "o");
+        w(".obsidian/x.md", "o");
+        w(".obsidian/.freitask.x.md.1.tmp", "o");
+        w(".freitask/status.json", "{}");
+        w(".freitask/.freitask.status.json.7.tmp", "s");
+        w(".freitask/nota.md", "nao");
+        w("projects/p/tasks/.freitask.t.md.12.tmp", "meio");
+        w(".freitask.CURRENT.md.3.tmp", "r");
+        w("inbox/.freitask.n.md.x.tmp", "nao e temporario");
+        std::fs::create_dir_all(dir.path().join("vazia")).unwrap();
+        std::os::unix::fs::symlink(
+            dir.path().join("inbox/n.sync-conflict-1.md"),
+            dir.path().join("link.md"),
+        )
+        .unwrap();
+        std::os::unix::fs::symlink(dir.path().join("projects"), dir.path().join("laco")).unwrap();
+        let foto = Vault::em(dir.path()).fotografia_do_doctor();
+        let rels: Vec<&str> = foto.notas.iter().map(|n| n.0.as_str()).collect();
+        assert_eq!(
+            rels,
+            vec![
+                "CURRENT.md",
+                "daily/d.md",
+                "inbox/n.sync-conflict-1.md",
+                "link.md",
+                "projects/p/tasks/t.md",
+                "projects/p/tasks/t.sync-conflict-1.md",
+            ]
+        );
+        assert_eq!(
+            foto.notas[3].1, b"nc",
+            "symlink de arquivo é lido pelo alvo"
+        );
+        assert_eq!(
+            foto.conflitos,
+            vec![
+                "projects/p/anexos/f.sync-conflict-1.pdf",
+                "projects/p/tasks/t.sync-conflict-1.md"
+            ]
+        );
+        assert_eq!(
+            foto.temporarios,
+            vec![
+                (".freitask.CURRENT.md.3.tmp".to_string(), b"r".to_vec()),
+                (
+                    ".freitask/.freitask.status.json.7.tmp".to_string(),
+                    b"s".to_vec()
+                ),
+                (
+                    "projects/p/tasks/.freitask.t.md.12.tmp".to_string(),
+                    b"meio".to_vec()
+                ),
+            ]
+        );
+        assert_eq!(
+            Vault::em(dir.path().join("nao")).fotografia_do_doctor(),
+            Fotografia::default()
+        );
+    }
+
+    #[test]
+    fn arquivos_sob_lista_tudo_inclusive_oculto() {
+        let dir = tempfile::tempdir().unwrap();
+        for rel in ["p/a.md", "p/.b", "p/s/c.pdf", "q/d.md"] {
+            let f = dir.path().join(rel);
+            std::fs::create_dir_all(f.parent().unwrap()).unwrap();
+            std::fs::write(f, "x").unwrap();
+        }
+        std::fs::create_dir_all(dir.path().join("p/vazia")).unwrap();
+        assert_eq!(
+            Vault::em(dir.path()).arquivos_sob("p"),
+            vec!["p/.b", "p/a.md", "p/s/c.pdf"]
+        );
+        assert!(Vault::em(dir.path()).arquivos_sob("nao").is_empty());
     }
 
     #[test]
