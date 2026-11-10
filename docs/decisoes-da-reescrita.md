@@ -395,6 +395,59 @@ na seção "Testes reavaliados".
     cada congelamento, e `divergencias.toml` muda nas reavaliações; esses
     três ficam fora da conferência.
 
+## Fatia 9a (dependências, CLI)
+
+Os números destas entradas podem colidir com os das fatias que correm em
+paralelo (7 e 10a); no merge, renumera-se em ordem, sem mudar o texto.
+
+55. **I10 roda no crate `vault`** (`tests/dependencias.rs`), como I1, I2,
+    I3 e I5 (decisões 36 e 47), sobre vaults do gerador com
+    `dependencias: true`. O oráculo é do teste: lê a linha `bloqueada-por`
+    do texto cru e faz alcançabilidade sobre os ids ativos, sem
+    `deps::ciclo`. Conferido que cada uma das quatro propriedades falha com
+    uma sabotagem que a ataca (ciclo nunca achado, validação sem ciclo,
+    rename sem arrastar, `bloqueia` com arquivadas, doctor sem pendurada,
+    doctor com um ciclo só). O id como nó (entrada 56) só tem teste
+    unitário: nenhum vault do gerador tem ciclo que dependa da segunda
+    cópia de um id.
+56. **No grafo, o nó é o id.** Com o mesmo id em dois projetos, as arestas de
+    todas as entradas ativas com esse id contam (`deps::ciclo`); antes só a
+    primeira. A lista cita o id e não diz qual das cópias quer, e o
+    `bloqueada` já tratava o id assim. A busca marca os nós visitados (com o
+    alvo fixo, um nó explorado sem chegar a ele não chega por outro
+    caminho): é o DFS linear que a §10.1 supõe, e não a enumeração de
+    caminhos simples, exponencial num grafo denso, que o `doctor` rodaria
+    para cada task ativa.
+57. **`set --bloqueada-por` valida depois das flags de hoje e de achar a
+    task.** As recusas de uso (fase, título, data) saem 2 antes; a lista
+    pede o índice, então se valida em `escrita::set` com
+    `deps::validar_bloqueada_por`, e o `validar_set` mantém a assinatura
+    (a 10a mexe nela). Ordem por id: a própria task, inexistente, ambíguo
+    (ativa e arquivada com o mesmo id contam como dois, como no
+    `find_task`); depois o ciclo, com a lista nova no lugar da do alvo.
+    Repetidos e vazios saem da lista; `""` sempre é aceito, inclusive numa
+    task em ciclo (é como se corta a aresta que o `doctor` acusa). O texto
+    "nada a mudar: …" e o usage não ganham a flag: os dois são comparados
+    byte a byte com o oráculo.
+58. **O `rename` troca o id em toda lista `bloqueada-por` de ARQUIVO DE
+    TASK do vault**, ativa ou arquivada, de qualquer projeto, inclusive na
+    própria task, e só o elemento igual ao id (`a-2` não é `a`). Nota que
+    não é task fica como está: a chave só tem sentido em task. Arquivo com
+    wikilink e lista recebe uma escrita só (duas falhariam o CAS). Cada id
+    trocado conta como referência no aviso de stderr. Com o id antigo
+    repetido em outro projeto, todas as listas mudam: a §10.1 diz "todas",
+    e o `id-duplicado` já acusa a ambiguidade. Quem espera dentro de um
+    projeto encerrado fica como está: `projects/_encerrados/<p>/tasks/…`
+    não é caminho de task (`path::split_task_path`), como fica fora do
+    índice; ao reabrir, o `doctor` acusa a `dependencia-pendurada`.
+59. **Os dois kinds do `doctor` são o passo 8**, depois do `link-pendurado`
+    e antes dos temporários, só sobre as ativas, nunca reparados.
+    `dependencia-pendurada`: um achado por id distinto que não existe entre
+    ativas e arquivadas, no caminho da task que espera.
+    `dependencia-ciclica`: um achado por ciclo (`deps::ciclos`, um por
+    conjunto de tasks), no caminho da primeira task do ciclo, com o caminho
+    `a → b → a` na mensagem.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do

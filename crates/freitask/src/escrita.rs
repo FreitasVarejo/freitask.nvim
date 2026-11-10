@@ -7,6 +7,7 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use freitask_core::date::Date;
+use freitask_core::deps;
 use freitask_core::index::Indice;
 use freitask_core::operacao::{self, PedidoSet};
 use freitask_core::path;
@@ -167,7 +168,7 @@ pub fn set(referencia: &str, pedido: &PedidoSet, hoje: Date) -> ExitCode {
         Err(e) => return die(&e, 1),
     };
     let t = alvo.rel.as_deref().and_then(path::split_task_path);
-    let validado = match operacao::validar_set(
+    let mut validado = match operacao::validar_set(
         &vocab,
         pedido,
         t.as_ref().and_then(|t| t.archived.as_deref()),
@@ -178,6 +179,16 @@ pub fn set(referencia: &str, pedido: &PedidoSet, hoje: Date) -> ExitCode {
     let (Some(t), Some(rel)) = (t, alvo.rel.as_deref()) else {
         return die(&format!("não é um arquivo de task: {}", alvo.abs), 1);
     };
+    // A lista só se valida aqui: pede o índice (ids que existem, ciclo).
+    if let Some(texto) = &pedido.bloqueada_por {
+        let Some(entrada) = indice.por_rel(rel) else {
+            return die(&format!("não é um arquivo de texto UTF-8: {}", alvo.abs), 1);
+        };
+        match deps::validar_bloqueada_por(&indice, entrada, texto) {
+            Ok(ids) => validado = validado.com_bloqueada_por(ids),
+            Err(e) => return die(&e, 1),
+        }
+    }
     let antes = match ler(&vault, rel, &alvo.abs) {
         Ok(b) => b,
         Err(c) => return c,

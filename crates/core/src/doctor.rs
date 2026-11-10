@@ -12,6 +12,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::date::Date;
+use crate::deps;
+use crate::index::{self, Indice};
 use crate::links;
 use crate::md;
 use crate::meta;
@@ -265,6 +267,55 @@ pub fn diagnosticar(vocab: &Vocab, foto: &Fotografia, fix: bool, hoje: Date) -> 
                 );
             }
         }
+    }
+
+    // 8. Dependências (spec §10.1): o grafo se lê do que está no disco, e o
+    // celular ou um merge do Syncthing escrevem `bloqueada-por` sem passar
+    // pelo `set`. Sem reparo: não se adivinha o id, e escolher que aresta
+    // cortar é decisão editorial.
+    let entradas = tasks
+        .iter()
+        .filter_map(|(_, rel, bytes)| index::scan_task(vocab, rel, bytes))
+        .collect();
+    let indice = Indice::new(Vec::new(), entradas);
+    for e in indice.entradas.iter().filter(|e| e.archived.is_none()) {
+        let mut vistos: Vec<&String> = Vec::new();
+        for id in &e.meta.bloqueada_por {
+            if vistos.contains(&id) {
+                continue;
+            }
+            vistos.push(id);
+            if indice.por_id(id).is_empty() {
+                c.add(
+                    Nivel::Warn,
+                    "dependencia-pendurada",
+                    &e.rel,
+                    format!(
+                        "bloqueada-por cita {}, que não existe — não bloqueia",
+                        lua_q(id)
+                    ),
+                    false,
+                );
+            }
+        }
+    }
+    for ciclo in deps::ciclos(&indice) {
+        // `ciclos` só devolve ids de tasks ativas, e o primeiro é o da task
+        // que o achou.
+        let Some(primeira) = indice
+            .entradas
+            .iter()
+            .find(|e| e.archived.is_none() && ciclo.first() == Some(&e.task_id))
+        else {
+            continue;
+        };
+        c.add(
+            Nivel::Error,
+            "dependencia-ciclica",
+            &primeira.rel,
+            format!("ciclo de dependência: {}", ciclo.join(" → ")),
+            false,
+        );
     }
 
     // Temporário de uma gravação que não chegou ao `rename`: o destino está
@@ -996,6 +1047,141 @@ mod tests {
                 false
             )]
         );
+    }
+
+    /// Uma task ativa consistente com o caminho, com a lista `bloqueada-por`
+    /// dada (`None` sem a chave).
+    fn task_md(rel: &str, deps: Option<&str>) -> (String, String) {
+        let t = path::split_task_path(rel).unwrap();
+        let fm = deps
+            .map(|d| format!("---\nbloqueada-por: [{d}]\n---\n\n"))
+            .unwrap_or_default();
+        let link = rel.strip_suffix(".md").unwrap();
+        let (callout, historico) = match t.archived {
+            Some(_) => (
+                "done",
+                "\n## Histórico\n\n- 2026-01-01 — arquivada em `archived/done` (feito)\n",
+            ),
+            None => ("todo", ""),
+        };
+        (
+            rel.to_string(),
+            format!("{fm}> [!{callout}] T\n> [[{link}|{}]]\n{historico}", t.id),
+        )
+    }
+
+    fn foto_de_tasks(tasks: &[(&str, Option<&str>)]) -> Fotografia {
+        Fotografia {
+            notas: tasks
+                .iter()
+                .map(|(rel, deps)| {
+                    let (r, b) = task_md(rel, *deps);
+                    (r, b.into_bytes())
+                })
+                .collect(),
+            ..Fotografia::default()
+        }
+    }
+
+    #[test]
+    fn dependencia_pendurada_so_de_ativa_um_achado_por_id_e_sem_reparo() {
+        let f = foto_de_tasks(&[
+            ("projects/p/tasks/b.md", Some("a, zz, zz, ww")),
+            ("projects/p/tasks/a.md", None),
+            // Arquivada que cita quem não existe: não espera por nada.
+            ("projects/p/tasks/archived/done/f.md", Some("sumiu")),
+            // A arquivada existe: está resolvida, não é pendurada.
+            ("projects/q/tasks/c.md", Some("f, b")),
+        ]);
+        for fix in [false, true] {
+            let d = roda(&f, fix);
+            assert_eq!(
+                resumo(&d),
+                vec![
+                    (
+                        "dependencia-pendurada",
+                        "projects/p/tasks/b.md",
+                        "bloqueada-por cita \"zz\", que não existe — não bloqueia",
+                        false
+                    ),
+                    (
+                        "dependencia-pendurada",
+                        "projects/p/tasks/b.md",
+                        "bloqueada-por cita \"ww\", que não existe — não bloqueia",
+                        false
+                    ),
+                ]
+            );
+            assert!(d.achados.iter().all(|a| a.nivel == Nivel::Warn));
+            assert!(d.plano.is_empty());
+            assert_eq!(d.pendentes(), 2);
+        }
+    }
+
+    #[test]
+    fn dependencia_ciclica_um_achado_por_ciclo_com_o_caminho_e_sem_reparo() {
+        let f = foto_de_tasks(&[
+            ("projects/p/tasks/a.md", Some("b")),
+            ("projects/p/tasks/b.md", Some("c")),
+            ("projects/p/tasks/c.md", Some("a")),
+            // Espera o ciclo, mas não está nele.
+            ("projects/p/tasks/d.md", Some("a")),
+            ("projects/q/tasks/x.md", Some("y")),
+            ("projects/q/tasks/y.md", Some("x")),
+            // Passa por arquivada: está resolvida, não fecha ciclo.
+            ("projects/q/tasks/m.md", Some("n")),
+            ("projects/q/tasks/archived/done/n.md", Some("m")),
+        ]);
+        for fix in [false, true] {
+            let d = roda(&f, fix);
+            assert_eq!(
+                resumo(&d),
+                vec![
+                    (
+                        "dependencia-ciclica",
+                        "projects/p/tasks/a.md",
+                        "ciclo de dependência: a → b → c → a",
+                        false
+                    ),
+                    (
+                        "dependencia-ciclica",
+                        "projects/q/tasks/x.md",
+                        "ciclo de dependência: x → y → x",
+                        false
+                    ),
+                ]
+            );
+            assert!(d.achados.iter().all(|a| a.nivel == Nivel::Error));
+            assert!(d.plano.is_empty());
+        }
+    }
+
+    #[test]
+    fn dependencias_vem_depois_do_link_pendurado_e_antes_dos_temporarios() {
+        let mut f = foto_de_tasks(&[("projects/p/tasks/a.md", Some("zz"))]);
+        f.notas
+            .push(("n.md".into(), b"[[projects/p/tasks/x]]\n".to_vec()));
+        f.temporarios = vec![(".freitask.a.1.tmp".into(), b"x".to_vec())];
+        let d = roda(&f, false);
+        let kinds: Vec<_> = d.achados.iter().map(|a| a.kind).collect();
+        assert_eq!(
+            kinds,
+            [
+                "link-pendurado",
+                "dependencia-pendurada",
+                "temporario-orfao"
+            ]
+        );
+    }
+
+    #[test]
+    fn dependencias_ignoram_task_que_nao_e_utf8() {
+        let mut f = foto_de_tasks(&[("projects/p/tasks/a.md", Some("b"))]);
+        f.notas
+            .push(("projects/p/tasks/b.md".to_string(), vec![0xFF, 0xFE]));
+        let d = roda(&f, false);
+        let kinds: Vec<_> = d.achados.iter().map(|a| a.kind).collect();
+        assert_eq!(kinds, ["dependencia-pendurada"], "b não é nota, não existe");
     }
 
     #[test]

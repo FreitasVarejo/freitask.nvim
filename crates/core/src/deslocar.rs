@@ -7,6 +7,7 @@
 //! `--fix` repara (spec §1.5).
 
 use crate::date::Date;
+use crate::deps;
 use crate::links::{self, Endereco};
 use crate::md;
 use crate::model;
@@ -36,11 +37,16 @@ pub fn aviso(refs: usize, arquivos: usize) -> Option<String> {
 /// As escritas que levam os wikilinks de `de` para `para` nas `notas` (rel,
 /// bytes) do vault. O próprio arquivo, nos dois endereços, fica de fora: quem
 /// o move já reescreveu a linha 2. Nota que não é UTF-8 não se reescreve.
-/// Devolve as escritas, os links trocados e as notas tocadas.
+/// Num `rename`, `renomeio` traz `(id antigo, id novo)`: o id também se troca
+/// na linha `bloqueada-por` das outras tasks (ativas e arquivadas, de qualquer
+/// projeto), na MESMA escrita dos wikilinks do arquivo, porque duas escritas
+/// do mesmo arquivo falhariam o CAS da segunda. Devolve as escritas, as
+/// referências trocadas (links e ids) e as notas tocadas.
 pub fn referencias(
     notas: &[(String, Vec<u8>)],
     de: &str,
     para: &str,
+    renomeio: Option<(&str, &str)>,
 ) -> (Vec<Efeito>, usize, usize) {
     let old = Endereco::de_rel(de);
     let new = Endereco::de_rel(para);
@@ -56,15 +62,32 @@ pub fn referencias(
         let Ok(texto) = std::str::from_utf8(bytes) else {
             continue;
         };
+        let mut depois = None;
+        let mut trocas = 0;
         if let Some((novo, n)) =
             links::rewrite_text(texto, |t, a| links::rewrite_link(t, a, &old, &new))
         {
-            refs += n;
+            trocas += n;
+            depois = Some(novo.into_bytes());
+        }
+        if let Some((velho_id, novo_id)) = renomeio
+            && path::split_task_path(rel).is_some()
+            && let Ok(doc) = Doc::parse(depois.as_deref().unwrap_or(bytes))
+        {
+            let mut linhas = doc.lines.clone();
+            let n = deps::trocar_id(&mut linhas, velho_id, novo_id);
+            if n > 0 {
+                trocas += n;
+                depois = Some(doc.com_linhas(linhas).to_bytes());
+            }
+        }
+        if let Some(depois) = depois {
+            refs += trocas;
             arquivos += 1;
             out.push(Efeito::Escrever {
                 rel: rel.clone(),
                 antes: Some(bytes.clone()),
-                depois: novo.into_bytes(),
+                depois,
             });
         }
     }
@@ -100,17 +123,17 @@ fn relink_block(
 /// O plano comum: a pasta de destino, o `rename`, a gravação do conteúdo novo
 /// no endereço novo e as referências.
 fn plano_de(
-    visao: &dyn Visao,
+    cx: &Contexto,
     rel: &str,
     novo_rel: &str,
     bytes: &[u8],
     doc: &Doc,
     linhas: Vec<String>,
-    notas: &[(String, Vec<u8>)],
+    renomeio: Option<(&str, &str)>,
 ) -> Deslocamento {
     let mut plano = Plano::new();
     if let Some((dir, _)) = novo_rel.rsplit_once('/')
-        && !visao.dir_existe(dir)
+        && !cx.visao.dir_existe(dir)
     {
         plano.push(Efeito::CriarDir {
             rel: dir.to_string(),
@@ -126,7 +149,7 @@ fn plano_de(
         antes: Some(bytes.to_vec()),
         depois: doc.com_linhas(linhas).to_bytes(),
     });
-    let (escritas, refs, arquivos) = referencias(notas, rel, novo_rel);
+    let (escritas, refs, arquivos) = referencias(cx.notas, rel, novo_rel, renomeio);
     plano.extend(escritas);
     Deslocamento {
         novo_rel: novo_rel.to_string(),
@@ -186,7 +209,7 @@ pub fn arquivar(
     });
     md::append_history(&mut linhas, dest, cx.hoje);
     Ok(Some(plano_de(
-        cx.visao, rel, &novo_rel, bytes, &doc, linhas, cx.notas,
+        cx, rel, &novo_rel, bytes, &doc, linhas, None,
     )))
 }
 
@@ -222,11 +245,25 @@ pub fn renomear(
     m.archived = t.archived.clone();
     let mut linhas = md::splice(&doc.lines, s, e, &model::serialize_block(cx.vocab, &m));
     md::update_frontmatter_key(&mut linhas, "id", novo_id);
+    // A própria task pode citar o id antigo (auto-dependência escrita à mão):
+    // ela não está entre as notas das referências, então se troca aqui.
+    let proprias = deps::trocar_id(&mut linhas, &t.id, novo_id);
     md::append_history_renamed(&mut linhas, &t.id, novo_id, cx.hoje);
     let novo_rel = path::task_rel(&t.project, novo_id, t.archived.as_deref());
-    Ok(plano_de(
-        cx.visao, rel, &novo_rel, bytes, &doc, linhas, cx.notas,
-    ))
+    let mut d = plano_de(
+        cx,
+        rel,
+        &novo_rel,
+        bytes,
+        &doc,
+        linhas,
+        Some((&t.id, novo_id)),
+    );
+    if proprias > 0 {
+        d.refs += proprias;
+        d.arquivos += 1;
+    }
+    Ok(d)
 }
 
 /// `move`: leva a task para outro projeto, no mesmo `archived/<tipo>/` se
@@ -273,9 +310,7 @@ pub fn mover(
     let mut linhas = relink_block(cx.vocab, &doc.lines, &t, projeto, archived, true, |_| {});
     md::append_history_moved(&mut linhas, &t.project, projeto, cx.hoje);
     let novo_rel = path::task_rel(projeto, &t.id, archived);
-    Ok(plano_de(
-        cx.visao, rel, &novo_rel, bytes, &doc, linhas, cx.notas,
-    ))
+    Ok(plano_de(cx, rel, &novo_rel, bytes, &doc, linhas, None))
 }
 
 #[cfg(test)]
@@ -474,6 +509,102 @@ mod tests {
     }
 
     #[test]
+    fn renomear_arrasta_o_id_na_lista_bloqueada_por_das_tasks_do_vault() {
+        let vo = Vocab::default();
+        let d = disco(&[X], &["projects/p/tasks"]);
+        let b = "projects/p/tasks/b.md";
+        let v = "projects/q/tasks/archived/done/v.md";
+        let w = "projects/p/tasks/w.md";
+        let ns = notas(&[
+            (X, "> [!todo] X\n> [[x]]\n"),
+            // Wikilink E lista no mesmo arquivo: uma escrita só.
+            (
+                b,
+                "---\ntags: [t]\nbloqueada-por: [x-2, x, c]\n---\n\n> [!todo] B\n> [[projects/p/tasks/b|b]]\n\nveja [[x]]\n",
+            ),
+            (v, "---\nbloqueada-por: [x]\n---\n\n> [!done] V\n"),
+            // Só a lista, em CRLF: continua CRLF.
+            (
+                w,
+                "---\r\nbloqueada-por: [c, x]\r\n---\r\n\r\n> [!todo] W\r\n",
+            ),
+            // Id parecido e nota que não é task: a linha fica como está.
+            (
+                "projects/p/tasks/p.md",
+                "---\nbloqueada-por: [x-2, xx]\n---\n\n> [!todo] P\n",
+            ),
+            ("n.md", "---\nbloqueada-por: [x]\n---\n\ntexto\n"),
+        ]);
+        let cx = Contexto {
+            vocab: &vo,
+            visao: &d,
+            raiz: "/v",
+            notas: &ns,
+            hoje: hoje(),
+        };
+        let r = renomear(&cx, X, "/a", ns[0].1.as_slice(), "y").unwrap();
+        assert_eq!(
+            escrita(&r, b),
+            "---\ntags: [t]\nbloqueada-por: [x-2, y, c]\n---\n\n> [!todo] B\n> [[projects/p/tasks/b|b]]\n\nveja [[y]]\n"
+        );
+        assert_eq!(
+            escrita(&r, v),
+            "---\nbloqueada-por: [y]\n---\n\n> [!done] V\n"
+        );
+        assert_eq!(
+            escrita(&r, w),
+            "---\r\nbloqueada-por: [c, y]\r\n---\r\n\r\n> [!todo] W\r\n"
+        );
+        let escritas = r
+            .plano
+            .iter()
+            .filter(|e| matches!(e, Efeito::Escrever { rel, .. } if rel == b))
+            .count();
+        assert_eq!(escritas, 1, "wikilink e lista juntos, numa escrita");
+        assert!(
+            r.plano.iter().all(|e| !matches!(e,
+                Efeito::Escrever { rel, .. } if rel == "n.md" || rel == "projects/p/tasks/p.md")),
+            "nota que não é task e id parecido ficam de fora"
+        );
+        // b: o wikilink e o id (2); v: 1; w: 1. Cada arquivo conta uma vez.
+        assert_eq!((r.refs, r.arquivos), (4, 3));
+        assert_eq!(
+            aviso(r.refs, r.arquivos).unwrap(),
+            "4 referência(s) atualizada(s) em 3 arquivo(s)"
+        );
+    }
+
+    #[test]
+    fn renomear_troca_o_id_na_propria_lista_e_move_archive_e_unarchive_nao_arrastam() {
+        let vo = Vocab::default();
+        let d = disco(&[X], &["projects/p/tasks"]);
+        let ns = notas(&[(
+            "projects/q/tasks/k.md",
+            "---\nbloqueada-por: [x]\n---\n\n> [!todo] K\n",
+        )]);
+        let cx = Contexto {
+            vocab: &vo,
+            visao: &d,
+            raiz: "/v",
+            notas: &ns,
+            hoje: hoje(),
+        };
+        let propria = "---\nbloqueada-por: [x, z]\n---\n\n> [!todo] X\n> [[x]]\n";
+        let r = renomear(&cx, X, "/a", propria.as_bytes(), "y").unwrap();
+        assert!(escrita(&r, "projects/p/tasks/y.md").starts_with("---\nbloqueada-por: [y, z]\n"));
+        // A própria task (1 id) e a `k` (1 id), em dois arquivos.
+        assert_eq!((r.refs, r.arquivos), (2, 2));
+        // O id não muda nos outros deslocamentos: a lista de `k` não se toca.
+        let r = arquivar(&cx, X, "/a", propria.as_bytes(), Some("done"))
+            .unwrap()
+            .unwrap();
+        assert_eq!((r.refs, r.arquivos), (0, 0));
+        let projetos = vec!["p".to_string(), "q".to_string()];
+        let r = mover(&cx, X, "/a", propria.as_bytes(), "q", &projetos).unwrap();
+        assert_eq!((r.refs, r.arquivos), (0, 0));
+    }
+
+    #[test]
     fn renomear_recusas() {
         let vo = Vocab::default();
         let d = disco(&[X, "projects/p/tasks/archived/failed/y.md"], &[]);
@@ -586,10 +717,10 @@ mod tests {
             ("b.md".to_string(), vec![0xFF, b'[']),
             ("c.md".to_string(), b"[[projects/p/tasks/x]]".to_vec()),
         ];
-        let (e, refs, arq) = referencias(&ns, X, "projects/q/tasks/x.md");
+        let (e, refs, arq) = referencias(&ns, X, "projects/q/tasks/x.md", None);
         assert_eq!((refs, arq), (1, 1));
         assert_eq!(e.len(), 1);
-        let (e, refs, arq) = referencias(&ns, X, X);
+        let (e, refs, arq) = referencias(&ns, X, X, None);
         assert!(e.is_empty());
         assert_eq!((refs, arq), (0, 0));
     }

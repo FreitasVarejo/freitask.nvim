@@ -143,6 +143,9 @@ pub struct PedidoSet {
     pub title: Option<String>,
     pub desc: Option<String>,
     pub volta_em: Option<String>,
+    /// A lista como veio (`"a,b"`; `""` limpa). Só o `escrita::set` a valida,
+    /// porque depende do índice do vault.
+    pub bloqueada_por: Option<String>,
 }
 
 impl PedidoSet {
@@ -151,6 +154,7 @@ impl PedidoSet {
             && self.title.is_none()
             && self.desc.is_none()
             && self.volta_em.is_none()
+            && self.bloqueada_por.is_none()
     }
 
     fn mexe_no_bloco(&self) -> bool {
@@ -167,7 +171,19 @@ pub struct SetValidado {
     desc: Option<String>,
     /// `Some(None)` limpa a `volta-em`; `Some(Some(d))` grava `d`.
     volta_em: Option<Option<String>>,
+    /// A lista já validada (vazia remove a chave). `validar_set` a deixa
+    /// `None`: validar a lista pede o índice, e quem o tem a preenche.
+    bloqueada_por: Option<Vec<String>>,
     bloco: bool,
+}
+
+impl SetValidado {
+    /// Junta a lista de `--bloqueada-por` já validada por
+    /// `deps::validar_bloqueada_por`.
+    pub fn com_bloqueada_por(mut self, ids: Vec<String>) -> SetValidado {
+        self.bloqueada_por = Some(ids);
+        self
+    }
 }
 
 /// Valida o pedido de `set` inteiro antes de qualquer escrita, na ordem de
@@ -208,6 +224,7 @@ pub fn validar_set(
         title,
         desc,
         volta_em,
+        bloqueada_por: None,
         bloco: pedido.mexe_no_bloco(),
     })
 }
@@ -216,7 +233,7 @@ pub fn validar_set(
 /// podem ser os mesmos: aí nada se grava). O id é o do CAMINHO: `set` nunca
 /// renomeia, e um link de linha 2 dessincronizado sai consertado. O bloco só é
 /// reserializado quando fase, título ou descrição foram pedidos; `--volta-em`
-/// sozinho mexe só no frontmatter.
+/// e `--bloqueada-por` sozinhos mexem só no frontmatter.
 pub fn editar_set(
     vocab: &Vocab,
     t: &TaskRef,
@@ -252,6 +269,9 @@ pub fn editar_set(
     }
     if let Some(volta) = &v.volta_em {
         meta::write_volta_em(&mut lines, volta.as_deref());
+    }
+    if let Some(ids) = &v.bloqueada_por {
+        meta::write_bloqueada_por(&mut lines, ids);
     }
     Ok(doc.com_linhas(lines).to_bytes())
 }
@@ -436,7 +456,7 @@ mod tests {
             status: s.map(Into::into),
             title: t.map(Into::into),
             volta_em: v.map(Into::into),
-            desc: None,
+            ..Default::default()
         };
         assert_eq!(
             validar_set(&vo, &p(Some("bogus"), Some(""), None), None).unwrap_err(),
@@ -482,6 +502,10 @@ mod tests {
             },
             PedidoSet {
                 volta_em: Some(String::new()),
+                ..Default::default()
+            },
+            PedidoSet {
+                bloqueada_por: Some(String::new()),
                 ..Default::default()
             },
         ] {
@@ -550,6 +574,29 @@ mod tests {
         )
         .unwrap();
         assert_eq!(limpo, antes);
+    }
+
+    #[test]
+    fn editar_set_bloqueada_por_so_mexe_no_frontmatter_e_vazio_limpa() {
+        let vo = Vocab::default();
+        let t = tref("projects/p/tasks/x.md");
+        // Bloco fora do canônico: `--bloqueada-por` não o reserializa.
+        let antes = "> [!todo] **X**\n> [[x]]\n";
+        let pedido = PedidoSet {
+            bloqueada_por: Some("a,b".into()),
+            ..Default::default()
+        };
+        let v = validar_set(&vo, &pedido, None).unwrap();
+        assert_eq!(v.bloqueada_por, None, "o validar_set não valida a lista");
+        let v = v.com_bloqueada_por(vec!["a".into(), "b".into()]);
+        let r = editar_set(&vo, &t, "/abs", antes.as_bytes(), &v).unwrap();
+        let r = String::from_utf8(r).unwrap();
+        assert_eq!(r, format!("---\nbloqueada-por: [a, b]\n---\n\n{antes}"));
+        let limpa = validar_set(&vo, &pedido, None)
+            .unwrap()
+            .com_bloqueada_por(Vec::new());
+        let limpo = editar_set(&vo, &t, "/abs", r.as_bytes(), &limpa).unwrap();
+        assert_eq!(String::from_utf8(limpo).unwrap(), antes);
     }
 
     #[test]
