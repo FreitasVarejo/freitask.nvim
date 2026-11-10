@@ -2,20 +2,18 @@
 //! `rename`, `move`) e os que mudam um projeto inteiro (`encerrar`,
 //! `reabrir`). Mesmo fluxo dos outros que escrevem (lock, leitura, plano do
 //! `core`, execução com CAS, painel), mais o aviso de quantas referências o
-//! plano reescreveu, em stderr, como hoje.
+//! plano reescreveu, em stderr, como hoje. Devolvem um `Resultado`
+//! (`saida.rs`), como `escrita.rs`.
 
-use std::process::ExitCode;
-
-use freitask_core::date::Date;
-use freitask_core::deslocar::{self, Contexto, Deslocamento};
+use freitask_core::deslocar::{self, Contexto as ContextoCore, Deslocamento};
 use freitask_core::path;
 use freitask_core::projeto;
-use freitask_vault::Vault;
 
-use crate::cli::{die, falha, travar};
-use crate::escrita::{fecha, ler, resolver, vault, vocab};
+use crate::escrita::{ler, resolver};
+use crate::saida::{Contexto, Corrida, Falha, Resultado};
 
 /// O que se pede ao deslocamento.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Pedido {
     /// `archive`: o tipo pode faltar (saída 2, depois de achar a task).
     Archive(Option<String>),
@@ -27,103 +25,85 @@ pub enum Pedido {
 impl Pedido {
     /// `archive`/`unarchive` recusam em duas linhas, como hoje: o motivo (que
     /// o motor dava por `vim.notify`) e o fecho.
-    fn recusa(&self, msg: &str) -> ExitCode {
+    fn recusa(&self, c: &mut Corrida, msg: &str) -> Falha {
         match self {
             Pedido::Archive(_) | Pedido::Unarchive => {
-                eprintln!("freitask: {msg}");
-                die("operação não concluída (veja as mensagens acima)", 1)
+                c.aviso(msg);
+                c.falha("operação não concluída (veja as mensagens acima)", 1)
             }
-            Pedido::Rename(_) | Pedido::Move(_) => die(msg, 1),
+            Pedido::Rename(_) | Pedido::Move(_) => c.falha(msg, 1),
         }
     }
 }
 
-pub fn deslocar(referencia: &str, pedido: Pedido, hoje: Date) -> ExitCode {
-    let _trava = match travar() {
-        Ok(t) => t,
-        Err(c) => return c,
-    };
-    let vault = match vault() {
-        Ok(v) => v,
-        Err(c) => return c,
-    };
-    let vocab = vocab(&vault);
+pub fn deslocar(cx: &Contexto, referencia: &str, pedido: Pedido) -> Resultado {
+    let mut c = Corrida::default();
+    let _trava = c.travar(cx)?;
+    let vault = cx.vault;
+    let hoje = cx.hoje;
+    let vocab = c.vocab(vault);
     let indice = vault.indice(&vocab);
-    let alvo = match resolver(&vault, &indice, referencia) {
-        Ok(a) => a,
-        Err(e) => return die(&e, 1),
-    };
+    let alvo = resolver(vault, &indice, referencia).map_err(|e| c.falha(e, 1))?;
     if let Pedido::Archive(None) = pedido {
-        return die("falta o tipo: done|dropped|failed", 2);
+        return Err(c.falha("falta o tipo: done|dropped|failed", 2));
     }
     if let Pedido::Rename(novo) = &pedido
         && let Some(t) = alvo.rel.as_deref().and_then(path::split_task_path)
         && &t.id == novo
     {
-        return die(&format!("a task já se chama {novo}"), 1);
+        return Err(c.falha(format!("a task já se chama {novo}"), 1));
     }
     let Some(rel) = alvo.rel.as_deref() else {
-        return pedido.recusa(&format!("não é um arquivo de task: {}", alvo.abs));
+        let msg = format!("não é um arquivo de task: {}", alvo.abs);
+        return Err(pedido.recusa(&mut c, &msg));
     };
-    let bytes = match ler(&vault, rel, &alvo.abs) {
-        Ok(b) => b,
-        Err(c) => return c,
-    };
+    let bytes = ler(&mut c, vault, rel, &alvo.abs)?;
     let notas = vault.notas();
     let raiz = vault.raiz().to_string_lossy().into_owned();
-    let cx = Contexto {
+    let core = ContextoCore {
         vocab: &vocab,
-        visao: &vault,
+        visao: vault,
         raiz: &raiz,
         notas: &notas,
         hoje,
     };
     let r = match &pedido {
-        Pedido::Archive(tipo) => deslocar::arquivar(&cx, rel, &alvo.abs, &bytes, tipo.as_deref()),
-        Pedido::Unarchive => deslocar::arquivar(&cx, rel, &alvo.abs, &bytes, None),
-        Pedido::Rename(novo) => deslocar::renomear(&cx, rel, &alvo.abs, &bytes, novo).map(Some),
+        Pedido::Archive(tipo) => deslocar::arquivar(&core, rel, &alvo.abs, &bytes, tipo.as_deref()),
+        Pedido::Unarchive => deslocar::arquivar(&core, rel, &alvo.abs, &bytes, None),
+        Pedido::Rename(novo) => deslocar::renomear(&core, rel, &alvo.abs, &bytes, novo).map(Some),
         Pedido::Move(projeto) => {
-            deslocar::mover(&cx, rel, &alvo.abs, &bytes, projeto, &vault.projetos()).map(Some)
+            deslocar::mover(&core, rel, &alvo.abs, &bytes, projeto, &vault.projetos()).map(Some)
         }
     };
     match r {
-        Err(e) => pedido.recusa(&e),
+        Err(e) => Err(pedido.recusa(&mut c, &e)),
         // Já está onde deveria: nada a gravar, e o caminho de sempre.
-        Ok(None) => fecha(&vault, hoje, &alvo.abs),
-        Ok(Some(d)) => executa(&vault, hoje, &d),
+        Ok(None) => c.fecha(cx, &alvo.abs),
+        Ok(Some(d)) => executa(&mut c, cx, &d),
     }
 }
 
-fn executa(vault: &Vault, hoje: Date, d: &Deslocamento) -> ExitCode {
-    if let Err(e) = vault.aplicar(&d.plano) {
-        return falha(&e);
-    }
+fn executa(c: &mut Corrida, cx: &Contexto, d: &Deslocamento) -> Resultado {
+    cx.vault.aplicar(&d.plano).map_err(|e| c.erro_escrita(&e))?;
     if let Some(a) = deslocar::aviso(d.refs, d.arquivos) {
-        eprintln!("freitask: {a}");
+        c.aviso(a);
     }
-    fecha(vault, hoje, &vault.caminho_str(&d.novo_rel))
+    c.fecha(cx, &cx.vault.caminho_str(&d.novo_rel))
 }
 
 /// `encerrar` (`fechar = true`) e `reabrir`. Como hoje, a raiz é garantida
 /// antes de validar; as recusas saem 1.
-pub fn projeto(nome: &str, fechar: bool, hoje: Date) -> ExitCode {
-    let _trava = match travar() {
-        Ok(t) => t,
-        Err(c) => return c,
-    };
-    let vault = match vault() {
-        Ok(v) => v,
-        Err(c) => return c,
-    };
-    if let Err(e) = vault.garantir_raiz() {
-        return falha(&e);
-    }
-    let vocab = vocab(&vault);
+pub fn projeto(cx: &Contexto, nome: &str, fechar: bool) -> Resultado {
+    let mut c = Corrida::default();
+    let _trava = c.travar(cx)?;
+    let vault = cx.vault;
+    vault.garantir_raiz().map_err(|e| c.erro_escrita(&e))?;
+    let vocab = c.vocab(vault);
     let notas = vault.notas();
     let raiz = vault.raiz().to_string_lossy().into_owned();
-    let cx = projeto::Contexto {
+    let core = projeto::Contexto {
         vocab: &vocab,
-        visao: &vault,
+        visao: vault,
         raiz: &raiz,
         notas: &notas,
     };
@@ -136,12 +116,12 @@ pub fn projeto(nome: &str, fechar: bool, hoje: Date) -> ExitCode {
             Ok(()) => vault.arquivos_sob(&path::project_dir(nome_t, false).0),
             Err(_) => Vec::new(),
         };
-        projeto::encerrar(&cx, &indice, nome, &arquivos)
+        projeto::encerrar(&core, &indice, nome, &arquivos)
     } else {
-        projeto::reabrir(&cx, nome)
+        projeto::reabrir(&core, nome)
     };
     match r {
-        Err(e) => die(&e, 1),
-        Ok(d) => executa(&vault, hoje, &d),
+        Err(e) => Err(c.falha(e, 1)),
+        Ok(d) => executa(&mut c, cx, &d),
     }
 }

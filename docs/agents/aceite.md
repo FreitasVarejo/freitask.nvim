@@ -44,7 +44,7 @@ esqueleto: teste que já passa sem implementação não prova nada.
   `LC_ALL=C.UTF-8` e `FREITASK_TODAY=AAAA-MM-DD` (fixa o dia; o painel e as
   adiadas dependem dele). `current_dir` no HOME.
 - TUI: em processo pelo contrato `freitask::tui::Sessao`
-  (`crates/freitask/src/tui.rs`, decisão f7.1 em
+  (`crates/freitask/src/tui/sessao.rs`, decisão f7.1 em
   `docs/decisoes-da-reescrita.md`), e o binário num PTY (`portable-pty`, `vt100`).
 - Afirme explicitamente stdout, stderr, código de saída e o conteúdo dos
   arquivos tocados: o valor esperado está escrito no teste, nunca gerado da

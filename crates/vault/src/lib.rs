@@ -342,20 +342,6 @@ impl Vault {
     pub fn aplicar(&self, plano: &[Efeito]) -> Result<(), ErroEscrita> {
         escrita::aplicar(&disco::Real, &self.raiz, plano)
     }
-
-    /// Toma o lock de escrita (spec §1.5), do `$XDG_RUNTIME_DIR` ou do
-    /// `~/.local/state`, esperando até `trava::ESPERA`.
-    pub fn travar() -> Result<trava::Trava, trava::ErroTrava> {
-        let xdg = std::env::var("XDG_RUNTIME_DIR").ok();
-        let home = std::env::var("HOME").ok();
-        let Some(caminho) = trava::caminho(xdg.as_deref(), home.as_deref()) else {
-            return Err(trava::ErroTrava::Io(
-                PathBuf::from("freitask.lock"),
-                std::io::Error::other("nem XDG_RUNTIME_DIR nem HOME estão definidos"),
-            ));
-        };
-        trava::tomar(&caminho, trava::ESPERA)
-    }
 }
 
 impl Visao for Vault {

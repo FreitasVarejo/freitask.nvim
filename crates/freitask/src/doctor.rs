@@ -10,8 +10,7 @@ use freitask_core::date::Date;
 use freitask_core::doctor::{self, Achado, Diagnostico};
 use freitask_vault::Vault;
 
-use crate::cli::{falha, rebuild, say, travar};
-use crate::escrita::{vault, vocab};
+use crate::cli::{falha, rebuild, say, travar, vault, vocab};
 
 /// Um achado em texto: `%-6s %-22s %s\n         %s%s` do `cli.lua`.
 pub fn texto_do_achado(a: &Achado) -> String {
