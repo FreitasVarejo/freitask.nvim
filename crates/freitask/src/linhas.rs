@@ -31,6 +31,10 @@ pub struct Resumo {
     pub prioridade: Option<&'static str>,
     /// O dia em que a task adiada volta; só para quem está adiada agora.
     pub volta_em: Option<String>,
+    /// O `prazo:` como está escrito (aparado), mesmo inválido; de toda task.
+    pub prazo: Option<String>,
+    /// `prazo - hoje`; `None` sem prazo ou com prazo inválido.
+    pub dias_para_o_prazo: Option<i64>,
     /// O caminho absoluto.
     pub path: String,
 }
@@ -67,6 +71,8 @@ pub fn resumo(vault: &Vault, vocab: &Vocab, e: &Entry, today: Date) -> Resumo {
         } else {
             None
         },
+        prazo: e.meta.prazo.clone(),
+        dias_para_o_prazo: meta::dias_para_o_prazo(&e.meta, today),
         path: vault.caminho_str(&e.rel),
     }
 }
@@ -97,8 +103,8 @@ pub fn linha(vault: &Vault, vocab: &Vocab, indice: &Indice, e: &Entry, today: Da
         "bloqueada_por": e.meta.bloqueada_por,
         "bloqueada": deps.bloqueada,
         "bloqueia": deps.bloqueia,
-        "prazo": e.meta.prazo,
-        "dias_para_o_prazo": meta::dias_para_o_prazo(&e.meta, today),
+        "prazo": r.prazo,
+        "dias_para_o_prazo": r.dias_para_o_prazo,
     })
 }
 

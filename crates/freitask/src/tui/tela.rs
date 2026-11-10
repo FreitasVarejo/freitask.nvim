@@ -1,12 +1,14 @@
 //! Desenho. Só lê o `State`; nenhuma decisão mora aqui.
 
 use freitask_core::config::ARCHIVED_TYPES;
+use freitask_core::date::Date;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::linhas::Resumo;
 use crate::tui::atalhos::ATALHOS;
 use crate::tui::estado::{Campo, Confirmacao, Escolha, Modo, NovaTask, Painel, State};
 
@@ -109,6 +111,19 @@ fn projetos(f: &mut Frame, estado: &State, area: Rect) {
     f.render_stateful_widget(lista, area, &mut selecao);
 }
 
+/// `  prazo DD/MM` da task ativa com prazo válido: amarelo até o dia do
+/// prazo, vermelho depois. A arquivada não mostra (um prazo vencido de uma
+/// task feita seria ruído) e o prazo inválido não tem dia para mostrar.
+fn prazo_na_linha(t: &Resumo) -> Option<Span<'static>> {
+    let dias = t.dias_para_o_prazo.filter(|_| t.archived.is_none())?;
+    let dia = Date::parse(t.prazo.as_deref()?)?;
+    let cor = if dias >= 0 { Color::Yellow } else { Color::Red };
+    Some(Span::styled(
+        format!("  prazo {}", dia.dia_mes()),
+        Style::default().fg(cor),
+    ))
+}
+
 fn tasks(f: &mut Frame, estado: &State, area: Rect) {
     let visiveis = estado.tasks_visiveis();
     let itens: Vec<ListItem> = visiveis
@@ -147,6 +162,7 @@ fn tasks(f: &mut Frame, estado: &State, area: Rect) {
                     Style::default().fg(Color::Yellow),
                 ));
             }
+            spans.extend(prazo_na_linha(t));
             spans.push(Span::styled(format!("  {}", t.title), apagado()));
             ListItem::new(Line::from(spans))
         })
@@ -344,6 +360,7 @@ fn modal_prompt(f: &mut Frame, campo: Campo, valor: &str) {
     let titulo = match campo {
         Campo::Titulo => " Título ",
         Campo::Descricao => " Descrição do estado (vazio apaga) ",
+        Campo::Prazo => " Prazo (AAAA-MM-DD, vazio limpa) ",
         Campo::Renomear => " Novo id (renomeia arquivo e links do vault) ",
         Campo::NovoProjeto => " Novo projeto ",
     };
@@ -479,6 +496,8 @@ mod tests {
             hidden: false,
             prioridade: None,
             volta_em: None,
+            prazo: None,
+            dias_para_o_prazo: None,
             path: format!("/v/projects/{projeto}/tasks/{id}.md"),
         }
     }
@@ -729,6 +748,83 @@ mod tests {
         let s = estado_apos(&teclas("lG"));
         foto("estreita", &s);
         desenha(&s, 60, 15).0
+    }
+
+    /// `dados()` com prazos, à parte: o `dados()` das outras telas não muda.
+    /// `medir-tempo` no prazo, `fechar-ciclo` vencida, `no-dia` no próprio dia,
+    /// `adiada` com prazo depois da volta; sem prazo na tela: a arquivada
+    /// `velha-feita` (vencida), `sonho` (prazo inválido) e `escrever-spec`.
+    fn dados_com_prazo() -> Dados {
+        let mut d = dados();
+        for t in &mut d.tasks {
+            let (prazo, dias) = match t.id.as_str() {
+                "medir-tempo" => ("2026-11-18", Some(8)),
+                "fechar-ciclo" => ("2026-11-05", Some(-5)),
+                "adiada" => ("2026-12-24", Some(44)),
+                "velha-feita" => ("2026-11-01", Some(-9)),
+                "sonho" => ("amanhã", None),
+                _ => continue,
+            };
+            t.prazo = Some(prazo.into());
+            t.dias_para_o_prazo = dias;
+        }
+        d.tasks.push(Resumo {
+            prazo: Some("2026-11-10".into()),
+            dias_para_o_prazo: Some(0),
+            ..tarefa("alfa", "no-dia", "Vence hoje", 1)
+        });
+        d
+    }
+
+    /// O estado depois destas teclas sobre estes dados, com o preview lido.
+    fn estado_de(d: Dados, teclas: &[KeyEvent]) -> State {
+        let mut s = com_preview(State::novo(d));
+        for t in teclas {
+            s = com_preview(update(s, Evento::Tecla(*t)).0);
+        }
+        s
+    }
+
+    /// A linha do painel `p` que traz `id`, inteira (sem aparar), e o fg de
+    /// cada célula dela.
+    fn linha_do_painel(b: &Buffer, p: Rect, id: &str) -> (String, Vec<Color>) {
+        let y = (p.y..p.bottom())
+            .find(|&y| {
+                (p.x..p.right())
+                    .map(|x| b[(x, y)].symbol())
+                    .collect::<String>()
+                    .contains(id)
+            })
+            .unwrap_or_else(|| panic!("sem {id:?} no painel:\n{}", texto(b)));
+        let l = (p.x..p.right()).map(|x| b[(x, y)].symbol()).collect();
+        (l, (p.x..p.right()).map(|x| b[(x, y)].fg).collect())
+    }
+
+    /// As cores das células não brancas de `trecho` na linha de `id`.
+    fn cores_do_trecho(b: &Buffer, p: Rect, id: &str, trecho: &str) -> Vec<Color> {
+        let (l, cores) = linha_do_painel(b, p, id);
+        let ini = l[..l
+            .find(trecho)
+            .unwrap_or_else(|| panic!("sem {trecho:?}: {l:?}"))]
+            .chars()
+            .count();
+        trecho
+            .chars()
+            .enumerate()
+            .filter(|(_, c)| *c != ' ')
+            .map(|(i, _)| cores[ini + i])
+            .collect()
+    }
+
+    fn tela_do_prazo() -> State {
+        estado_de(dados_com_prazo(), &teclas("AS"))
+    }
+
+    fn tela_do_prompt_do_prazo() -> (Buffer, (u16, u16)) {
+        foto(
+            "prazo_prompt",
+            &estado_de(dados_com_prazo(), &teclas("ljp")),
+        )
     }
 
     // --- as telas -----------------------------------------------------------------
@@ -992,6 +1088,92 @@ mod tests {
         let s = estado_apos(&teclas("/ab"));
         let (_, cursor) = desenha(&s, 100, 30);
         assert_eq!(cursor, (3, 29));
+    }
+
+    #[test]
+    fn o_prazo_vem_depois_do_id_e_da_volta_antes_do_titulo_e_com_a_cor_do_dia() {
+        let s = tela_do_prazo();
+        cabe(&foto("prazo", &s).0, 100, 30);
+        // Larga o bastante para a linha da adiada caber inteira.
+        let b = desenha(&s, 200, 30).0;
+        let tasks = painel(&b, "Tasks");
+        for (id, titulo, prazo, cor) in [
+            ("medir-tempo", "Medir o tempo", "prazo 18/11", Color::Yellow),
+            ("fechar-ciclo", "Fechar o ciclo", "prazo 05/11", Color::Red),
+            ("no-dia", "Vence hoje", "prazo 10/11", Color::Yellow),
+            (
+                "adiada",
+                "Adiada até dezembro",
+                "prazo 24/12",
+                Color::Yellow,
+            ),
+        ] {
+            let (l, _) = linha_do_painel(&b, tasks, id);
+            let (i, p, t) = (l.find(id), l.find(prazo), l.find(titulo));
+            assert!(i < p && p < t && p.is_some(), "{id}: {l:?}");
+            assert_eq!(
+                cores_do_trecho(&b, tasks, id, prazo),
+                vec![cor; prazo.chars().filter(|c| *c != ' ').count()],
+                "{id}"
+            );
+        }
+        // A data de volta vem antes do prazo.
+        let (l, _) = linha_do_painel(&b, tasks, "adiada");
+        assert!(l.find("volta 2026-12-01") < l.find("prazo 24/12"), "{l:?}");
+        // Sem prazo na linha: a arquivada (vencida), o prazo inválido e a task
+        // sem prazo. O ano não aparece.
+        for id in ["velha-feita", "sonho", "escrever-spec"] {
+            let (l, _) = linha_do_painel(&b, tasks, id);
+            assert!(!l.contains("prazo"), "{id}: {l:?}");
+        }
+        let com_prazo = itens(&b, tasks)
+            .iter()
+            .filter(|l| l.contains("prazo"))
+            .count();
+        assert_eq!(com_prazo, 4, "{}", texto(&b));
+        assert!(!texto(&b).contains("2026-12-24"), "o ano não aparece");
+    }
+
+    #[test]
+    fn prazo_na_linha_so_vale_para_ativa_com_prazo_valido() {
+        let com = |prazo: Option<&str>, dias: Option<i64>, arquivada: bool| Resumo {
+            prazo: prazo.map(Into::into),
+            dias_para_o_prazo: dias,
+            archived: arquivada.then(|| "done".to_string()),
+            ..tarefa("alfa", "x", "X", 1)
+        };
+        let cor = |t: &Resumo| prazo_na_linha(t).map(|s| (s.content.to_string(), s.style.fg));
+        assert_eq!(
+            cor(&com(Some("2026-11-10"), Some(0), false)),
+            Some(("  prazo 10/11".to_string(), Some(Color::Yellow)))
+        );
+        assert_eq!(
+            cor(&com(Some("2026-11-09"), Some(-1), false)),
+            Some(("  prazo 09/11".to_string(), Some(Color::Red)))
+        );
+        assert_eq!(cor(&com(Some("2026-11-09"), Some(-1), true)), None);
+        assert_eq!(cor(&com(Some("amanhã"), None, false)), None);
+        assert_eq!(cor(&com(None, None, false)), None);
+    }
+
+    #[test]
+    fn o_prompt_do_prazo_tem_o_titulo_o_valor_escrito_e_o_cursor_no_fim() {
+        let (b, cursor) = tela_do_prompt_do_prazo();
+        cabe(&b, 100, 30);
+        let m = painel(&b, "Prazo (AAAA-MM-DD, vazio limpa)");
+        assert_eq!(linhas_do(&b, m)[0], "2026-11-18");
+        assert_eq!(cursor, (m.x + "2026-11-18".chars().count() as u16, m.y));
+        assert!(texto(&b).contains("Enter confirma · Esc cancela"));
+    }
+
+    #[test]
+    fn o_prompt_do_prazo_cabe_em_terminal_estreito() {
+        let s = estado_de(dados_com_prazo(), &teclas("ljp"));
+        for (w, h) in [(20, 5), (24, 7), (40, 10), (60, 15)] {
+            let (b, (cx, cy)) = desenha(&s, w, h);
+            cabe(&b, w, h);
+            assert!(cx < w && cy < h, "{w}x{h}: cursor em ({cx}, {cy})");
+        }
     }
 
     #[test]

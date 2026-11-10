@@ -470,6 +470,20 @@ f10b.4. **A ajuda ganha a linha `p` ("definir / limpar o prazo") logo
     com a moldura, que cabem em 100×30. Os dois `.snap` da ajuda (`ajuda_100x30` e
     `ajuda_60x15`) mudam, e por isso passam pela reavaliação (§4, camada 1).
     O aceite da 7 confere a ajuda linha a linha, por `contains`, e não muda.
+f10b.5. **Reavaliação pedida: os snapshots `ajuda_60x15` e `ajuda_100x30`
+    (`crates/freitask/src/tui/snapshots/`, teste
+    `a_ajuda_cabe_inteira_e_lista_toda_linha_da_tabela` em `tui/tela.rs`).**
+    Com a linha do `p` (f10b.4), o `make test` falha no `ajuda_60x15`, e o
+    diff é só a linha nova `p  definir / limpar o prazo`, entre `i` e `r`.
+    Em 15 linhas a moldura corta a ajuda, então `a` desce para a última
+    linha visível e `A` sai da janela. O `ajuda_100x30` não chega a ser
+    comparado, porque o insta para no primeiro; ali a moldura ganha uma
+    linha, que ainda cabe. O `scripts/snapshots-novos.sh` recusou o `.snap`
+    que mudou, como manda a f7.9. As asserções semânticas do mesmo teste
+    (altura da moldura igual a `ATALHOS.len()`, cada linha inteira) passam
+    sem mudar. Pedido: apagar os dois `.snap` da ajuda e deixar que nasçam
+    de novo pelo script, sem mudar o teste. Um subagente novo reavalia o
+    pedido contra a spec.
 
 ## Fatia 9a (dependências, CLI)
 
@@ -863,3 +877,19 @@ f7.9. **Os `.snap` nascem por `scripts/snapshots-novos.sh`, que só cria o
   "igualdade sem `trim`" passaria por todo o `crates/core`. Ele achou,
   com 200 mil casos, outras entradas da mesma família (`a = "a"`, `b = "f"`,
   `alias = "f"`).
+- **`ajuda_60x15` e `ajuda_100x30` (`crates/freitask/src/tui/snapshots/`),
+  fatia 10b.** Pedido na entrada f10b.5. Veredito do subagente reavaliador:
+  **procede**, sem ajuste no teste. A mudança vem só da linha `p` que a
+  f10b.4 pede, porque `modal_ajuda` desenha `ATALHOS` sem filtro. Em 60×15 o
+  retângulo do modal não muda (altura `min(24, 15)`) e só o conteúdo desce
+  uma linha. Em 100×30 o modal ganha uma linha embaixo (y=3..26) e o resto
+  da tela não muda. "A ajuda cabe inteira" (§3.5) vale em 100×30: o aceite
+  da 7 é `a_ajuda_cabe_inteira_em_100x30`, e o `foto` devolve às asserções o
+  buffer de 100×30. O 60×15 já cortava a ajuda desde a fatia 7. Nenhuma
+  asserção nova é necessária: o laço sobre `ATALHOS` cobre o `p`, o aceite
+  da 10b cobre a ordem depois do `i`, e `toda_tecla_da_ajuda_tem_handler`
+  cobre o gesto. Mudança: os dois `.snap` apagados pelo dono (a trava nega
+  o `rm` ao agente) e regerados por `scripts/snapshots-novos.sh`. Antes do
+  commit, cada um foi lido contra o diff previsto pelo reavaliador. No
+  merge com a 9b, a linha `b` muda os mesmos `.snap` de novo, e essa
+  mudança passa por reavaliação própria.

@@ -1,6 +1,6 @@
 ---
 source: crates/freitask/src/tui/tela.rs
-assertion_line: 676
+assertion_line: 695
 expression: pequena
 ---
 Buffer {
@@ -17,9 +17,9 @@ Buffer {
         "││             s  trocar a fase                           ││",
         "││             t  editar o título                         ││",
         "││             i  editar a descrição                      ││",
+        "││             p  definir / limpar o prazo                ││",
         "││             r  renomear o id (arquivo e links)         ││",
-        "││             a  arquivar / desarquivar                  ││",
-        "╰│             A  mostrar / esconder arquivadas           │╯",
+        "╰│             a  arquivar / desarquivar                  │╯",
         "?╰────────────────────────────────────────────────────────╯ ",
     ],
     styles: [
