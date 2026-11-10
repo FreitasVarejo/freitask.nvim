@@ -137,6 +137,11 @@ pub fn validar_bloqueada_por(
             }
         }
     }
+    // Limpar sempre se aceita: é como se corta o ciclo que o `doctor` acusa,
+    // e com o id do alvo repetido a outra cópia pode seguir no ciclo.
+    if ids.is_empty() {
+        return Ok(ids);
+    }
     // O ciclo se procura no índice com a lista nova no lugar da do alvo.
     let mut novo = indice.clone();
     if let Some(e) = novo.entradas.iter_mut().find(|e| e.rel == alvo.rel) {
@@ -264,6 +269,20 @@ mod tests {
         assert_eq!(lista(&i, "a", " c , b,,c ,").unwrap(), vec!["c", "b"]);
         assert!(lista(&i, "a", "").unwrap().is_empty());
         assert!(lista(&i, "a", " , ,").unwrap().is_empty());
+    }
+
+    #[test]
+    fn validar_aceita_limpar_mesmo_com_a_outra_copia_do_id_em_ciclo() {
+        // `a` de `p` espera `b`, que espera `a`; `a` de `q` não espera nada.
+        // Limpar a de `q` não desfaz o ciclo (o nó é o id), mas se aceita.
+        let i = idx(&[
+            ("projects/q/tasks/a.md", &[]),
+            ("projects/p/tasks/a.md", &["b"]),
+            ("projects/p/tasks/b.md", &["a"]),
+        ]);
+        assert_eq!(i.por_id("a")[0].rel, "projects/q/tasks/a.md");
+        assert!(lista(&i, "a", "").unwrap().is_empty());
+        assert!(lista(&i, "a", " , ").unwrap().is_empty());
     }
 
     #[test]
