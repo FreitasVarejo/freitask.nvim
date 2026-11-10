@@ -65,6 +65,10 @@ jsonschema = "0.60"
 sha2 = "0.10"
 toml = "1"
 gerador = { path = "$raiz/tests/gerador" }
+freitask = { path = "$raiz/crates/freitask" }
+ratatui = "0.29"
+portable-pty = "0.9"
+vt100 = "0.15"
 
 $lints
 

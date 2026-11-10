@@ -7,13 +7,17 @@ name = "aceite"
 version = "2.0.0"
 dependencies = [
  "assert_cmd",
+ "freitask",
  "gerador",
  "jsonschema",
+ "portable-pty",
  "predicates",
+ "ratatui",
  "serde_json",
  "sha2",
  "tempfile",
  "toml",
+ "vt100",
 ]
 
 [[package]]

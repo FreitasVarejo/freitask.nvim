@@ -395,6 +395,34 @@ na seção "Testes reavaliados".
     cada congelamento, e `divergencias.toml` muda nas reavaliações; esses
     três ficam fora da conferência.
 
+## Fatia 7
+
+As entradas desta fatia se numeram `f7.N`: as fatias da onda 1 correm em
+worktrees paralelas (decisão 54), e um número corrido colidiria no merge.
+
+f7.1. **O aceite da TUI fala com um contrato mínimo em processo,
+    `freitask::tui::Sessao`, e com o binário num PTY.** A §3.5 descreve os
+    testes do implementador (`update`, `view`, propriedades, snapshots) e a
+    decisão 54 supõe que o aceite da TUI chama a TUI em processo; mas quem
+    escreve o aceite não vê a implementação, e congelar `State`, `Evento` e
+    `enum Comando` com os campos prenderia o desenho interno antes de ele
+    existir. O contrato fica em três funções e um enum
+    (`crates/freitask/src/tui.rs`): `Sessao::abrir(home, hoje)` abre como a
+    TUI abre (`rebuild`, depois a leitura); `tecla(KeyEvent) -> Pedido`
+    atualiza o estado e grava no vault o que a tecla manda; `tela(largura,
+    altura) -> Buffer` desenha; `Pedido` é `Nada`, `Sair` ou
+    `Abrir(PathBuf)`, o que precisa do terminal. O aceite afirma o que a
+    pessoa vê (a grade, com estilo) e o que o vault guarda, não a forma
+    interna do estado; `update` e `Comando` ficam livres e são testados pela
+    §3.5 no `make test`. O que só o binário prova (o terminal volta do modo
+    raw, `$NVIM`, `$EDITOR` e o `rebuild` na volta) vai num PTY com
+    `portable-pty` e `vt100`. O pacote `freitask` ganhou um alvo `[lib]`, e o
+    `aceite` ganhou as dependências `freitask`, `ratatui`, `portable-pty` e
+    `vt100` (`scripts/gerar-cargo-aceite.sh` e `scripts/rascunho.sh`); no
+    merge, o `Cargo.toml` do aceite se regera pelo script, como a decisão 54
+    já manda. Quem escreve o aceite lê também `tui/src/`, a TUI de hoje: ela
+    é o oráculo da paridade (§1.7) e não há diferencial para a tela.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do

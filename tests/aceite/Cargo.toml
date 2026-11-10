@@ -26,6 +26,10 @@ jsonschema = { workspace = true }
 sha2 = { workspace = true }
 toml = { workspace = true }
 gerador = { workspace = true }
+freitask = { workspace = true }
+ratatui = { workspace = true }
+portable-pty = { workspace = true }
+vt100 = { workspace = true }
 
 [lints.clippy]
 unwrap_used = "allow"
@@ -58,3 +62,7 @@ path = "f5-projeto-e-doctor/main.rs"
 [[test]]
 name = "f6-acabamento-da-cli"
 path = "f6-acabamento-da-cli/main.rs"
+
+[[test]]
+name = "f7-tui"
+path = "f7-tui/main.rs"
