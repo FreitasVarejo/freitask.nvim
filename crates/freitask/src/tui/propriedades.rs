@@ -59,8 +59,9 @@ fn tecla() -> impl Strategy<Value = KeyEvent> {
     ]
 }
 
-/// Uma task sintética: `(projeto, id, arquivada, escondida, adiada, alta, fase)`.
-type Semente = (usize, String, bool, bool, bool, bool, u32);
+/// Uma task sintética:
+/// `(projeto, id, arquivada, escondida, adiada, alta, fase, bloqueada)`.
+type Semente = (usize, String, bool, bool, bool, bool, u32, bool);
 
 fn dados() -> impl Strategy<Value = Dados> {
     (
@@ -74,6 +75,7 @@ fn dados() -> impl Strategy<Value = Dados> {
                 any::<bool>(),
                 any::<bool>(),
                 1u32..10,
+                any::<bool>(),
             ),
             0..12,
         ),
@@ -81,21 +83,26 @@ fn dados() -> impl Strategy<Value = Dados> {
         .prop_map(|(n_projetos, sementes): (usize, Vec<Semente>)| {
             let tasks: Vec<Resumo> = sementes
                 .into_iter()
-                .map(|(p, id, arquivada, hidden, adiada, alta, fase)| Resumo {
-                    project: format!("p{p}"),
-                    path: format!("/v/p{p}/{id}.md"),
-                    id,
-                    status: "fase".into(),
-                    status_num: fase,
-                    callout: "todo".into(),
-                    title: "Título".into(),
-                    desc: String::new(),
-                    archived: arquivada.then(|| "done".to_string()),
-                    suggested_archive: "dropped",
-                    hidden: hidden && !arquivada,
-                    prioridade: (alta && !arquivada).then_some("alta"),
-                    volta_em: (adiada && !arquivada).then(|| "2026-12-01".to_string()),
-                })
+                .map(
+                    |(p, id, arquivada, hidden, adiada, alta, fase, bloqueada)| Resumo {
+                        project: format!("p{p}"),
+                        path: format!("/v/p{p}/{id}.md"),
+                        id,
+                        status: "fase".into(),
+                        status_num: fase,
+                        callout: "todo".into(),
+                        title: "Título".into(),
+                        desc: String::new(),
+                        archived: arquivada.then(|| "done".to_string()),
+                        suggested_archive: "dropped",
+                        hidden: hidden && !arquivada,
+                        prioridade: (alta && !arquivada).then_some("alta"),
+                        volta_em: (adiada && !arquivada).then(|| "2026-12-01".to_string()),
+                        bloqueada_por: if bloqueada { vec!["x".into()] } else { vec![] },
+                        bloqueada,
+                        bloqueia: vec![],
+                    },
+                )
                 .collect();
             let projetos = (0..n_projetos)
                 .map(|p| Projeto {

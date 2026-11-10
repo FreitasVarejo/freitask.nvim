@@ -652,6 +652,64 @@ f7.9. **Os `.snap` nascem por `scripts/snapshots-novos.sh`, que só cria o
     que hoje é a do oráculo. Um subagente novo reavalia o pedido contra a
     spec.
 
+## Fatia 9b (dependências, TUI)
+
+Numeradas `f9b.N`, como as da 7: a 10b corre em paralelo (decisão 54).
+
+f9b.1. **A tecla `b` é um prompt como o `t`, o `i` e o `r`, sobre o mesmo
+    contrato da 7.** O aceite fala com a `Sessao` (`abrir`, `tecla`, `tela`;
+    f7.1) e com o vault em disco; nada de contrato novo. A §10.1 diz só "um
+    prompt com a lista atual"; o resto decidido aqui, pelo que as teclas de
+    task da 7 já fazem:
+    - age sobre a task selecionada, com o foco em qualquer painel; sem task,
+      a barra diz `nenhuma task selecionada`, em vermelho;
+    - o prompt tem a moldura ` Bloqueada por (ids separados por vírgula;
+      vazio limpa) ` e vem preenchido com a lista como está no frontmatter,
+      os ids juntados por `, ` (vazio se a task não tem a chave);
+    - `Enter` grava por `escrita::set` com `--bloqueada-por` igual ao texto
+      digitado, aparado. O motor separa por vírgula e tira repetidos e
+      vazios (decisão 61); a TUI não reinterpreta a lista. Vazio é aceito e
+      limpa. Texto igual ao que veio preenchido não grava nada e fecha o
+      prompt, como `t`, `i` e `r` com o valor de antes;
+    - sucesso: `bloqueada-por atualizada`, em verde, e a mesma task segue
+      selecionada; recusa do motor (id inexistente, ambíguo, a própria task,
+      ciclo com o caminho `a → b → a`): a barra mostra, em vermelho, a
+      mensagem que a CLI imprime em stderr sem o `freitask: `, o vault não
+      muda e o prompt volta com o que foi digitado (f7.4);
+    - `Esc` cancela sem gravar; `C-u` limpa o campo, como nos outros prompts;
+    - na ajuda, a linha `b` → `editar a lista bloqueada-por`, logo depois da
+      do `r`. A dica da barra de baixo não muda: ela está nos 24 `.snap` da
+      7, e a ajuda já lista a tecla.
+f9b.2. **A marca é `⛔ ` (o emoji e um espaço) colada antes do id, na linha
+    da task, quando o `bloqueada` do `list --json` dela é verdadeiro.** Um
+    cálculo só (§10.1, a lição do Backlog.md #986): o `Resumo`
+    (`crates/freitask/src/linhas.rs`) ganha `bloqueada_por`, `bloqueada` e
+    `bloqueia`, de `deps::dependencias`, e a `linha` do JSON passa a
+    serializá-los do `Resumo`; a TUI lê o mesmo campo. Por isso a arquivada
+    (com `A`) que lista uma bloqueadora ativa também leva a marca: é o que o
+    JSON diz dela. Sem coluna fixa (a prioridade tem a sua, `! `): uma
+    coluna a mais em toda linha mudaria os 24 `.snap` da 7, e a marca é
+    rara. Ela fica depois do ícone da fase e do `[tipo] ` da arquivada,
+    imediatamente antes do id; o prazo da 10b vai depois do id, como o
+    `volta`. Nada muda no preview nem no `CURRENT.md` (§10.1).
+f9b.3. **Reavaliação pedida: os `.snap` da ajuda (`ajuda_60x15` e
+    `ajuda_100x30`, em `crates/freitask/src/tui/snapshots/`) mudam com a
+    linha do `b`.** O teste `a_ajuda_cabe_inteira_e_lista_toda_linha_da_tabela`
+    (`tui/tela.rs`) falha no `make test` no primeiro deles; o insta para ali,
+    e o segundo muda pelo mesmo motivo (a moldura tem `ATALHOS.len() + 2`
+    linhas). Em 60×15 a ajuda é cortada embaixo: a linha `b  editar a lista
+    bloqueada-por` entra depois da do `r` e a do `A` sai da tela; em 100×30
+    a moldura ganha uma linha e todas as do `a` em diante descem uma. É a
+    consequência que a f7.5 previu ("`b` e `p` das fatias 9b e 10b entram
+    depois, como linhas novas da tabela") e o texto de f9b.1. Nenhum teste
+    congelado da 7 falha: o `AJUDA` de `telas.rs` confere linha a linha. As
+    asserções semânticas do teste (a ajuda cabe em 100×30, cada linha da
+    tabela inteira) seguem passando. Pedido: apagar os dois `.snap` e deixar
+    o `scripts/snapshots-novos.sh` criá-los de novo, sem mudar o teste. A
+    10b vai pedir o mesmo para a linha do `p`; no merge, o `.snap` da ajuda
+    é o de quem entrar por último, regerado do mesmo jeito. Um subagente
+    novo reavalia o pedido contra a spec.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
@@ -821,3 +879,20 @@ f7.9. **Os `.snap` nascem por `scripts/snapshots-novos.sh`, que só cria o
   "igualdade sem `trim`" passaria por todo o `crates/core`. Ele achou,
   com 200 mil casos, outras entradas da mesma família (`a = "a"`, `b = "f"`,
   `alias = "f"`).
+- **`ajuda_60x15` e `ajuda_100x30` (`crates/freitask/src/tui/snapshots/`),
+  fatia 9b.** Pedido na entrada f9b.3. Veredito do subagente reavaliador:
+  **procede, sem ajuste**. Ele regerou os dois `.snap` numa cópia do
+  worktree pelo `scripts/snapshots-novos.sh` e os comparou com os de antes:
+  a diferença é só a linha `b  editar a lista bloqueada-por` depois da do
+  `r` (em 60×15 a do `A` sai da tela, que já cortava a ajuda; em 100×30 a
+  moldura ganha uma linha, com os estilos das linhas de conteúdo e da
+  borda), mais o `assertion_line` do cabeçalho, que o insta não compara.
+  Nenhuma cor, largura, ordem ou rodapé muda. A asserção semântica do teste
+  (a ajuda cabe em 100×30, cada linha de `ATALHOS` inteira) não muda e
+  passa, e o aceite da 9b fixa a posição do `b` sem `.snap`. Mudança: os
+  dois `.snap` apagados pelo dono (o modo automático do Claude Code
+  recusou o gesto à sessão) e recriados pelo script, byte a byte iguais
+  aos que o reavaliador mediu; o teste fica como está. O
+  reavaliador notou, fora do pedido: a f7.9 diz "são 24" `.snap`, agora são
+  28; em 60×15 a ajuda corta 9 das 22 linhas sem indicação (vem da 7; a
+  §3.5 só pede "cabe inteira" em 100×30).

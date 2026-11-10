@@ -32,6 +32,7 @@ pub enum Campo {
     Titulo,
     Descricao,
     Renomear,
+    BloqueadaPor,
     NovoProjeto,
 }
 
@@ -452,6 +453,7 @@ impl State {
             | Gesto::Titulo
             | Gesto::Descricao
             | Gesto::Renomear
+            | Gesto::BloqueadaPor
             | Gesto::Arquivar
             | Gesto::Largar => self.na_task(gesto),
         }
@@ -512,6 +514,10 @@ impl State {
             Gesto::Renomear => Modo::Prompt {
                 campo: Campo::Renomear,
                 valor: t.id,
+            },
+            Gesto::BloqueadaPor => Modo::Prompt {
+                campo: Campo::BloqueadaPor,
+                valor: t.bloqueada_por.join(", "),
             },
             Gesto::Titulo => Modo::Prompt {
                 campo: Campo::Titulo,
@@ -669,7 +675,7 @@ impl State {
 
     fn enviar_prompt(&mut self, campo: Campo, valor: String) -> Vec<Comando> {
         let v = valor.trim().to_string();
-        if v.is_empty() && campo != Campo::Descricao {
+        if v.is_empty() && !matches!(campo, Campo::Descricao | Campo::BloqueadaPor) {
             self.erro("não pode ficar vazio");
             self.modo = Modo::Prompt { campo, valor };
             return vec![];
@@ -693,6 +699,7 @@ impl State {
             Campo::Titulo if v == t.title => return vec![],
             Campo::Descricao if v == t.desc => return vec![],
             Campo::Renomear if v == t.id => return vec![],
+            Campo::BloqueadaPor if v == t.bloqueada_por.join(", ") => return vec![],
             Campo::Titulo => (
                 set(PedidoSet {
                     title: Some(v),
@@ -719,6 +726,16 @@ impl State {
                     id: v.clone(),
                 },
                 format!("renomeada: {} → {v}", t.id),
+            ),
+            // A lista vai como foi digitada: separar, aparar e tirar repetidos
+            // é do motor (decisão 61).
+            Campo::BloqueadaPor => (
+                set(PedidoSet {
+                    bloqueada_por: Some(v),
+                    ..PedidoSet::default()
+                }),
+                Depois::Manter,
+                "bloqueada-por atualizada".to_string(),
             ),
             // Tratado acima: o nome do projeto não é de nenhuma task.
             Campo::NovoProjeto => return vec![],

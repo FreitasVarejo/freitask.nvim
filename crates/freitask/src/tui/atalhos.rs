@@ -59,6 +59,7 @@ pub enum Gesto {
     Titulo,
     Descricao,
     Renomear,
+    BloqueadaPor,
     Arquivar,
     MostrarArquivadas,
     MostrarEscondidas,
@@ -159,6 +160,11 @@ pub const ATALHOS: &[Atalho] = &[
         rotulo: "r",
         descricao: "renomear o id (arquivo e links)",
         teclas: &[(char('r'), Gesto::Renomear)],
+    },
+    Atalho {
+        rotulo: "b",
+        descricao: "editar a lista bloqueada-por",
+        teclas: &[(char('b'), Gesto::BloqueadaPor)],
     },
     Atalho {
         rotulo: "a",

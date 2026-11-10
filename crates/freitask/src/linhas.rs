@@ -33,10 +33,17 @@ pub struct Resumo {
     pub volta_em: Option<String>,
     /// O caminho absoluto.
     pub path: String,
+    /// Os ids da lista `bloqueada-por`, como estão no frontmatter.
+    pub bloqueada_por: Vec<String>,
+    /// Alguma dessas bloqueadoras está ativa (`deps::dependencias`).
+    pub bloqueada: bool,
+    /// Os ids das ativas que esperam esta task, em ordem.
+    pub bloqueia: Vec<String>,
 }
 
 /// O `Resumo` de uma task, no dia `today`.
-pub fn resumo(vault: &Vault, vocab: &Vocab, e: &Entry, today: Date) -> Resumo {
+pub fn resumo(vault: &Vault, vocab: &Vocab, indice: &Indice, e: &Entry, today: Date) -> Resumo {
+    let deps = freitask_core::deps::dependencias(indice, e);
     let st = vocab.meta(e.status_num);
     let ativa = e.archived.is_none();
     // O tipo digitado, mesmo inválido: é o que o usuário precisa ver para
@@ -68,6 +75,9 @@ pub fn resumo(vault: &Vault, vocab: &Vocab, e: &Entry, today: Date) -> Resumo {
             None
         },
         path: vault.caminho_str(&e.rel),
+        bloqueada_por: e.meta.bloqueada_por.clone(),
+        bloqueada: deps.bloqueada,
+        bloqueia: deps.bloqueia,
     }
 }
 
@@ -75,8 +85,7 @@ pub fn resumo(vault: &Vault, vocab: &Vocab, e: &Entry, today: Date) -> Resumo {
 /// `historico`, `checklist`, `bloqueada_por`, `bloqueada`, `bloqueia`,
 /// `prazo` e `dias_para_o_prazo`. As chaves saem em ordem alfabética.
 pub fn linha(vault: &Vault, vocab: &Vocab, indice: &Indice, e: &Entry, today: Date) -> Value {
-    let r = resumo(vault, vocab, e, today);
-    let deps = freitask_core::deps::dependencias(indice, e);
+    let r = resumo(vault, vocab, indice, e, today);
     json!({
         "project": r.project,
         "id": r.id,
@@ -94,9 +103,9 @@ pub fn linha(vault: &Vault, vocab: &Vocab, indice: &Indice, e: &Entry, today: Da
         "notes": e.model.extras,
         "historico": e.historico,
         "checklist": { "feitos": e.checklist.0, "total": e.checklist.1 },
-        "bloqueada_por": e.meta.bloqueada_por,
-        "bloqueada": deps.bloqueada,
-        "bloqueia": deps.bloqueia,
+        "bloqueada_por": r.bloqueada_por,
+        "bloqueada": r.bloqueada,
+        "bloqueia": r.bloqueia,
         "prazo": e.meta.prazo,
         "dias_para_o_prazo": meta::dias_para_o_prazo(&e.meta, today),
     })
