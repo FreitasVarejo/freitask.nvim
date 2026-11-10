@@ -1,6 +1,6 @@
 ---
 source: crates/freitask/src/tui/tela.rs
-assertion_line: 696
+assertion_line: 714
 expression: grande.0
 ---
 Buffer {
@@ -8,11 +8,10 @@ Buffer {
     content: [
         "╭ Projetos ────────╮╭ Tasks: alfa ────────────────────╮╭ Preview ──────────────────────────────────╮",
         "│ alfa 3           ││  󰗡 escrever-spec  Escrever a spe││Escrever a spec                            │",
-        "│ beta 2           ││  󰉹 medir-tempo  Medir o tempo   ││󰗡 Não iniciada  ·  escrever-spec           │",
-        "│                  ││╭ Teclas ────────────────────────────────────────────────╮                    │",
-        "│                  │││       j/k ↑/↓  mover                                   │────────────────────│",
-        "│                  │││   h/l ←/→ Tab  trocar de painel                        │ec                  │",
-        "│                  │││  g/G Home/End  topo / fim                              │                    │",
+        "│ beta 2           ││╭ Teclas ────────────────────────────────────────────────╮ever-spec           │",
+        "│                  │││       j/k ↑/↓  mover                                   │                    │",
+        "│                  │││   h/l ←/→ Tab  trocar de painel                        │────────────────────│",
+        "│                  │││  g/G Home/End  topo / fim                              │ec                  │",
         "│                  │││     Enter / e  abrir a task no editor                  │                    │",
         "│                  │││     C-d / C-u  rolar o preview                         │                    │",
         "│                  │││             /  filtrar tasks (id e título)             │                    │",
@@ -20,6 +19,7 @@ Buffer {
         "│                  │││             s  trocar a fase                           │                    │",
         "│                  │││             t  editar o título                         │                    │",
         "│                  │││             i  editar a descrição                      │                    │",
+        "│                  │││             p  definir / limpar o prazo                │                    │",
         "│                  │││             r  renomear o id (arquivo e links)         │                    │",
         "│                  │││             b  editar a lista bloqueada-por            │                    │",
         "│                  │││             a  arquivar / desarquivar                  │                    │",
@@ -64,14 +64,10 @@ Buffer {
         x: 8, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 19, y: 2, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
         x: 20, y: 2, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
-        x: 21, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 23, y: 2, fg: Cyan, bg: Reset, underline: Reset, modifier: NONE,
-        x: 25, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 36, y: 2, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
-        x: 51, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 54, y: 2, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
-        x: 56, y: 2, fg: Blue, bg: Reset, underline: Reset, modifier: NONE,
-        x: 70, y: 2, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
+        x: 21, y: 2, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
+        x: 22, y: 2, fg: Yellow, bg: Reset, underline: Reset, modifier: BOLD,
+        x: 30, y: 2, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
+        x: 79, y: 2, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
         x: 88, y: 2, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 99, y: 2, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 3, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
@@ -79,8 +75,8 @@ Buffer {
         x: 19, y: 3, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
         x: 20, y: 3, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
         x: 21, y: 3, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
-        x: 22, y: 3, fg: Yellow, bg: Reset, underline: Reset, modifier: BOLD,
-        x: 30, y: 3, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
+        x: 38, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 78, y: 3, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
         x: 79, y: 3, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 99, y: 3, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 4, fg: Green, bg: Reset, underline: Reset, modifier: NONE,

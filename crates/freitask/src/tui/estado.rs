@@ -31,6 +31,7 @@ pub enum Painel {
 pub enum Campo {
     Titulo,
     Descricao,
+    Prazo,
     Renomear,
     BloqueadaPor,
     NovoProjeto,
@@ -452,6 +453,7 @@ impl State {
             Gesto::Fase
             | Gesto::Titulo
             | Gesto::Descricao
+            | Gesto::Prazo
             | Gesto::Renomear
             | Gesto::BloqueadaPor
             | Gesto::Arquivar
@@ -526,6 +528,10 @@ impl State {
             Gesto::Descricao => Modo::Prompt {
                 campo: Campo::Descricao,
                 valor: t.desc,
+            },
+            Gesto::Prazo => Modo::Prompt {
+                campo: Campo::Prazo,
+                valor: t.prazo.unwrap_or_default(),
             },
             _ => Modo::Normal,
         };
@@ -675,7 +681,7 @@ impl State {
 
     fn enviar_prompt(&mut self, campo: Campo, valor: String) -> Vec<Comando> {
         let v = valor.trim().to_string();
-        if v.is_empty() && !matches!(campo, Campo::Descricao | Campo::BloqueadaPor) {
+        if v.is_empty() && !matches!(campo, Campo::Descricao | Campo::BloqueadaPor | Campo::Prazo) {
             self.erro("não pode ficar vazio");
             self.modo = Modo::Prompt { campo, valor };
             return vec![];
@@ -700,6 +706,7 @@ impl State {
             Campo::Descricao if v == t.desc => return vec![],
             Campo::Renomear if v == t.id => return vec![],
             Campo::BloqueadaPor if v == t.bloqueada_por.join(", ") => return vec![],
+            Campo::Prazo if v == t.prazo.as_deref().unwrap_or_default() => return vec![],
             Campo::Titulo => (
                 set(PedidoSet {
                     title: Some(v),
@@ -716,6 +723,21 @@ impl State {
                 Depois::Manter,
                 "descrição atualizada".to_string(),
             ),
+            Campo::Prazo => {
+                let ok = if v.is_empty() {
+                    "prazo removido".to_string()
+                } else {
+                    format!("prazo: {v}")
+                };
+                (
+                    set(PedidoSet {
+                        prazo: Some(v),
+                        ..PedidoSet::default()
+                    }),
+                    Depois::Manter,
+                    ok,
+                )
+            }
             Campo::Renomear => (
                 Escrita::Deslocar {
                     referencia: t.path.clone(),

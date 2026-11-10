@@ -39,6 +39,8 @@ pub(crate) fn tarefa(
         hidden: false,
         prioridade: None,
         volta_em: None,
+        prazo: None,
+        dias_para_o_prazo: None,
         path,
         bloqueada_por: vec![],
         bloqueada: false,
@@ -931,6 +933,144 @@ fn esc_no_prompt_do_b_cancela_sem_pedir_nada() {
     let mut s = estado_com_dependencia();
     aperta(&mut s, tecla('b'));
     digita(&mut s, "x");
+    assert_eq!(aperta(&mut s, codigo(KeyCode::Esc)), []);
+    assert_eq!(s.modo, Modo::Normal);
+}
+
+// --- a tecla `p` (fatia 10b) ------------------------------------------------------
+
+/// `alfa` com `a1` no prazo dado (texto como está escrito, e os dias que o motor
+/// calcularia).
+fn estado_com_prazo(prazo: &str, dias: Option<i64>) -> State {
+    let mut d = dados_sinteticos();
+    d.tasks[0].prazo = Some(prazo.into());
+    d.tasks[0].dias_para_o_prazo = dias;
+    State::novo(d)
+}
+
+fn valor_do_prompt(s: &State) -> &str {
+    let Modo::Prompt {
+        campo: Campo::Prazo,
+        valor,
+    } = &s.modo
+    else {
+        panic!("sem o prompt do prazo: {:?}", s.modo)
+    };
+    valor
+}
+
+#[test]
+fn p_abre_o_prompt_com_o_prazo_escrito_mesmo_invalido_ou_vazio_sem_prazo() {
+    let mut s = estado();
+    assert_eq!(aperta(&mut s, tecla('p')), []);
+    assert_eq!(valor_do_prompt(&s), "");
+    for escrito in ["2026-12-24", "amanhã"] {
+        let mut s = estado_com_prazo(escrito, None);
+        assert_eq!(aperta(&mut s, tecla('p')), []);
+        assert_eq!(valor_do_prompt(&s), escrito);
+    }
+}
+
+#[test]
+fn p_sem_task_avisa_e_nao_abre_o_prompt() {
+    let mut s = State::novo(Dados::default());
+    assert_eq!(aperta(&mut s, tecla('p')), []);
+    assert_eq!(s.modo, Modo::Normal);
+    assert_eq!(
+        s.mensagem.as_ref().unwrap().texto,
+        "nenhuma task selecionada"
+    );
+}
+
+#[test]
+fn p_grava_o_prazo_digitado_aparado_pelo_set() {
+    let mut s = estado();
+    aperta(&mut s, tecla('p'));
+    digita(&mut s, " 2026-12-24 ");
+    let (escrita, depois, ok) = executar(aperta(&mut s, codigo(KeyCode::Enter)));
+    assert_eq!(
+        escrita,
+        set_de(
+            "/v/projects/alfa/tasks/a1.md",
+            PedidoSet {
+                prazo: Some("2026-12-24".into()),
+                ..PedidoSet::default()
+            }
+        )
+    );
+    assert_eq!((depois, ok.as_str()), (Depois::Manter, "prazo: 2026-12-24"));
+}
+
+#[test]
+fn p_com_o_prompt_vazio_limpa_o_prazo() {
+    let mut s = estado_com_prazo("2026-12-24", Some(44));
+    aperta(&mut s, tecla('p'));
+    aperta(&mut s, ctrl('u'));
+    let (escrita, depois, ok) = executar(aperta(&mut s, codigo(KeyCode::Enter)));
+    assert_eq!(
+        escrita,
+        set_de(
+            "/v/projects/alfa/tasks/a1.md",
+            PedidoSet {
+                prazo: Some(String::new()),
+                ..PedidoSet::default()
+            }
+        )
+    );
+    assert_eq!((depois, ok.as_str()), (Depois::Manter, "prazo removido"));
+}
+
+#[test]
+fn p_com_o_prazo_igual_ao_escrito_nao_pede_nada_e_fecha() {
+    // Sem prazo e vazio também é igual.
+    let mut s = estado();
+    aperta(&mut s, tecla('p'));
+    assert_eq!(aperta(&mut s, codigo(KeyCode::Enter)), []);
+    assert_eq!(s.modo, Modo::Normal);
+    assert_eq!(s.refazer, None);
+    // O prazo inválido confirmado sem mudança também não grava.
+    let mut s = estado_com_prazo("amanhã", None);
+    aperta(&mut s, tecla('p'));
+    assert_eq!(aperta(&mut s, codigo(KeyCode::Enter)), []);
+    assert_eq!(s.modo, Modo::Normal);
+    // Espaços em volta do mesmo texto não contam como mudança.
+    let mut s = estado_com_prazo("2026-12-24", Some(44));
+    aperta(&mut s, tecla('p'));
+    digita(&mut s, "  ");
+    assert_eq!(aperta(&mut s, codigo(KeyCode::Enter)), []);
+    assert_eq!(s.modo, Modo::Normal);
+}
+
+#[test]
+fn recusa_do_motor_devolve_o_prompt_do_prazo_com_o_digitado() {
+    let mut s = estado();
+    aperta(&mut s, tecla('p'));
+    digita(&mut s, "2026-02-30");
+    executar(aperta(&mut s, codigo(KeyCode::Enter)));
+    aplica(&mut s, Evento::Falhou("data inválida: 2026-02-30".into()));
+    assert_eq!(valor_do_prompt(&s), "2026-02-30");
+    let m = s.mensagem.as_ref().unwrap();
+    assert_eq!(
+        (m.texto.as_str(), m.erro),
+        ("data inválida: 2026-02-30", true)
+    );
+}
+
+#[test]
+fn p_numa_arquivada_abre_o_prompt_como_nas_outras_teclas_de_task() {
+    let mut s = estado();
+    aperta(&mut s, tecla('A'));
+    s.painel = Painel::Tasks;
+    aperta(&mut s, tecla('G'));
+    assert_eq!(s.task_atual().unwrap().id, "a0");
+    aperta(&mut s, tecla('p'));
+    assert_eq!(valor_do_prompt(&s), "");
+}
+
+#[test]
+fn esc_fecha_o_prompt_do_prazo() {
+    let mut s = estado();
+    aperta(&mut s, tecla('p'));
     assert_eq!(aperta(&mut s, codigo(KeyCode::Esc)), []);
     assert_eq!(s.modo, Modo::Normal);
 }

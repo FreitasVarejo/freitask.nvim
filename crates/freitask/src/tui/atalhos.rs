@@ -58,6 +58,7 @@ pub enum Gesto {
     Fase,
     Titulo,
     Descricao,
+    Prazo,
     Renomear,
     BloqueadaPor,
     Arquivar,
@@ -155,6 +156,11 @@ pub const ATALHOS: &[Atalho] = &[
         rotulo: "i",
         descricao: "editar a descrição",
         teclas: &[(char('i'), Gesto::Descricao)],
+    },
+    Atalho {
+        rotulo: "p",
+        descricao: "definir / limpar o prazo",
+        teclas: &[(char('p'), Gesto::Prazo)],
     },
     Atalho {
         rotulo: "r",

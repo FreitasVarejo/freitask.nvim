@@ -429,6 +429,73 @@ na seção "Testes reavaliados".
     ordem e o `hidden` por projeto e os bytes do painel. O `list` da CLI
     usa essas mesmas funções, então a propriedade não sobe o binário.
 
+## Fatia 10b (prazo, TUI)
+
+Entradas `f10b.N`, pelo mesmo motivo das `f7.N` (a 9b corre em paralelo).
+
+f10b.1. **A tecla `p` abre um prompt com o prazo como está escrito** no
+    frontmatter, mesmo inválido, para consertar ali, com o título ` Prazo
+    (AAAA-MM-DD, vazio limpa) `. `Enter` grava pelo mesmo caminho da CLI
+    (`escrita::set` com `PedidoSet { prazo }`, o texto aparado); vazio limpa,
+    então o prompt aceita vazio, como o da descrição. Igual ao que está
+    escrito (sem prazo e vazio também) não grava nada, como `t`, `i` e `r`.
+    A recusa do motor (data inválida, saída 2 na CLI) vai para a barra em
+    vermelho com a mensagem da CLI, e o prompt volta com o que foi digitado.
+    No sucesso a barra diz `prazo: AAAA-MM-DD` ou `prazo removido`. Sem task
+    selecionada, `nenhuma task selecionada`, como as outras teclas de task. A
+    task arquivada recebe o que a CLI faria; o aceite não fixa esse caso.
+f10b.2. **Na linha da task, `prazo DD/MM` vem depois do id e da `volta`, se
+    houver, e antes do título**, separado por dois espaços como a `volta`
+    (§10.2: "no mesmo lugar em que a adiada mostra `volta`"). Amarelo
+    enquanto `dias_para_o_prazo >= 0`, o que inclui o próprio dia; vermelho
+    quando é negativo. Só aparece em task ativa com prazo válido. A arquivada
+    não mostra, como não mostra a `volta`: um prazo vencido de uma task feita
+    em vermelho seria ruído. O prazo inválido também não aparece, porque não
+    há dia para mostrar; o `doctor` acusa `prazo-invalido` e o `p` o mostra
+    para consertar. O cabeçalho do preview não ganha o prazo (a `volta em`
+    está lá porque a adiada some da lista sem `S`; a task com prazo nunca
+    some, e a linha dela já o mostra), e o frontmatter cru segue no
+    conteúdo do arquivo. Os snapshots da §3.5 ("task com prazo e com prazo
+    vencido") e o do prompt do `p` nascem por `scripts/snapshots-novos.sh`
+    (f7.9). O ano não aparece, nem num prazo de outro ano
+    (§10.2 fixa `DD/MM`; `Date::dia_mes`).
+f10b.3. **`Resumo` ganha `prazo` e `dias_para_o_prazo`**, os mesmos do
+    JSON, e `linhas::linha` passa a serializar os do `Resumo` (um lugar só,
+    f7.6). A tela só escolhe a cor e deixa de fora a arquivada e o prazo
+    inválido.
+f10b.4. **A ajuda ganha a linha `p` ("definir / limpar o prazo") logo
+    depois do `i`**; a dica da barra não muda (o aceite da 7 a confere por
+    partes e deixaria o `p` entrar; a §10.2 não pede, e mexer nela é mais um
+    ponto de conflito com a 9b). A ajuda passa a 22 linhas de conteúdo, 24
+    com a moldura, que cabem em 100×30. Os dois `.snap` da ajuda (`ajuda_100x30` e
+    `ajuda_60x15`) mudam, e por isso passam pela reavaliação (§4, camada 1).
+    O aceite da 7 confere a ajuda linha a linha, por `contains`, e não muda.
+f10b.5. **Reavaliação pedida: os snapshots `ajuda_60x15` e `ajuda_100x30`
+    (`crates/freitask/src/tui/snapshots/`, teste
+    `a_ajuda_cabe_inteira_e_lista_toda_linha_da_tabela` em `tui/tela.rs`).**
+    Com a linha do `p` (f10b.4), o `make test` falha no `ajuda_60x15`, e o
+    diff é só a linha nova `p  definir / limpar o prazo`, entre `i` e `r`.
+    Em 15 linhas a moldura corta a ajuda, então `a` desce para a última
+    linha visível e `A` sai da janela. O `ajuda_100x30` não chega a ser
+    comparado, porque o insta para no primeiro; ali a moldura ganha uma
+    linha, que ainda cabe. O `scripts/snapshots-novos.sh` recusou o `.snap`
+    que mudou, como manda a f7.9. As asserções semânticas do mesmo teste
+    (altura da moldura igual a `ATALHOS.len()`, cada linha inteira) passam
+    sem mudar. Pedido: apagar os dois `.snap` da ajuda e deixar que nasçam
+    de novo pelo script, sem mudar o teste. Um subagente novo reavalia o
+    pedido contra a spec.
+f10b.6. **Reavaliação pedida no merge da 10b na `reescrever-o-freitask`
+    (que já tem a 9b): de novo os `.snap` `ajuda_60x15` e `ajuda_100x30`.**
+    No conflito dos dois `.snap`, o merge ficou com os da branch integrada,
+    que já têm o `b` (reavaliados na f9b.3); não houve edição à mão. Com a
+    tabela unida, a ajuda tem as linhas `p` (depois do `i`) e `b` (depois do
+    `r`). O `make test` falha só no `ajuda_60x15`: entra `p  definir /
+    limpar o prazo` entre `i` e `r`, e `a` sai da janela de 15 linhas. Os
+    outros 1217 testes do workspace e o aceite inteiro (808) passam. O
+    `ajuda_100x30` não é comparado, porque o insta para no primeiro.
+    Pedido: apagar os dois e deixar que nasçam de novo pelo script, sem
+    mudar o teste. Um subagente novo reavalia o pedido.
+
 ## Fatia 9a (dependências, CLI)
 
 59. **I10 roda no crate `vault`** (`tests/dependencias.rs`), como I1, I2,
@@ -896,3 +963,42 @@ f9b.3. **Reavaliação pedida: os `.snap` da ajuda (`ajuda_60x15` e
   reavaliador notou, fora do pedido: a f7.9 diz "são 24" `.snap`, agora são
   28; em 60×15 a ajuda corta 9 das 22 linhas sem indicação (vem da 7; a
   §3.5 só pede "cabe inteira" em 100×30).
+- **`ajuda_60x15` e `ajuda_100x30` (`crates/freitask/src/tui/snapshots/`),
+  fatia 10b.** Pedido na entrada f10b.5. Veredito do subagente reavaliador:
+  **procede**, sem ajuste no teste. A mudança vem só da linha `p` que a
+  f10b.4 pede, porque `modal_ajuda` desenha `ATALHOS` sem filtro. Em 60×15 o
+  retângulo do modal não muda (altura `min(24, 15)`) e só o conteúdo desce
+  uma linha. Em 100×30 o modal ganha uma linha embaixo (y=3..26) e o resto
+  da tela não muda. "A ajuda cabe inteira" (§3.5) vale em 100×30: o aceite
+  da 7 é `a_ajuda_cabe_inteira_em_100x30`, e o `foto` devolve às asserções o
+  buffer de 100×30. O 60×15 já cortava a ajuda desde a fatia 7. Nenhuma
+  asserção nova é necessária: o laço sobre `ATALHOS` cobre o `p`, o aceite
+  da 10b cobre a ordem depois do `i`, e `toda_tecla_da_ajuda_tem_handler`
+  cobre o gesto. Mudança: os dois `.snap` apagados pelo dono (a trava nega
+  o `rm` ao agente) e regerados por `scripts/snapshots-novos.sh`. Antes do
+  commit, cada um foi lido contra o diff previsto pelo reavaliador. No
+  merge com a 9b, a linha `b` muda os mesmos `.snap` de novo, e essa
+  mudança passa por reavaliação própria.
+- **`ajuda_60x15` e `ajuda_100x30` (`crates/freitask/src/tui/snapshots/`),
+  merge da 10b na `reescrever-o-freitask`.** Pedido na entrada f10b.6.
+  Veredito do subagente reavaliador: **procede, sem ajuste**. A mudança vem
+  só da união das linhas `p` e `b` em `ATALHOS`, que passa a ter 23 linhas;
+  o merge não toca em `modal_ajuda`, `centralizado`, `foto` nem no teste. O
+  reavaliador regerou os dois `.snap` numa cópia da árvore pelo
+  `scripts/snapshots-novos.sh`. Contra os da 9b, a diferença é só o `p`;
+  contra os da 10b, só o `b`; e o `assertion_line`, que o insta não
+  compara. Em 60×15 o retângulo não muda: o `p` entra entre `i` e `r`, o
+  `b` vai para a última linha visível e o `a` sai da tela, que já cortava a
+  ajuda desde a 7. Em 100×30 a moldura passa a 25 linhas e, pela divisão
+  inteira de `centralizado`, cresce para cima, ao contrário do que as
+  anotações da 9b e da 10b descrevem para os casos delas: a borda de cima
+  sobe de y=3 para y=2, as linhas de `j/k` a `i` sobem uma, o `p` fica em
+  y=13, e de `r` em diante nada muda, nem a borda de baixo em y=26. Só os
+  runs de estilo de y=2 e y=3 mudam (262 → 258). A ajuda segue cabendo em
+  100×30, com 5 linhas de folga. A asserção semântica do teste (altura igual
+  a `ATALHOS.len()`, cada linha inteira) passa sem mudar, e os aceites da
+  9b e da 10b fixam a posição do `b` e do `p` sem `.snap`. Mudança: os dois
+  `.snap` apagados pelo dono e regerados pelo script, conferidos byte a byte
+  (sha256) com os que o reavaliador mediu; o teste fica como está. Fora do
+  pedido, o reavaliador notou que a f7.9 ainda diz "são 24" `.snap`, e hoje
+  são 32.

@@ -18,9 +18,9 @@ use crate::tui::estado::{Depois, Evento, Modo, Painel, State, update};
 use crate::tui::tela::view;
 
 /// As teclas de comando (as da ajuda, e `y` das confirmações).
-const COMANDOS: [char; 23] = [
-    'j', 'k', 'h', 'l', 'g', 'G', 'n', 's', 't', 'i', 'r', 'a', 'A', 'S', 'd', 'N', 'c', '/', '?',
-    'e', 'R', 'y', 'q',
+const COMANDOS: [char; 24] = [
+    'j', 'k', 'h', 'l', 'g', 'G', 'n', 's', 't', 'i', 'p', 'r', 'a', 'A', 'S', 'd', 'N', 'c', '/',
+    '?', 'e', 'R', 'y', 'q',
 ];
 
 /// Letras para os campos de texto (com acento, espaço e hífen).
@@ -59,9 +59,24 @@ fn tecla() -> impl Strategy<Value = KeyEvent> {
     ]
 }
 
+/// O prazo de uma task sintética: o texto escrito e os dias que o motor
+/// calcularia (`None` no prazo inválido).
+type Prazo = Option<(String, Option<i64>)>;
+
+fn prazo() -> impl Strategy<Value = Prazo> {
+    prop_oneof![
+        3 => Just(None),
+        2 => (1u32..=28, -30i64..30).prop_map(|(d, n)| Some((format!("2026-11-{d:02}"), Some(n)))),
+        1 => Just(Some(("amanhã".to_string(), None))),
+    ]
+}
+
 /// Uma task sintética:
 /// `(projeto, id, arquivada, escondida, adiada, alta, fase, bloqueada)`.
 type Semente = (usize, String, bool, bool, bool, bool, u32, bool);
+
+/// Os projetos, as tasks e o prazo de cada uma (por posição).
+type Entrada = (usize, Vec<Semente>, Vec<Prazo>);
 
 fn dados() -> impl Strategy<Value = Dados> {
     (
@@ -79,9 +94,10 @@ fn dados() -> impl Strategy<Value = Dados> {
             ),
             0..12,
         ),
+        vec(prazo(), 12),
     )
-        .prop_map(|(n_projetos, sementes): (usize, Vec<Semente>)| {
-            let tasks: Vec<Resumo> = sementes
+        .prop_map(|(n_projetos, sementes, prazos): Entrada| {
+            let mut tasks: Vec<Resumo> = sementes
                 .into_iter()
                 .map(
                     |(p, id, arquivada, hidden, adiada, alta, fase, bloqueada)| Resumo {
@@ -101,9 +117,18 @@ fn dados() -> impl Strategy<Value = Dados> {
                         bloqueada_por: if bloqueada { vec!["x".into()] } else { vec![] },
                         bloqueada,
                         bloqueia: vec![],
+                        prazo: None,
+                        dias_para_o_prazo: None,
                     },
                 )
                 .collect();
+            // O prazo vem à parte, para o literal acima não mudar de forma.
+            for (t, prazo) in tasks.iter_mut().zip(prazos) {
+                if let Some((texto, dias)) = prazo {
+                    t.prazo = Some(texto);
+                    t.dias_para_o_prazo = dias;
+                }
+            }
             let projetos = (0..n_projetos)
                 .map(|p| Projeto {
                     nome: format!("p{p}"),
