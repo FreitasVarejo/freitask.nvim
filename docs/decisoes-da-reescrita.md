@@ -395,22 +395,52 @@ na seção "Testes reavaliados".
     cada congelamento, e `divergencias.toml` muda nas reavaliações; esses
     três ficam fora da conferência.
 
+## Fatia 10a
+
+55. **`prazo-antes-da-volta` só acusa a task ainda adiada** (`volta-em >
+    hoje`), além de `prazo < volta-em` com as duas datas válidas. A spec não
+    fecha o caso; decidido nesta fatia (§5, "o chat 3 decide"). A razão do
+    achado, na spec (§10.2), é "a task voltaria à tela já
+    vencida"; passada a `volta-em`, ela já voltou, e o `docs/freitask.md`
+    diz que a data fica "sem efeito e sem achado no doctor". Sem a condição,
+    um `volta-em` antigo esquecido no frontmatter acusaria para sempre um
+    prazo que nunca foi problema. O aceite não fixa nada com `volta-em`
+    passada (cabeçalho da pasta `f10a-prazo-cli` do aceite) e os casos com
+    `volta-em` futura passam. Está em `crates/core/src/doctor.rs`, no bloco
+    6, com `meta::is_postponed`.
+56. **As mensagens dos dois kinds novos** (o aceite só fixa que não são
+    vazias): `prazo "X" não é uma data AAAA-MM-DD — não conta dias`, na forma
+    do `volta-em-invalido`, e `prazo AAAA-MM-DD vem antes da volta-em
+    AAAA-MM-DD — a task volta à tela já vencida`, com as datas sem aspas
+    (são válidas). **`set --bloqueada-por` segue recusado** (saída 2, com
+    mensagem só dele): é da fatia 9a, que corre em paralelo e mexe no mesmo
+    trecho de `crates/freitask/src/cli.rs`; aqui sai do stub só o `--prazo`,
+    para o merge ficar pequeno.
+57. **Com `--volta-em` e `--prazo` inválidos juntos, a `volta-em` é a
+    acusada**: `validar_set` valida a `volta-em` e depois o `prazo`, e a
+    primeira recusa vence. O aceite não fixa qual das duas.
+58. **A I11 como propriedade usa o `gerador` no `core`**
+    (`crates/core/Cargo.toml` ganha `gerador` em `dev-dependencies`; ele não
+    depende de nada). `prazo_nao_muda_ordem_conjunto_hidden_nem_painel`
+    (`crates/core/tests/propriedades.rs`) põe `prazo:` (vencido, futuro, de
+    hoje, inválido, vazio) em subconjuntos das tasks de vaults sintéticos e
+    compara, pelo `index` e o `board`, as entradas (menos o `prazo`), a
+    ordem e o `hidden` por projeto e os bytes do painel. O `list` da CLI
+    usa essas mesmas funções, então a propriedade não sobe o binário.
+
 ## Fatia 9a (dependências, CLI)
 
-Os números destas entradas podem colidir com os das fatias que correm em
-paralelo (7 e 10a); no merge, renumera-se em ordem, sem mudar o texto.
-
-55. **I10 roda no crate `vault`** (`tests/dependencias.rs`), como I1, I2,
+59. **I10 roda no crate `vault`** (`tests/dependencias.rs`), como I1, I2,
     I3 e I5 (decisões 36 e 47), sobre vaults do gerador com
     `dependencias: true`. O oráculo é do teste: lê a linha `bloqueada-por`
     do texto cru e faz alcançabilidade sobre os ids ativos, sem
     `deps::ciclo`. Conferido que cada uma das quatro propriedades falha com
     uma sabotagem que a ataca (ciclo nunca achado, validação sem ciclo,
     rename sem arrastar, `bloqueia` com arquivadas, doctor sem pendurada,
-    doctor com um ciclo só). O id como nó (entrada 56) só tem teste
+    doctor com um ciclo só). O id como nó (entrada 60) só tem teste
     unitário: nenhum vault do gerador tem ciclo que dependa da segunda
     cópia de um id.
-56. **No grafo, o nó é o id.** Com o mesmo id em dois projetos, as arestas de
+60. **No grafo, o nó é o id.** Com o mesmo id em dois projetos, as arestas de
     todas as entradas ativas com esse id contam (`deps::ciclo`); antes só a
     primeira. A lista cita o id e não diz qual das cópias quer, e o
     `bloqueada` já tratava o id assim. A busca marca os nós visitados (com o
@@ -418,7 +448,7 @@ paralelo (7 e 10a); no merge, renumera-se em ordem, sem mudar o texto.
     caminho): é o DFS linear que a §10.1 supõe, e não a enumeração de
     caminhos simples, exponencial num grafo denso, que o `doctor` rodaria
     para cada task ativa.
-57. **`set --bloqueada-por` valida depois das flags de hoje e de achar a
+61. **`set --bloqueada-por` valida depois das flags de hoje e de achar a
     task.** As recusas de uso (fase, título, data) saem 2 antes; a lista
     pede o índice, então se valida em `escrita::set` com
     `deps::validar_bloqueada_por`, e o `validar_set` mantém a assinatura
@@ -429,7 +459,7 @@ paralelo (7 e 10a); no merge, renumera-se em ordem, sem mudar o texto.
     task em ciclo (é como se corta a aresta que o `doctor` acusa). O texto
     "nada a mudar: …" e o usage não ganham a flag: os dois são comparados
     byte a byte com o oráculo.
-58. **O `rename` troca o id em toda lista `bloqueada-por` de ARQUIVO DE
+62. **O `rename` troca o id em toda lista `bloqueada-por` de ARQUIVO DE
     TASK do vault**, ativa ou arquivada, de qualquer projeto, inclusive na
     própria task, e só o elemento igual ao id (`a-2` não é `a`). Nota que
     não é task fica como está: a chave só tem sentido em task. Arquivo com
@@ -440,7 +470,7 @@ paralelo (7 e 10a); no merge, renumera-se em ordem, sem mudar o texto.
     projeto encerrado fica como está: `projects/_encerrados/<p>/tasks/…`
     não é caminho de task (`path::split_task_path`), como fica fora do
     índice; ao reabrir, o `doctor` acusa a `dependencia-pendurada`.
-59. **Os dois kinds do `doctor` são o passo 8**, depois do `link-pendurado`
+63. **Os dois kinds do `doctor` são o passo 8**, depois do `link-pendurado`
     e antes dos temporários, só sobre as ativas, nunca reparados.
     `dependencia-pendurada`: um achado por id distinto que não existe entre
     ativas e arquivadas, no caminho da task que espera.

@@ -6,7 +6,9 @@
 
 use std::collections::BTreeMap;
 
+use freitask_core::board;
 use freitask_core::date::Date;
+use freitask_core::index::{self, Indice};
 use freitask_core::links::{self, Endereco};
 use freitask_core::md;
 use freitask_core::meta;
@@ -218,4 +220,121 @@ proptest! {
         let m = meta::Meta { volta_em: Some(volta.to_string()), ..meta::Meta::default() };
         prop_assert_eq!(meta::is_postponed(&m, hoje), delta < 0);
     }
+}
+
+/// Os `prazo:` que a I11 põe nas tasks: vencido, futuro, de hoje, com mês e dia
+/// que não existem, em forma errada, em texto e vazio.
+const PRAZOS: [&str; 7] = [
+    "2026-11-01",
+    "2027-03-01",
+    "2026-11-08",
+    "2026-02-30",
+    "2026-12-1",
+    "amanha",
+    "",
+];
+
+/// Um projeto como o `list` o ordena: o nome, as ativas `(id, hidden)` e os ids
+/// das arquivadas.
+type OrdemDoProjeto = (String, Vec<(String, bool)>, Vec<String>);
+
+/// O vault lido: o índice de todas as tasks (ativas e arquivadas) de `v`, com o
+/// `prazo:` que `prazos` manda pôr em cada arquivo de task (na ordem dos
+/// caminhos; `0` deixa a task como está).
+fn indice_com_prazos(v: &gerador::Vault, prazos: &[u8]) -> Indice {
+    let vocab = vocab();
+    let mut projetos = Vec::new();
+    let mut entradas = Vec::new();
+    for (i, (rel, bytes)) in v.arquivos.iter().enumerate() {
+        let Some(t) = path::split_task_path(rel) else {
+            continue;
+        };
+        projetos.push(t.project);
+        let escolha = prazos.get(i % prazos.len().max(1)).copied().unwrap_or(0) as usize;
+        let bytes = match (escolha, Doc::parse(bytes)) {
+            (0, _) | (_, Err(_)) => bytes.clone(),
+            (n, Ok(doc)) => {
+                let linha = format!("prazo: {}", PRAZOS[(n - 1) % PRAZOS.len()]);
+                let mut lines = doc.lines.clone();
+                if lines.first().map(String::as_str) == Some("---") {
+                    lines.insert(1, linha);
+                } else {
+                    let mut novas = vec!["---".to_string(), linha, "---".into(), String::new()];
+                    novas.append(&mut lines);
+                    lines = novas;
+                }
+                doc.com_linhas(lines).to_bytes()
+            }
+        };
+        if let Some(e) = index::scan_task(&vocab, rel, &bytes) {
+            entradas.push(e);
+        }
+    }
+    Indice::new(projetos, entradas)
+}
+
+proptest! {
+    /// I11: pôr, trocar ou tirar `prazo:` (válido, inválido ou vazio) em
+    /// qualquer subconjunto das tasks não muda o conjunto, a ordem nem o
+    /// `hidden` que o painel e o `list` produzem, nem os bytes do `CURRENT.md`.
+    #[test]
+    fn prazo_nao_muda_ordem_conjunto_hidden_nem_painel(
+        semente in 0u64..4096,
+        prazos in prop::collection::vec(0u8..=7, 1..48),
+        dia in prop::sample::select(vec!["2026-11-08", "2026-11-09", "2027-01-01"]),
+    ) {
+        let v = gerador::sintetico(semente, &gerador::Opcoes::default());
+        let vocab = vocab();
+        let hoje = Date::parse(dia).unwrap();
+        let sem = indice_com_prazos(&v, &[0]);
+        let com = indice_com_prazos(&v, &prazos);
+
+        // O conjunto, e cada task igual a menos do `prazo` lido.
+        prop_assert_eq!(&com.projetos, &sem.projetos);
+        prop_assert_eq!(com.entradas.len(), sem.entradas.len());
+        for (a, b) in com.entradas.iter().zip(&sem.entradas) {
+            let mut a = a.clone();
+            a.meta.prazo = None;
+            prop_assert_eq!(a, b.clone());
+        }
+
+        // A ordem e o `hidden` do que o `list` produz, por projeto.
+        let linhas = |i: &Indice| -> Vec<OrdemDoProjeto> {
+            i.projetos.iter().map(|p| (
+                p.clone(),
+                i.entries_for(p).into_iter()
+                    .map(|e| (e.task_id.clone(), index::is_hidden(&vocab, e, hoje)))
+                    .collect(),
+                i.archived_for(p).into_iter().map(|e| e.task_id.clone()).collect(),
+            )).collect()
+        };
+        prop_assert_eq!(linhas(&com), linhas(&sem));
+
+        // E o `CURRENT.md`, byte a byte.
+        prop_assert_eq!(
+            board::render(&vocab, &com, hoje, None),
+            board::render(&vocab, &sem, hoje, None)
+        );
+    }
+}
+
+/// A I11 acima só prova algo se o `prazo:` injetado é lido: com a escolha `1`
+/// (uma data válida) em todas as tasks, toda entrada do índice tem esse prazo.
+#[test]
+fn a_injecao_de_prazo_da_i11_e_lida_em_toda_task() {
+    let mut lidas = 0;
+    for semente in 0..256 {
+        let v = gerador::sintetico(semente, &gerador::Opcoes::default());
+        let com = indice_com_prazos(&v, &[1]);
+        lidas += com.entradas.len();
+        for e in &com.entradas {
+            assert_eq!(
+                e.meta.prazo.as_deref(),
+                Some(PRAZOS[0]),
+                "semente {semente}: {}",
+                e.task_id
+            );
+        }
+    }
+    assert!(lidas > 1000, "só {lidas} tasks em 256 vaults");
 }

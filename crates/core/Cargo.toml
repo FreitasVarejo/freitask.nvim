@@ -13,6 +13,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 proptest = { workspace = true }
+gerador = { workspace = true }
 
 [lints]
 workspace = true
