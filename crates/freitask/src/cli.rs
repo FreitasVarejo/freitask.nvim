@@ -10,13 +10,13 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use clap::{CommandFactory, FromArgMatches, Parser, Subcommand};
+use freitask::deslocar::{self, Pedido};
+use freitask::saida::{self, Contexto, Corrida, PREFIXO, Resultado};
+use freitask::{escrita, linhas, tui};
 use freitask_core::date::Date;
 use freitask_core::operacao::PedidoSet;
 use freitask_vault::{ErroEscrita, Vault};
 
-use crate::deslocar::{self, Pedido};
-use crate::escrita;
-use crate::linhas;
 use crate::usage;
 
 #[derive(Parser, Debug)]
@@ -172,16 +172,70 @@ pub fn say(s: &str) {
 
 pub fn die(msg: &str, code: u8) -> ExitCode {
     let _ = std::io::stdout().flush();
-    eprintln!("freitask: {msg}");
+    eprintln!("{PREFIXO}{msg}");
     ExitCode::from(code)
+}
+
+/// O vault do HOME.
+pub fn vault() -> Result<Vault, ExitCode> {
+    Vault::do_home().map_err(|e| die(&e, 2))
+}
+
+/// O vocabulário, com o aviso de `status.json` quebrado em stderr.
+pub fn vocab(vault: &Vault) -> freitask_core::status::Vocab {
+    let mut c = Corrida::default();
+    let vocab = c.vocab(vault);
+    for linha in c.descarrega() {
+        eprintln!("{PREFIXO}{linha}");
+    }
+    vocab
+}
+
+/// Imprime o `Resultado` de um comando que escreve como sempre foi impresso:
+/// os avisos em stderr (com o prefixo), depois a linha de stdout; numa falha,
+/// só o stderr e o código.
+fn imprimir(r: Resultado) -> ExitCode {
+    match r {
+        Ok(s) => {
+            for linha in &s.stderr {
+                eprintln!("{PREFIXO}{linha}");
+            }
+            say(&s.stdout);
+            ExitCode::SUCCESS
+        }
+        Err(f) => {
+            let _ = std::io::stdout().flush();
+            for linha in &f.stderr {
+                eprintln!("{PREFIXO}{linha}");
+            }
+            ExitCode::from(f.codigo)
+        }
+    }
+}
+
+/// Roda um comando que escreve sobre o vault e o lock do ambiente (`HOME` e
+/// `XDG_RUNTIME_DIR`) e imprime o resultado. Sem `HOME`, sai 2 antes de
+/// esperar o lock (decisão f7.2).
+fn escrevendo(hoje: Date, comando: impl FnOnce(&Contexto) -> Resultado) -> ExitCode {
+    let trava = match saida::caminho_da_trava(std::env::var("HOME").ok().as_deref()) {
+        Ok(t) => t,
+        Err(f) => return imprimir(Err(f)),
+    };
+    let vault = match vault() {
+        Ok(v) => v,
+        Err(c) => return c,
+    };
+    imprimir(comando(&Contexto {
+        vault: &vault,
+        trava: &trava,
+        hoje,
+    }))
 }
 
 /// O dia de hoje: `FREITASK_TODAY=AAAA-MM-DD` (só os testes) ou o relógio local.
 pub fn hoje() -> Result<Date, String> {
     if let Some(v) = std::env::var_os("FREITASK_TODAY") {
-        let s = v.to_string_lossy();
-        return Date::parse(&s)
-            .ok_or_else(|| format!("FREITASK_TODAY inválida: {s} (use AAAA-MM-DD)"));
+        return saida::dia(&v.to_string_lossy());
     }
     let agora = chrono::Local::now().date_naive();
     use chrono::Datelike;
@@ -247,7 +301,7 @@ pub fn run(args: Vec<OsString>) -> ExitCode {
         Err(e) => return die(&e, 2),
     };
     let Some(cmd) = cli.cmd else {
-        return tui();
+        return abrir_a_tui(hoje);
     };
     despachar(cmd, hoje)
 }
@@ -255,13 +309,26 @@ pub fn run(args: Vec<OsString>) -> ExitCode {
 /// `freitask tui` e `freitask` sem argumentos: a TUI num terminal (stdin e
 /// stdout); fora dele, o usage em stdout com saída 2 (§2.4), porque nada pode
 /// travar esperando uma tela que ninguém vê.
-fn tui() -> ExitCode {
+///
+/// Num terminal: sem `HOME` é erro de uso (2), como nos outros comandos; a
+/// `Sessao` que não abre ou o terminal que falha saem 1 (decisão f7.3).
+fn abrir_a_tui(hoje: Date) -> ExitCode {
     use std::io::IsTerminal;
-    if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        return die("a TUI ainda não foi portada (fatia 7)", 2);
+    if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
+        println!("{}", usage::USAGE);
+        return ExitCode::from(2);
     }
-    println!("{}", usage::USAGE);
-    ExitCode::from(2)
+    let Some(home) = std::env::var_os("HOME") else {
+        return die("HOME não está definido", 2);
+    };
+    let mut sessao = match tui::Sessao::abrir(std::path::Path::new(&home), &hoje.to_string()) {
+        Ok(s) => s,
+        Err(e) => return die(&e, 1),
+    };
+    match tui::laco::rodar(&mut sessao) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => die(&e.to_string(), 1),
+    }
 }
 
 /// `freitask current`: substitui o processo pelo Neovim no `CURRENT.md`, como
@@ -312,12 +379,7 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
                 let _ = std::io::stdout().flush();
                 return ExitCode::SUCCESS;
             }
-            let id = freitask_core::path::kebab(&texto);
-            if id.is_empty() {
-                return die(&format!("o texto não rende um id: {texto}"), 1);
-            }
-            say(&id);
-            ExitCode::SUCCESS
+            imprimir(escrita::kebab(&texto))
         }
         Cmd::Statuses { json } => {
             let vault = match Vault::do_home() {
@@ -458,11 +520,7 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
                 eprintln!("{a}");
             }
             let indice = vault.indice(&vocab);
-            let rows: Vec<(String, usize)> = indice
-                .projetos
-                .iter()
-                .map(|p| (p.clone(), indice.mostradas(&vocab, p, hoje)))
-                .collect();
+            let rows = linhas::projetos(&vocab, &indice, hoje);
             if json {
                 let v: Vec<serde_json::Value> = rows
                     .iter()
@@ -479,23 +537,7 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             }
             ExitCode::SUCCESS
         }
-        Cmd::Rebuild => {
-            let _trava = match travar() {
-                Ok(t) => t,
-                Err(c) => return c,
-            };
-            let vault = match Vault::do_home() {
-                Ok(v) => v,
-                Err(e) => return die(&e, 2),
-            };
-            match rebuild(&vault, hoje) {
-                Ok(()) => {
-                    say(&vault.caminho_str("CURRENT.md"));
-                    ExitCode::SUCCESS
-                }
-                Err(e) => falha(&e),
-            }
-        }
+        Cmd::Rebuild => escrevendo(hoje, escrita::rebuild),
         Cmd::New {
             projeto,
             id,
@@ -516,20 +558,22 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             let Some(titulo) = titulo else {
                 return die("falta o título", 2);
             };
-            escrita::new(
-                &projeto,
-                &id,
-                &titulo,
-                desc.as_deref().unwrap_or(""),
-                json,
-                hoje,
-            )
+            escrevendo(hoje, |cx| {
+                escrita::new(
+                    cx,
+                    &projeto,
+                    &id,
+                    &titulo,
+                    desc.as_deref().unwrap_or(""),
+                    json,
+                )
+            })
         }
         Cmd::NewProject { nome } => {
             let Some(nome) = nome else {
                 return die("falta o nome do projeto", 2);
             };
-            escrita::new_project(&nome)
+            escrevendo(hoje, |cx| escrita::new_project(cx, &nome))
         }
         Cmd::Set {
             referencia,
@@ -563,25 +607,29 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
                     2,
                 );
             }
-            escrita::set(&referencia, &pedido, hoje)
+            escrevendo(hoje, |cx| escrita::set(cx, &referencia, &pedido))
         }
         Cmd::Delete { referencia } => {
             let Some(referencia) = referencia else {
                 return die("falta o id ou caminho da task", 2);
             };
-            escrita::delete(&referencia, hoje)
+            escrevendo(hoje, |cx| escrita::delete(cx, &referencia))
         }
         Cmd::Archive { referencia, tipo } => {
             let Some(referencia) = referencia else {
                 return die("falta o id ou caminho da task", 2);
             };
-            deslocar::deslocar(&referencia, Pedido::Archive(tipo), hoje)
+            escrevendo(hoje, |cx| {
+                deslocar::deslocar(cx, &referencia, Pedido::Archive(tipo))
+            })
         }
         Cmd::Unarchive { referencia } => {
             let Some(referencia) = referencia else {
                 return die("falta o id ou caminho da task", 2);
             };
-            deslocar::deslocar(&referencia, Pedido::Unarchive, hoje)
+            escrevendo(hoje, |cx| {
+                deslocar::deslocar(cx, &referencia, Pedido::Unarchive)
+            })
         }
         Cmd::Rename {
             referencia,
@@ -593,7 +641,9 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             let Some(novo_id) = novo_id else {
                 return die("falta o novo id", 2);
             };
-            deslocar::deslocar(&referencia, Pedido::Rename(novo_id), hoje)
+            escrevendo(hoje, |cx| {
+                deslocar::deslocar(cx, &referencia, Pedido::Rename(novo_id))
+            })
         }
         Cmd::Move {
             referencia,
@@ -605,22 +655,24 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             let Some(projeto) = projeto else {
                 return die("falta o projeto de destino", 2);
             };
-            deslocar::deslocar(&referencia, Pedido::Move(projeto), hoje)
+            escrevendo(hoje, |cx| {
+                deslocar::deslocar(cx, &referencia, Pedido::Move(projeto))
+            })
         }
         Cmd::Doctor { fix, json, quiet } => crate::doctor::doctor(fix, json, quiet, hoje),
         Cmd::Encerrar { projeto } => {
             let Some(projeto) = projeto else {
                 return die("falta o projeto", 2);
             };
-            deslocar::projeto(&projeto, true, hoje)
+            escrevendo(hoje, |cx| deslocar::projeto(cx, &projeto, true))
         }
         Cmd::Reabrir { projeto } => {
             let Some(projeto) = projeto else {
                 return die("falta o projeto", 2);
             };
-            deslocar::projeto(&projeto, false, hoje)
+            escrevendo(hoje, |cx| deslocar::projeto(cx, &projeto, false))
         }
-        Cmd::Tui => tui(),
+        Cmd::Tui => abrir_a_tui(hoje),
         Cmd::Current => current(),
         Cmd::Outro(args) => {
             let nome = args
@@ -635,25 +687,16 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
     }
 }
 
-/// Regenera o `CURRENT.md`: garante a raiz (como o `ensure_root` de hoje),
-/// relê o vocabulário e o índice, arquiva o painel de outro dia em `daily/`
-/// e grava o novo só se mudou (§1.5), com CAS contra o painel que leu.
+/// Regenera o `CURRENT.md` para o `doctor --fix` (que embrulha o lock e o
+/// vault do ambiente por conta própria): o aviso de `status.json` quebrado vai
+/// a stderr.
 pub fn rebuild(vault: &Vault, hoje: Date) -> Result<(), ErroEscrita> {
-    vault.garantir_raiz()?;
-    let (vocab, aviso) = vault.vocab();
-    if let Some(a) = aviso {
-        eprintln!("{a}");
+    let mut c = Corrida::default();
+    let r = c.regenerar(vault, hoje);
+    for linha in c.descarrega() {
+        eprintln!("{PREFIXO}{linha}");
     }
-    let indice = vault.indice(&vocab);
-    let anterior = vault.ler("CURRENT.md");
-    let painel = freitask_core::board::render(&vocab, &indice, hoje, anterior.as_deref());
-    if let Some((rel, bytes)) = &painel.daily
-        && !vault.existe(rel)
-    {
-        vault.gravar(rel, None, bytes)?;
-    }
-    vault.gravar("CURRENT.md", anterior.as_deref(), &painel.bytes)?;
-    Ok(())
+    r
 }
 
 /// A falha de uma gravação: a mensagem e o código (3 para conflito).
@@ -661,9 +704,13 @@ pub fn falha(e: &ErroEscrita) -> ExitCode {
     die(&e.to_string(), e.codigo())
 }
 
-/// Toma o lock de escrita, ou devolve a saída (3 se ficou ocupado).
+/// Toma o lock de escrita do ambiente, ou devolve a saída (3 se ficou
+/// ocupado).
 pub fn travar() -> Result<freitask_vault::trava::Trava, ExitCode> {
-    Vault::travar().map_err(|e| die(&e.to_string(), e.codigo()))
+    let caminho = saida::caminho_da_trava(std::env::var("HOME").ok().as_deref())
+        .map_err(|f| imprimir(Err(f)))?;
+    freitask_vault::trava::tomar(&caminho, freitask_vault::trava::ESPERA)
+        .map_err(|e| die(&e.to_string(), e.codigo()))
 }
 
 /// O valor de uma flag que leva valor: `--x` sozinho é `falta o valor de --x`

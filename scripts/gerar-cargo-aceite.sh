@@ -37,6 +37,10 @@ jsonschema = { workspace = true }
 sha2 = { workspace = true }
 toml = { workspace = true }
 gerador = { workspace = true }
+freitask = { workspace = true }
+ratatui = { workspace = true }
+portable-pty = { workspace = true }
+vt100 = { workspace = true }
 
 [lints.clippy]
 unwrap_used = "allow"

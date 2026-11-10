@@ -326,7 +326,8 @@ na seção "Testes reavaliados".
     shim o ignorava (decisão 19: argumento a mais fica com o clap).
 49. **`freitask tui` e `freitask` sem argumentos são uma função só**: TUI
     num terminal (stdin e stdout), senão o usage em stdout e saída 2. Num
-    terminal, até a fatia 7, a TUI sai 2 com "ainda não foi portada".
+    terminal, até a fatia 7, a TUI saía 2 com "ainda não foi portada"; a
+    fatia 7 a trouxe (decisões f7.1 a f7.8).
 50. **`new --json` tira `project` e `id` do caminho que o plano grava**
     (`split_task_path`), não dos argumentos: o `nova_task` apara o id.
 51. **Flag desconhecida no `doctor` não aparece no diferencial.** O aceite
@@ -477,6 +478,159 @@ na seção "Testes reavaliados".
     `dependencia-ciclica`: um achado por ciclo (`deps::ciclos`, um por
     conjunto de tasks), no caminho da primeira task do ciclo, com o caminho
     `a → b → a` na mensagem.
+
+## Fatia 7
+
+As entradas desta fatia se numeram `f7.N`: as fatias da onda 1 correm em
+worktrees paralelas (decisão 54), e um número corrido colidiria no merge.
+
+f7.1. **O aceite da TUI fala com um contrato mínimo em processo,
+    `freitask::tui::Sessao`, e com o binário num PTY.** A §3.5 descreve os
+    testes do implementador (`update`, `view`, propriedades, snapshots) e a
+    decisão 54 supõe que o aceite da TUI chama a TUI em processo; mas quem
+    escreve o aceite não vê a implementação, e congelar `State`, `Evento` e
+    `enum Comando` com os campos prenderia o desenho interno antes de ele
+    existir. O contrato fica em três funções e um enum
+    (`crates/freitask/src/tui.rs`): `Sessao::abrir(home, hoje)` abre como a
+    TUI abre (`rebuild`, depois a leitura); `tecla(KeyEvent) -> Pedido`
+    atualiza o estado e grava no vault o que a tecla manda; `tela(largura,
+    altura) -> Buffer` desenha; `Pedido` é `Nada`, `Sair` ou
+    `Abrir(PathBuf)`, o que precisa do terminal. O aceite afirma o que a
+    pessoa vê (a grade, com estilo) e o que o vault guarda, não a forma
+    interna do estado; `update` e `Comando` ficam livres e são testados pela
+    §3.5 no `make test`. O que só o binário prova (o terminal volta do modo
+    raw, `$NVIM`, `$EDITOR` e o `rebuild` na volta) vai num PTY com
+    `portable-pty` e `vt100`. O pacote `freitask` ganhou um alvo `[lib]`, e o
+    `aceite` ganhou as dependências `freitask`, `ratatui`, `portable-pty` e
+    `vt100` (`scripts/gerar-cargo-aceite.sh` e `scripts/rascunho.sh`); no
+    merge, o `Cargo.toml` do aceite se regera pelo script, como a decisão 54
+    já manda. Quem escreve o aceite lê também `tui/src/`, a TUI de hoje: ela
+    é o oráculo da paridade (§1.7) e não há diferencial para a tela.
+
+f7.2. **Os comandos que escrevem passam a receber o vault e o lock num
+    `Contexto` e a devolver um `Resultado`; a CLI só imprime.** A TUI da
+    spec (§1.7) não chama subprocesso, então `new`, `new-project`, `set`,
+    `delete`, `rebuild`, `archive`, `unarchive`, `rename`, `move`, `encerrar`
+    e `reabrir` não podiam seguir imprimindo, devolvendo `ExitCode` e lendo
+    `HOME`. Forma: `escrita.rs`, `deslocar.rs`, `linhas.rs` e o novo
+    `saida.rs` saíram do binário para o `[lib]` (continuam no mesmo diretório;
+    `cli.rs`, `doctor.rs` e `usage.rs` ficam no binário). Cada comando é
+    `fn(&Contexto, …) -> Resultado`, com `Contexto { vault, trava, hoje }` e
+    `Resultado = Result<Saida, Falha>`: `Saida` é a linha de stdout mais os
+    avisos que foram a stderr no caminho; `Falha` é tudo que foi a stderr,
+    em ordem, sem o `freitask: `, mais o código de saída. Um `Corrida`
+    acumula o stderr enquanto o comando roda (o aviso de `status.json`
+    quebrado, o aviso de referências reescritas, a primeira linha de uma
+    recusa de `archive`), para a ordem das linhas ser a de sempre. O
+    embrulho da CLI (`cli.rs`, `escrevendo` e `imprimir`) resolve o lock e o
+    vault do ambiente, chama o comando e imprime o prefixo, os avisos, a
+    linha e o código: a saída dos subcomandos não muda, e o aceite das
+    fatias 0 a 6 é o que prova. A TUI chama as mesmas funções com o vault de
+    `<home>/ObsidianVault` e o lock de `saida::caminho_da_trava(Some(home))`;
+    a barra mostra `Falha::para_a_barra`, as linhas aparadas e juntas
+    com ` · `, como o `engine.rs` de hoje fazia com o stderr da CLI (uma
+    recusa de `archive` mostra então o motivo e "operação não concluída (veja
+    as mensagens acima)", como hoje). `Vault::travar` saiu do `vault` (só a
+    CLI o usava; o caminho do lock agora vem de `saida::caminho_da_trava`,
+    com a mesma mensagem sem `XDG_RUNTIME_DIR` nem `HOME`). `kebab` virou
+    `escrita::kebab`, e é o que a TUI chama para sugerir o id. O `doctor`
+    fica no binário, com os seus embrulhos em `cli.rs`. Para o merge com as
+    fatias 9a e 10a: elas tocam o braço `Set` de `cli.rs` e `escrita::set`,
+    e vão conflitar com esta forma; a resolução é levar a mudança delas para
+    a função que recebe o `Contexto`.
+    Uma ordem mudou: a CLI resolve o vault (`HOME`) antes de esperar o
+    lock. Sem `HOME`, com `XDG_RUNTIME_DIR` definido e o lock ocupado, saía
+    3 depois da espera e agora sai 2 na hora; o caso não aparece em nenhum
+    cenário do diferencial.
+f7.3. **A `Sessao` que não abre sai 1; sem `HOME` num terminal, 2.** `Sessao::
+    abrir` só falha com `hoje` inválido ou sem lugar para o lock, e o
+    primeiro caso a CLI já recusou antes (saída 2, `FREITASK_TODAY` inválida,
+    §2.1). O que sobra é "a TUI não conseguiu abrir", como o `freitask-tui:`
+    de hoje (saída 1), com a mensagem em stderr no formato `freitask: …`.
+    Terminal que falha (`ratatui::try_init`, também na volta do editor, ou a
+    leitura de evento) também sai 1, e o terminal é devolvido (`ratatui::restore`) nos
+    dois caminhos. `HOME` não definido é erro de uso, 2, como em `current` e
+    nos outros comandos. Fora de terminal segue o usage com saída 2 (decisão
+    49).
+f7.4. **`update` devolve `Comando`s e os resultados voltam como `Evento`s.**
+    `update(State, Evento) -> (State, Vec<Comando>)`. Um `Comando` é o que o
+    laço executa contra o vault: `Executar` (a `Escrita` que a CLI recebe,
+    montada como o `app.rs` montava os argumentos, mais o que selecionar
+    depois e a mensagem de sucesso), `Reler`, `SugerirId`, `LerPreview`,
+    `AbrirCurrent`, `Abrir` e `Sair`. O executor (`Sessao`) alimenta o
+    `update` com o resultado: `Feito` (que mostra o ok e pede `Reler`),
+    `Falhou` (que devolve o modal preenchido, se havia um em voo, e mostra o
+    erro), `Dados`, `IdSugerido` e `PreviewLido`, até a fila esvaziar; só o
+    que sai do processo (`Sair`, `Abrir`) vira `Pedido`. A leitura do
+    preview é um `Comando` que o próprio `update` pede quando a seleção
+    muda, uma vez por seleção; `Dados` esquece o preview, então ele é lido
+    de novo depois de toda releitura e de toda escrita. `Resize` é um
+    evento sem efeito no estado (a tela não depende do tamanho; o laço
+    redesenha a cada passo), e existe para o laço e a propriedade da §3.5
+    o tratarem como qualquer outro. `R` mostra "relido" no mesmo `update` em
+    que pede `Reler`, porque a leitura não falha (o `Dados::ler` devolve
+    vazio onde o vault não tem nada, como o `list`).
+f7.5. **Uma tabela só (`ATALHOS`) para a ajuda e para o despacho do modo
+    normal.** Cada linha traz o rótulo da ajuda, a descrição e as teclas com
+    o gesto de cada uma; a ajuda desenha as linhas e o `update` acha o gesto
+    pela mesma tabela. O teste `toda_tecla_da_ajuda_tem_handler` afirma as
+    duas direções: a tecla listada tem o gesto da tabela e o rótulo a cita; e
+    a tecla que a tabela não lista (ASCII imprimível, Ctrl-letra e as
+    especiais da crossterm) não muda o estado nem pede nada. Consequência:
+    o que o `app.rs` tratava sem listar entrou na ajuda, que ganhou `Home/End`
+    no rótulo de `g/G`, uma linha para `Esc` ("limpar o filtro e o aviso") e
+    uma para `?`; nenhum texto que o aceite fixa mudou, e a ajuda continua
+    cabendo em 100×30 (23 linhas). `b` e `p` das fatias 9b e 10b entram
+    depois, como linhas novas da tabela.
+f7.6. **O que a TUI mostra sai dos tipos do `core`, não de JSON.** `linhas.rs`
+    ganhou `Resumo` (os campos da task que o `list --json` e a TUI usam,
+    calculados num lugar só; `linha` o serializa) e `projetos` (o `active` do
+    `projects --json`). A TUI guarda o `Vocab` do `core`: as cores e os
+    ícones vêm de `Vocab::meta`, e as fases que o `s` oferece são as que o
+    `core` aceitaria num `set` (`task::check_status_change`, o que recusa
+    `done` e o sentinela 0), em vez do filtro `callout != "done"` da TUI
+    de hoje; o menu de arquivar vem de `config::ARCHIVED_TYPES` e
+    `archived_label`. Única diferença visível: uma task cujo número de fase
+    o vocabulário não tem mostra o ícone do sentinela, em vermelho, no lugar
+    de `?`. Nenhuma regra de task mora na TUI.
+f7.7. **`Sessao::abrir` e o laço.** Ao abrir, a sessão toma o lock para o
+    `rebuild` (é o mesmo `rebuild` da CLI, que o toma), lê o vault e, se o
+    `rebuild` falhou, deixa `rebuild falhou: <motivo>` na barra, em vermelho.
+    A leitura do `Dados` vem depois do `rebuild`, como a spec manda. O
+    `$NVIM` e o `$VISUAL`/`$EDITOR` seguem o `main.rs` de hoje (a expressão
+    `luaeval` e os testes foram portados); na volta do editor a sessão
+    regenera o painel (ignorando a falha, como hoje) e relê
+    (`Sessao::voltou_do_editor`). O laço ignora o evento de tecla que não é
+    `Press`. A sessão não lê `HOME`; o lock lê só o `XDG_RUNTIME_DIR` do
+    ambiente, e os testes em processo o compartilham com os outros testes
+    do mesmo binário (o lock é curto e o `flock` serializa entre
+    descritores do mesmo processo).
+f7.8. **Os testes da §3.5 no `make test`.** Camada 1: os 21
+    testes do `app.rs`, portados, e 16 novos (o `Comando` como fronteira, o
+    preview, os resultados que voltam como evento). Camada 2: duas
+    propriedades com `proptest` (sequências de teclas, `Resize` de 20×5 a
+    200×60, `Falhou`, `IdSugerido` e `Dados` sobre dados gerados: sem
+    pânico, índices dentro da lista, modal coerente e dois `Esc` voltam ao
+    modo normal; e o desenho em qualquer tamanho e modo). Camada 3: um teste
+    de `view` por tela em `TestBackend` (100×30 e 60×15, mais os tamanhos
+    estreitos), com asserções sobre a grade; cada tela tem a sua função
+    `tela_*` que devolve o `Buffer` e tira o snapshot dela (f7.9). A camada
+    4 é o `pty.rs` do aceite. Ficam fora, para as fatias 9b e 10b, a tela da
+    task bloqueada, a do prazo e as teclas `b` e `p`.
+f7.9. **Os `.snap` nascem por `scripts/snapshots-novos.sh`, que só cria o
+    que falta.** Decisão do dono (10/11/2026). A §3.5 manda o implementador
+    criar os `.snap` uma vez, mas todas as portas do insta estão fechadas
+    pela trava: o `make` exporta `CI=true` e `INSTA_UPDATE=no` (snapshot que
+    falta só falha), o `settings.json` nega `Write` em `**/snapshots/**` e o
+    hook nega `INSTA_UPDATE=`, `insta accept` e `--accept`. Para a trava, o
+    primeiro `.snap` e o `.snap` reaceito depois de uma regressão são o
+    mesmo gesto. O script roda o `cargo test` sem `CI` e sem as variáveis do
+    insta, renomeia cada `.snap.new` que não tem `.snap` ao lado e recusa
+    (apaga e sai 1) o que tem: snapshot que mudou continua falhando no `make
+    test` e só muda por reavaliação (§4, camada 1). Repete até uma rodada
+    não criar nada, porque o insta para no primeiro snapshot que falta de
+    cada teste. Cada tela tira dois, em 100×30 e 60×15 (`foto` em
+    `tui/tela.rs`); são 24, lidos um a um antes do commit.
 
 ## Testes reavaliados
 

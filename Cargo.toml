@@ -22,6 +22,7 @@ publish = false
 freitask-core = { path = "crates/core" }
 freitask-vault = { path = "crates/vault" }
 gerador = { path = "tests/gerador" }
+freitask = { path = "crates/freitask" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 clap = { version = "4", features = ["derive"] }

@@ -1,38 +1,28 @@
-//! Os comandos que escrevem: `new`, `new-project`, `set`, `delete`. Cada um
-//! toma o lock, lê o vault, pede ao `core` o plano (ou a recusa), executa o
-//! plano com CAS e regenera o painel, como o `cli.lua` de hoje. Nenhuma regra
-//! mora aqui: a ordem das validações e as mensagens são do `core`.
+//! Os comandos que escrevem: `new`, `new-project`, `set`, `delete`, `rebuild`.
+//! Cada um toma o lock, lê o vault, pede ao `core` o plano (ou a recusa),
+//! executa o plano com CAS e regenera o painel, como o `cli.lua` de hoje.
+//! Nenhuma regra mora aqui: a ordem das validações e as mensagens são do
+//! `core`.
+//!
+//! Cada função recebe o vault e o lock num `Contexto` e devolve um
+//! `Resultado` (`saida.rs`): a CLI o imprime e a TUI o mostra na barra, pelo
+//! mesmo caminho (decisão f7.2).
 
 use std::path::Path;
-use std::process::ExitCode;
 
-use freitask_core::date::Date;
 use freitask_core::deps;
 use freitask_core::index::Indice;
 use freitask_core::operacao::{self, PedidoSet};
 use freitask_core::path;
 use freitask_vault::Vault;
 
-use crate::cli::{die, falha, rebuild, say, travar};
-
-/// O vault do HOME.
-pub(crate) fn vault() -> Result<Vault, ExitCode> {
-    Vault::do_home().map_err(|e| die(&e, 2))
-}
-
-/// O vocabulário, com o aviso de `status.json` quebrado em stderr.
-pub(crate) fn vocab(vault: &Vault) -> freitask_core::status::Vocab {
-    let (vocab, aviso) = vault.vocab();
-    if let Some(a) = aviso {
-        eprintln!("{a}");
-    }
-    vocab
-}
+use crate::saida::{Contexto, Corrida, Falha, Resultado};
 
 /// Os bytes da task, ou a saída 1 com o erro de I/O (permissão, por
 /// exemplo), que não é o mesmo que a task não existir.
-pub(crate) fn ler(vault: &Vault, rel: &str, abs: &str) -> Result<Vec<u8>, ExitCode> {
-    std::fs::read(vault.caminho(rel)).map_err(|e| die(&format!("não consegui ler {abs}: {e}"), 1))
+pub(crate) fn ler(c: &mut Corrida, vault: &Vault, rel: &str, abs: &str) -> Result<Vec<u8>, Falha> {
+    std::fs::read(vault.caminho(rel))
+        .map_err(|e| c.falha(format!("não consegui ler {abs}: {e}"), 1))
 }
 
 fn raiz(vault: &Vault) -> String {
@@ -71,52 +61,55 @@ pub(crate) fn resolver(vault: &Vault, indice: &Indice, referencia: &str) -> Resu
     })
 }
 
-/// Regenera o painel depois de uma escrita e imprime o que o comando devolve.
-pub(crate) fn fecha(vault: &Vault, hoje: Date, saida: &str) -> ExitCode {
-    if let Err(e) = rebuild(vault, hoje) {
-        return falha(&e);
+/// `kebab`: o id que o texto rende. É também a sugestão de id da TUI.
+pub fn kebab(texto: &str) -> Resultado {
+    let mut c = Corrida::default();
+    let id = path::kebab(texto);
+    if id.is_empty() {
+        return Err(c.falha(format!("o texto não rende um id: {texto}"), 1));
     }
-    say(saida);
-    ExitCode::SUCCESS
+    c.ok(id)
 }
 
-/// `new`: cria a task, regenera o painel e imprime o caminho dela; com `json`,
-/// imprime no lugar do caminho `{"id":…,"path":…,"project":…}` (spec §2.2).
-pub fn new(projeto: &str, id: &str, titulo: &str, desc: &str, json: bool, hoje: Date) -> ExitCode {
-    let _trava = match travar() {
-        Ok(t) => t,
-        Err(c) => return c,
-    };
-    let vault = match vault() {
-        Ok(v) => v,
-        Err(c) => return c,
-    };
+/// `rebuild`: regenera o `CURRENT.md` e devolve o caminho dele.
+pub fn rebuild(cx: &Contexto) -> Resultado {
+    let mut c = Corrida::default();
+    let _trava = c.travar(cx)?;
+    c.regenerar(cx.vault, cx.hoje)
+        .map_err(|e| c.erro_escrita(&e))?;
+    c.ok(cx.vault.caminho_str("CURRENT.md"))
+}
+
+/// `new`: cria a task, regenera o painel e devolve o caminho dela; com `json`,
+/// devolve no lugar do caminho `{"id":…,"path":…,"project":…}` (spec §2.2).
+pub fn new(
+    cx: &Contexto,
+    projeto: &str,
+    id: &str,
+    titulo: &str,
+    desc: &str,
+    json: bool,
+) -> Resultado {
+    let mut c = Corrida::default();
+    let _trava = c.travar(cx)?;
+    let vault = cx.vault;
     // Como hoje: a raiz nasce antes de validar o pedido, e o vocabulário é
     // lido depois dela.
-    if let Err(e) = vault.garantir_raiz() {
-        return falha(&e);
-    }
-    let vocab = vocab(&vault);
-    let (rel, plano) =
-        match operacao::nova_task(&vocab, &vault, &raiz(&vault), projeto, id, titulo, desc) {
-            Ok(r) => r,
-            Err(e) => return die(&e, 1),
-        };
+    vault.garantir_raiz().map_err(|e| c.erro_escrita(&e))?;
+    let vocab = c.vocab(vault);
+    let (rel, plano) = operacao::nova_task(&vocab, vault, &raiz(vault), projeto, id, titulo, desc)
+        .map_err(|e| c.falha(e, 1))?;
     // A saída se monta antes de gravar: se o caminho não se deixasse separar,
     // nada teria sido escrito.
     let abs = vault.caminho_str(&rel);
     let saida = if json {
-        match linha_json(&rel, &abs) {
-            Some(l) => l,
-            None => return die(&format!("caminho de task inesperado: {rel}"), 1),
-        }
+        linha_json(&rel, &abs)
+            .ok_or_else(|| c.falha(format!("caminho de task inesperado: {rel}"), 1))?
     } else {
         abs
     };
-    if let Err(e) = vault.aplicar(&plano) {
-        return falha(&e);
-    }
-    fecha(&vault, hoje, &saida)
+    vault.aplicar(&plano).map_err(|e| c.erro_escrita(&e))?;
+    c.fecha(cx, &saida)
 }
 
 /// A linha de `new --json`. `project` e `id` saem do caminho que o plano
@@ -127,112 +120,68 @@ fn linha_json(rel: &str, abs: &str) -> Option<String> {
     Some(serde_json::json!({ "id": t.id, "path": abs, "project": t.project }).to_string())
 }
 
-pub fn new_project(nome: &str) -> ExitCode {
-    let _trava = match travar() {
-        Ok(t) => t,
-        Err(c) => return c,
-    };
-    let vault = match vault() {
-        Ok(v) => v,
-        Err(c) => return c,
-    };
-    if let Err(e) = vault.garantir_raiz() {
-        return falha(&e);
-    }
-    let (id, plano) = match operacao::novo_projeto(&vault, nome) {
-        Ok(r) => r,
-        Err(e) => return die(&e, 1),
-    };
-    if let Err(e) = vault.aplicar(&plano) {
-        return falha(&e);
-    }
+/// `new-project`: devolve o id do projeto.
+pub fn new_project(cx: &Contexto, nome: &str) -> Resultado {
+    let mut c = Corrida::default();
+    let _trava = c.travar(cx)?;
+    let vault = cx.vault;
+    vault.garantir_raiz().map_err(|e| c.erro_escrita(&e))?;
+    let (id, plano) = operacao::novo_projeto(vault, nome).map_err(|e| c.falha(e, 1))?;
+    vault.aplicar(&plano).map_err(|e| c.erro_escrita(&e))?;
     // Sem `rebuild`, como hoje: o projeto vazio só entra no painel na
     // próxima regeneração (o diferencial compara o `CURRENT.md`).
-    say(&id);
-    ExitCode::SUCCESS
+    c.ok(id)
 }
 
-pub fn set(referencia: &str, pedido: &PedidoSet, hoje: Date) -> ExitCode {
-    let _trava = match travar() {
-        Ok(t) => t,
-        Err(c) => return c,
-    };
-    let vault = match vault() {
-        Ok(v) => v,
-        Err(c) => return c,
-    };
-    let vocab = vocab(&vault);
+pub fn set(cx: &Contexto, referencia: &str, pedido: &PedidoSet) -> Resultado {
+    let mut c = Corrida::default();
+    let _trava = c.travar(cx)?;
+    let vault = cx.vault;
+    let vocab = c.vocab(vault);
     let indice = vault.indice(&vocab);
-    let alvo = match resolver(&vault, &indice, referencia) {
-        Ok(a) => a,
-        Err(e) => return die(&e, 1),
-    };
+    let alvo = resolver(vault, &indice, referencia).map_err(|e| c.falha(e, 1))?;
     let t = alvo.rel.as_deref().and_then(path::split_task_path);
-    let mut validado = match operacao::validar_set(
+    let mut validado = operacao::validar_set(
         &vocab,
         pedido,
         t.as_ref().and_then(|t| t.archived.as_deref()),
-    ) {
-        Ok(v) => v,
-        Err(r) => return die(r.mensagem(), r.codigo()),
-    };
+    )
+    .map_err(|r| c.falha(r.mensagem(), r.codigo()))?;
     let (Some(t), Some(rel)) = (t, alvo.rel.as_deref()) else {
-        return die(&format!("não é um arquivo de task: {}", alvo.abs), 1);
+        return Err(c.falha(format!("não é um arquivo de task: {}", alvo.abs), 1));
     };
     // A lista só se valida aqui: pede o índice (ids que existem, ciclo).
     if let Some(texto) = &pedido.bloqueada_por {
         let Some(entrada) = indice.por_rel(rel) else {
-            return die(&format!("não é um arquivo de texto UTF-8: {}", alvo.abs), 1);
+            return Err(c.falha(format!("não é um arquivo de texto UTF-8: {}", alvo.abs), 1));
         };
-        match deps::validar_bloqueada_por(&indice, entrada, texto) {
-            Ok(ids) => validado = validado.com_bloqueada_por(ids),
-            Err(e) => return die(&e, 1),
-        }
+        let ids =
+            deps::validar_bloqueada_por(&indice, entrada, texto).map_err(|e| c.falha(e, 1))?;
+        validado = validado.com_bloqueada_por(ids);
     }
-    let antes = match ler(&vault, rel, &alvo.abs) {
-        Ok(b) => b,
-        Err(c) => return c,
-    };
-    let depois = match operacao::editar_set(&vocab, &t, &alvo.abs, &antes, &validado) {
-        Ok(b) => b,
-        Err(r) => return die(r.mensagem(), r.codigo()),
-    };
-    if let Err(e) = vault.gravar(rel, Some(&antes), &depois) {
-        return falha(&e);
-    }
-    fecha(&vault, hoje, &alvo.abs)
+    let antes = ler(&mut c, vault, rel, &alvo.abs)?;
+    let depois = operacao::editar_set(&vocab, &t, &alvo.abs, &antes, &validado)
+        .map_err(|r| c.falha(r.mensagem(), r.codigo()))?;
+    vault
+        .gravar(rel, Some(&antes), &depois)
+        .map_err(|e| c.erro_escrita(&e))?;
+    c.fecha(cx, &alvo.abs)
 }
 
-pub fn delete(referencia: &str, hoje: Date) -> ExitCode {
-    let _trava = match travar() {
-        Ok(t) => t,
-        Err(c) => return c,
-    };
-    let vault = match vault() {
-        Ok(v) => v,
-        Err(c) => return c,
-    };
-    let vocab = vocab(&vault);
+pub fn delete(cx: &Contexto, referencia: &str) -> Resultado {
+    let mut c = Corrida::default();
+    let _trava = c.travar(cx)?;
+    let vault = cx.vault;
+    let vocab = c.vocab(vault);
     let indice = vault.indice(&vocab);
-    let alvo = match resolver(&vault, &indice, referencia) {
-        Ok(a) => a,
-        Err(e) => return die(&e, 1),
-    };
+    let alvo = resolver(vault, &indice, referencia).map_err(|e| c.falha(e, 1))?;
     let Some(rel) = alvo.rel.as_deref() else {
-        return die(&format!("não é um arquivo de task: {}", alvo.abs), 1);
+        return Err(c.falha(format!("não é um arquivo de task: {}", alvo.abs), 1));
     };
-    let antes = match ler(&vault, rel, &alvo.abs) {
-        Ok(b) => b,
-        Err(c) => return c,
-    };
-    let plano = match operacao::apagar_task(rel, &alvo.abs, antes) {
-        Ok(p) => p,
-        Err(e) => return die(&e, 1),
-    };
-    if let Err(e) = vault.aplicar(&plano) {
-        return falha(&e);
-    }
-    fecha(&vault, hoje, &alvo.abs)
+    let antes = ler(&mut c, vault, rel, &alvo.abs)?;
+    let plano = operacao::apagar_task(rel, &alvo.abs, antes).map_err(|e| c.falha(e, 1))?;
+    vault.aplicar(&plano).map_err(|e| c.erro_escrita(&e))?;
+    c.fecha(cx, &alvo.abs)
 }
 
 #[cfg(test)]
@@ -272,5 +221,13 @@ mod tests {
     fn linha_json_recusa_caminho_que_nao_e_de_task() {
         assert_eq!(linha_json("CURRENT.md", "/v/CURRENT.md"), None);
         assert_eq!(linha_json("projects/daily/tasks/x.md", "/v/x"), None);
+    }
+
+    #[test]
+    fn kebab_devolve_o_id_ou_recusa_o_texto_que_nao_rende() {
+        assert_eq!(kebab("Ávida nova").unwrap().stdout, "avida-nova");
+        let f = kebab("---").unwrap_err();
+        assert_eq!(f.stderr, ["o texto não rende um id: ---"]);
+        assert_eq!(f.codigo, 1);
     }
 }
