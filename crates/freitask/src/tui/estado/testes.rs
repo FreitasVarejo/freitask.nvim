@@ -40,6 +40,9 @@ pub(crate) fn tarefa(
         prioridade: None,
         volta_em: None,
         path,
+        bloqueada_por: vec![],
+        bloqueada: false,
+        bloqueia: vec![],
     }
 }
 
@@ -807,4 +810,127 @@ fn pick_nao_sai_dos_limites_da_lista() {
         panic!("sem o pick")
     };
     assert_eq!(*idx, 0);
+}
+
+// --- a fatia 9b: `b`, a lista bloqueada-por (f9b.1) ------------------------------
+
+/// `alfa` com `a1` esperando `a2` e `b1`, e `a2` sem lista.
+fn estado_com_dependencia() -> State {
+    let mut d = dados_sinteticos();
+    d.tasks[0].bloqueada_por = vec!["a2".into(), "b1".into()];
+    d.tasks[0].bloqueada = true;
+    State::novo(d)
+}
+
+fn prompt_de(s: &State) -> (Campo, String) {
+    match &s.modo {
+        Modo::Prompt { campo, valor } => (*campo, valor.clone()),
+        outro => panic!("esperava o prompt, veio {outro:?}"),
+    }
+}
+
+#[test]
+fn b_abre_o_prompt_com_a_lista_juntada_por_virgula_e_espaco() {
+    let mut s = estado_com_dependencia();
+    assert_eq!(aperta(&mut s, tecla('b')), []);
+    assert_eq!(prompt_de(&s), (Campo::BloqueadaPor, "a2, b1".into()));
+}
+
+#[test]
+fn b_numa_task_sem_lista_abre_o_prompt_vazio_com_o_foco_em_qualquer_painel() {
+    let mut s = estado_com_dependencia();
+    s.painel = Painel::Tasks;
+    aperta(&mut s, tecla('j'));
+    aperta(&mut s, tecla('b'));
+    assert_eq!(prompt_de(&s), (Campo::BloqueadaPor, String::new()));
+}
+
+#[test]
+fn b_sem_task_avisa_em_vermelho_e_nao_abre_o_prompt() {
+    let mut s = State::novo(Dados::default());
+    assert_eq!(aperta(&mut s, tecla('b')), []);
+    assert_eq!(s.modo, Modo::Normal);
+    let m = s.mensagem.as_ref().unwrap();
+    assert_eq!(m.texto, "nenhuma task selecionada");
+    assert!(m.erro);
+}
+
+#[test]
+fn enter_no_prompt_do_b_manda_o_texto_aparado_sem_reinterpretar() {
+    let mut s = estado_com_dependencia();
+    aperta(&mut s, tecla('b'));
+    digita(&mut s, " , a2 ,  ");
+    let (escrita, depois, ok) = executar(aperta(&mut s, codigo(KeyCode::Enter)));
+    assert_eq!(
+        escrita,
+        set_de(
+            "/v/projects/alfa/tasks/a1.md",
+            PedidoSet {
+                bloqueada_por: Some("a2, b1 , a2 ,".into()),
+                ..PedidoSet::default()
+            }
+        ),
+        "repetidos e vazios ficam para o motor"
+    );
+    assert_eq!(depois, Depois::Manter);
+    assert_eq!(ok, "bloqueada-por atualizada");
+}
+
+#[test]
+fn prompt_do_b_esvaziado_limpa_a_lista() {
+    let mut s = estado_com_dependencia();
+    aperta(&mut s, tecla('b'));
+    aperta(&mut s, ctrl('u'));
+    let (escrita, depois, _) = executar(aperta(&mut s, codigo(KeyCode::Enter)));
+    assert_eq!(
+        escrita,
+        set_de(
+            "/v/projects/alfa/tasks/a1.md",
+            PedidoSet {
+                bloqueada_por: Some(String::new()),
+                ..PedidoSet::default()
+            }
+        )
+    );
+    assert_eq!(depois, Depois::Manter);
+}
+
+#[test]
+fn texto_igual_ao_preenchido_no_b_nao_pede_nada_e_fecha_o_prompt() {
+    // Com lista…
+    let mut s = estado_com_dependencia();
+    aperta(&mut s, tecla('b'));
+    assert_eq!(aperta(&mut s, codigo(KeyCode::Enter)), []);
+    assert_eq!(s.modo, Modo::Normal);
+    // …e sem: vazio sobre vazio também não grava (e não é o erro dos outros
+    // campos).
+    let mut s = estado_com_dependencia();
+    s.painel = Painel::Tasks;
+    aperta(&mut s, tecla('j'));
+    aperta(&mut s, tecla('b'));
+    assert_eq!(aperta(&mut s, codigo(KeyCode::Enter)), []);
+    assert_eq!(s.modo, Modo::Normal);
+    assert!(s.mensagem.is_none());
+}
+
+#[test]
+fn recusa_do_motor_devolve_o_prompt_do_b_com_o_que_foi_digitado() {
+    let mut s = estado_com_dependencia();
+    aperta(&mut s, tecla('b'));
+    digita(&mut s, ", zzz");
+    executar(aperta(&mut s, codigo(KeyCode::Enter)));
+    aplica(&mut s, Evento::Falhou("task não encontrada: zzz".into()));
+    assert_eq!(prompt_de(&s), (Campo::BloqueadaPor, "a2, b1, zzz".into()));
+    let m = s.mensagem.as_ref().unwrap();
+    assert_eq!(m.texto, "task não encontrada: zzz");
+    assert!(m.erro);
+}
+
+#[test]
+fn esc_no_prompt_do_b_cancela_sem_pedir_nada() {
+    let mut s = estado_com_dependencia();
+    aperta(&mut s, tecla('b'));
+    digita(&mut s, "x");
+    assert_eq!(aperta(&mut s, codigo(KeyCode::Esc)), []);
+    assert_eq!(s.modo, Modo::Normal);
 }

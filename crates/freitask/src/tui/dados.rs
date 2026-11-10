@@ -39,7 +39,7 @@ impl Dados {
             .collect();
         let tasks = linhas::todas(&indice, true)
             .into_iter()
-            .map(|e| linhas::resumo(vault, &vocab, e, hoje))
+            .map(|e| linhas::resumo(vault, &vocab, &indice, e, hoje))
             .collect();
         Dados {
             vocab,

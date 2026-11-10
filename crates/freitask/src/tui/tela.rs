@@ -7,6 +7,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Wrap};
 
+use crate::linhas::Resumo;
 use crate::tui::atalhos::ATALHOS;
 use crate::tui::estado::{Campo, Confirmacao, Escolha, Modo, NovaTask, Painel, State};
 
@@ -131,6 +132,7 @@ fn tasks(f: &mut Frame, estado: &State, area: Rect) {
                 format!("{} ", fase.icon),
                 Style::default().fg(cor),
             ));
+            spans.extend(marca_bloqueada(t));
             spans.push(Span::styled(
                 t.id.clone(),
                 if t.archived.is_some() {
@@ -171,6 +173,13 @@ fn tasks(f: &mut Frame, estado: &State, area: Rect) {
         .block(bloco_do_painel(titulo, estado.painel == Painel::Tasks))
         .highlight_style(destaque());
     f.render_stateful_widget(lista, area, &mut selecao);
+}
+
+/// A marca da task que espera outra (f9b.2): sem coluna fixa, só aparece
+/// quando o `bloqueada` do JSON é verdadeiro.
+fn marca_bloqueada(t: &Resumo) -> Option<Span<'static>> {
+    t.bloqueada
+        .then(|| Span::styled("⛔ ", Style::default().fg(Color::Red)))
 }
 
 fn preview(f: &mut Frame, estado: &State, area: Rect) {
@@ -345,6 +354,7 @@ fn modal_prompt(f: &mut Frame, campo: Campo, valor: &str) {
         Campo::Titulo => " Título ",
         Campo::Descricao => " Descrição do estado (vazio apaga) ",
         Campo::Renomear => " Novo id (renomeia arquivo e links do vault) ",
+        Campo::BloqueadaPor => " Bloqueada por (ids separados por vírgula; vazio limpa) ",
         Campo::NovoProjeto => " Novo projeto ",
     };
     let area = centralizado(f.area(), 64, 3);
@@ -480,6 +490,9 @@ mod tests {
             prioridade: None,
             volta_em: None,
             path: format!("/v/projects/{projeto}/tasks/{id}.md"),
+            bloqueada_por: vec![],
+            bloqueada: false,
+            bloqueia: vec![],
         }
     }
 
@@ -545,7 +558,11 @@ mod tests {
     /// O estado depois de apertar estas teclas num vault com o preview já lido
     /// (o laço lê o arquivo a cada seleção; aqui o conteúdo é fixo).
     fn estado_apos(teclas: &[KeyEvent]) -> State {
-        let mut s = com_preview(State::novo(dados()));
+        estado_com(dados(), teclas)
+    }
+
+    fn estado_com(d: Dados, teclas: &[KeyEvent]) -> State {
+        let mut s = com_preview(State::novo(d));
         for t in teclas {
             s = com_preview(update(s, Evento::Tecla(*t)).0);
         }
@@ -591,10 +608,11 @@ mod tests {
     }
 
     /// Nenhuma linha passa da largura do terminal e a grade tem o tamanho
-    /// pedido.
+    /// pedido. A célula depois do `⛔` é a metade escondida dele: não conta.
     fn cabe(b: &Buffer, largura: u16, altura: u16) {
         assert_eq!(b.area, Rect::new(0, 0, largura, altura));
         for l in linhas(b) {
+            let l = l.replace("⛔ ", "⛔");
             assert!(Line::from(l.as_str()).width() <= largura as usize, "{l:?}");
         }
     }
@@ -723,6 +741,44 @@ mod tests {
 
     fn tela_do_vault_vazio() -> Buffer {
         foto("vault_vazio", &State::novo(Dados::default())).0
+    }
+
+    /// `dados()` com `medir-tempo` esperando `escrever-spec` e `beta-urgente`
+    /// (prioridade alta) esperando `beta-um`, numa cópia: o `dados()` das
+    /// outras telas não muda.
+    fn dados_bloqueada() -> Dados {
+        let mut d = dados();
+        for t in &mut d.tasks {
+            match t.id.as_str() {
+                "medir-tempo" => {
+                    t.bloqueada_por = vec!["escrever-spec".into()];
+                    t.bloqueada = true;
+                }
+                "escrever-spec" => t.bloqueia = vec!["medir-tempo".into()],
+                "beta-urgente" => {
+                    t.bloqueada_por = vec!["beta-um".into()];
+                    t.bloqueada = true;
+                }
+                "beta-um" => t.bloqueia = vec!["beta-urgente".into()],
+                _ => {}
+            }
+        }
+        d
+    }
+
+    fn tela_da_task_bloqueada() -> Buffer {
+        foto(
+            "task_bloqueada",
+            &estado_com(dados_bloqueada(), &teclas("lj")),
+        )
+        .0
+    }
+
+    fn tela_do_prompt_bloqueada_por() -> (Buffer, (u16, u16)) {
+        foto(
+            "prompt_bloqueada_por",
+            &estado_com(dados_bloqueada(), &teclas("ljb")),
+        )
     }
 
     fn tela_estreita() -> Buffer {
@@ -934,6 +990,98 @@ mod tests {
         assert!(!tasks[1].contains('!'));
     }
 
+    /// O texto de uma linha da grade como se lê: a célula depois do `⛔`, que
+    /// ocupa duas colunas, é a metade escondida dele e não entra.
+    fn lida(b: &Buffer, y: u16, p: Rect) -> String {
+        let mut out = String::new();
+        let mut x = p.x;
+        while x < p.right() {
+            let sim = b[(x, y)].symbol();
+            out.push_str(sim);
+            x += if sim == "⛔" { 2 } else { 1 };
+        }
+        out.trim().to_string()
+    }
+
+    #[test]
+    fn a_task_bloqueada_leva_a_marca_colada_antes_do_id_e_so_ela() {
+        let b = tela_da_task_bloqueada();
+        cabe(&b, 100, 30);
+        let tasks = painel(&b, "Tasks");
+        let linhas: Vec<String> = (tasks.y..tasks.bottom())
+            .map(|y| lida(&b, y, tasks))
+            .filter(|l| !l.is_empty())
+            .collect();
+        assert_eq!(linhas.len(), 3, "{linhas:?}");
+        assert!(
+            linhas[0].contains("escrever-spec") && !linhas[0].contains('⛔'),
+            "{linhas:?}"
+        );
+        assert!(
+            linhas[1].contains("⛔ medir-tempo"),
+            "a marca, um espaço e o id: {linhas:?}"
+        );
+        assert!(
+            linhas[1].find(' ') < linhas[1].find('⛔'),
+            "o ícone da fase vem antes da marca: {linhas:?}"
+        );
+        assert!(!linhas[2].contains('⛔'), "{linhas:?}");
+        // É a linha em destaque (selecionada com `lj`).
+        let d = destacadas(&b, tasks);
+        assert_eq!(d.len(), 1, "{d:?}");
+        assert!(d[0].contains("medir-tempo"), "{d:?}");
+        // O preview e os projetos não ganham a marca.
+        let fora = linhas_do(&b, painel(&b, "Preview")).join("\n")
+            + &linhas_do(&b, painel(&b, "Projetos")).join("\n");
+        assert!(!fora.contains('⛔'), "{fora}");
+    }
+
+    #[test]
+    fn a_marca_cabe_no_painel_estreito_e_convive_com_a_prioridade() {
+        let s = estado_com(dados_bloqueada(), &teclas("lj"));
+        let b = desenha(&s, 60, 15).0;
+        cabe(&b, 60, 15);
+        let tasks = painel(&b, "Tasks");
+        let linha = (tasks.y..tasks.bottom())
+            .map(|y| lida(&b, y, tasks))
+            .find(|l| l.contains("medir-tempo"))
+            .unwrap();
+        assert!(linha.contains("⛔ medir-tempo"), "{linha:?}");
+
+        let b = desenha(&estado_com(dados_bloqueada(), &teclas("j")), 100, 30).0;
+        let tasks = painel(&b, "Tasks");
+        let linha = (tasks.y..tasks.bottom())
+            .map(|y| lida(&b, y, tasks))
+            .find(|l| l.contains("beta-urgente"))
+            .unwrap();
+        assert!(
+            linha.starts_with('!') && linha.contains("⛔ beta-urgente"),
+            "{linha:?}"
+        );
+    }
+
+    #[test]
+    fn o_prompt_do_b_tem_a_moldura_o_texto_preenchido_e_o_cursor_no_fim() {
+        let (b, cursor) = tela_do_prompt_bloqueada_por();
+        cabe(&b, 100, 30);
+        let m = painel(
+            &b,
+            " Bloqueada por (ids separados por vírgula; vazio limpa) ",
+        );
+        assert_eq!(linhas_do(&b, m)[0], "escrever-spec");
+        assert!(texto(&b).contains("Enter confirma · Esc cancela"));
+        assert_eq!(
+            cursor,
+            (m.x + "escrever-spec".chars().count() as u16, m.y),
+            "o cursor fica no fim do texto"
+        );
+        // Em 60×15 a moldura e o texto continuam inteiros.
+        let (p, _) = desenha(&estado_com(dados_bloqueada(), &teclas("ljb")), 60, 15);
+        cabe(&p, 60, 15);
+        let m = painel(&p, "Bloqueada por (ids separados por vírgula; vazio limpa)");
+        assert_eq!(linhas_do(&p, m)[0], "escrever-spec");
+    }
+
     #[test]
     fn o_vault_vazio_mostra_os_paineis_sem_task_e_o_preview_vazio() {
         let b = tela_do_vault_vazio();
@@ -977,7 +1125,7 @@ mod tests {
 
     #[test]
     fn em_terminal_estreito_os_modais_ficam_dentro_da_tela_e_o_cursor_tambem() {
-        for modo in ["ln", "lt", "lr", "N", "ls", "la", "ld", "?"] {
+        for modo in ["ln", "lt", "lr", "lb", "N", "ls", "la", "ld", "?"] {
             for (w, h) in [(20, 5), (24, 7), (40, 10), (60, 15)] {
                 let s = estado_apos(&teclas(modo));
                 let (b, (cx, cy)) = desenha(&s, w, h);

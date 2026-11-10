@@ -692,6 +692,23 @@ f9b.2. **A marca é `⛔ ` (o emoji e um espaço) colada antes do id, na linha
     rara. Ela fica depois do ícone da fase e do `[tipo] ` da arquivada,
     imediatamente antes do id; o prazo da 10b vai depois do id, como o
     `volta`. Nada muda no preview nem no `CURRENT.md` (§10.1).
+f9b.3. **Reavaliação pedida: os `.snap` da ajuda (`ajuda_60x15` e
+    `ajuda_100x30`, em `crates/freitask/src/tui/snapshots/`) mudam com a
+    linha do `b`.** O teste `a_ajuda_cabe_inteira_e_lista_toda_linha_da_tabela`
+    (`tui/tela.rs`) falha no `make test` no primeiro deles; o insta para ali,
+    e o segundo muda pelo mesmo motivo (a moldura tem `ATALHOS.len() + 2`
+    linhas). Em 60×15 a ajuda é cortada embaixo: a linha `b  editar a lista
+    bloqueada-por` entra depois da do `r` e a do `A` sai da tela; em 100×30
+    a moldura ganha uma linha e todas as do `a` em diante descem uma. É a
+    consequência que a f7.5 previu ("`b` e `p` das fatias 9b e 10b entram
+    depois, como linhas novas da tabela") e o texto de f9b.1. Nenhum teste
+    congelado da 7 falha: o `AJUDA` de `telas.rs` confere linha a linha. As
+    asserções semânticas do teste (a ajuda cabe em 100×30, cada linha da
+    tabela inteira) seguem passando. Pedido: apagar os dois `.snap` e deixar
+    o `scripts/snapshots-novos.sh` criá-los de novo, sem mudar o teste. A
+    10b vai pedir o mesmo para a linha do `p`; no merge, o `.snap` da ajuda
+    é o de quem entrar por último, regerado do mesmo jeito. Um subagente
+    novo reavalia o pedido contra a spec.
 
 ## Testes reavaliados
 
@@ -862,3 +879,20 @@ f9b.2. **A marca é `⛔ ` (o emoji e um espaço) colada antes do id, na linha
   "igualdade sem `trim`" passaria por todo o `crates/core`. Ele achou,
   com 200 mil casos, outras entradas da mesma família (`a = "a"`, `b = "f"`,
   `alias = "f"`).
+- **`ajuda_60x15` e `ajuda_100x30` (`crates/freitask/src/tui/snapshots/`),
+  fatia 9b.** Pedido na entrada f9b.3. Veredito do subagente reavaliador:
+  **procede, sem ajuste**. Ele regerou os dois `.snap` numa cópia do
+  worktree pelo `scripts/snapshots-novos.sh` e os comparou com os de antes:
+  a diferença é só a linha `b  editar a lista bloqueada-por` depois da do
+  `r` (em 60×15 a do `A` sai da tela, que já cortava a ajuda; em 100×30 a
+  moldura ganha uma linha, com os estilos das linhas de conteúdo e da
+  borda), mais o `assertion_line` do cabeçalho, que o insta não compara.
+  Nenhuma cor, largura, ordem ou rodapé muda. A asserção semântica do teste
+  (a ajuda cabe em 100×30, cada linha de `ATALHOS` inteira) não muda e
+  passa, e o aceite da 9b fixa a posição do `b` sem `.snap`. Mudança: os
+  dois `.snap` apagados pelo dono (o modo automático do Claude Code
+  recusou o gesto à sessão) e recriados pelo script, byte a byte iguais
+  aos que o reavaliador mediu; o teste fica como está. O
+  reavaliador notou, fora do pedido: a f7.9 diz "são 24" `.snap`, agora são
+  28; em 60×15 a ajuda corta 9 das 22 linhas sem indicação (vem da 7; a
+  §3.5 só pede "cabe inteira" em 100×30).

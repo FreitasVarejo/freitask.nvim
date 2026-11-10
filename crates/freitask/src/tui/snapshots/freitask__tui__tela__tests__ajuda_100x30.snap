@@ -1,6 +1,6 @@
 ---
 source: crates/freitask/src/tui/tela.rs
-assertion_line: 678
+assertion_line: 696
 expression: grande.0
 ---
 Buffer {
@@ -21,6 +21,7 @@ Buffer {
         "│                  │││             t  editar o título                         │                    │",
         "│                  │││             i  editar a descrição                      │                    │",
         "│                  │││             r  renomear o id (arquivo e links)         │                    │",
+        "│                  │││             b  editar a lista bloqueada-por            │                    │",
         "│                  │││             a  arquivar / desarquivar                  │                    │",
         "│                  │││             A  mostrar / esconder arquivadas           │                    │",
         "│                  │││             S  mostrar / esconder Algum dia e adiadas  │                    │",
@@ -32,7 +33,6 @@ Buffer {
         "│                  │││             ?  esta ajuda                              │                    │",
         "│                  │││       q / C-c  sair                                    │                    │",
         "│                  ││╰────────────────────────────────────────────────────────╯                    │",
-        "│                  ││                                 ││                                           │",
         "│                  ││                                 ││                                           │",
         "╰──────────────────╯╰─────────────────────────────────╯╰───────────────────────────────────────────╯",
         "? ajuda · n nova · s fase · a arquivar · d largar · e abrir · / filtro · q sair                     ",
@@ -277,15 +277,16 @@ Buffer {
         x: 19, y: 25, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
         x: 20, y: 25, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
         x: 21, y: 25, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
+        x: 38, y: 25, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 78, y: 25, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
         x: 79, y: 25, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 99, y: 25, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 26, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
         x: 1, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 19, y: 26, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
         x: 20, y: 26, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
-        x: 21, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
-        x: 54, y: 26, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
-        x: 56, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
+        x: 21, y: 26, fg: Yellow, bg: Reset, underline: Reset, modifier: NONE,
+        x: 79, y: 26, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
         x: 99, y: 26, fg: DarkGray, bg: Reset, underline: Reset, modifier: NONE,
         x: 0, y: 27, fg: Green, bg: Reset, underline: Reset, modifier: NONE,
         x: 1, y: 27, fg: Reset, bg: Reset, underline: Reset, modifier: NONE,
