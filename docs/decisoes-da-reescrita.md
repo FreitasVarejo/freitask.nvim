@@ -308,6 +308,93 @@ na seção "Testes reavaliados".
     9, e não conta os avisos que o `doctor.lua` também nunca repara. Conferido
     que a propriedade falha com `tem_entrada_de_arquivamento` sempre falsa.
 
+## Fatia 6
+
+48. **`current` é portado nesta fatia.** A §5 não o põe em fatia nenhuma, mas
+    a §2.1 o lista como subcomando do binário e o cutover (§6) troca o shim,
+    que hoje o trata, pelo binário: sem porte, `freitask current` deixaria
+    de funcionar no dia do cutover. A fatia 6 é a da CLI. Faz o que o shim
+    faz: `exec nvim "$HOME/ObsidianVault/CURRENT.md"`, sem `--clean` e sem
+    conferir que o arquivo existe; `nvim` fora do `PATH` dá a mensagem do
+    shim (`nvim não encontrado no PATH`, saída 2), e outra falha do `exec`
+    sai 2 com o erro. O aceite só cobre `current --help`; o comportamento
+    fica preso em `crates/freitask/tests/current.rs` (um `nvim` falso
+    confere o argumento e que é `exec`, não filho). Diferenças do shim:
+    `FREITASK_TODAY` inválida sai 2 antes do `exec` (decisão 17), e o
+    `nvim` sem permissão de execução sai 2 com mensagem, não 126 do bash; e
+    argumento a mais (`current x`) é recusado pelo clap com saída 2, onde o
+    shim o ignorava (decisão 19: argumento a mais fica com o clap).
+49. **`freitask tui` e `freitask` sem argumentos são uma função só**: TUI
+    num terminal (stdin e stdout), senão o usage em stdout e saída 2. Num
+    terminal, até a fatia 7, a TUI sai 2 com "ainda não foi portada".
+50. **`new --json` tira `project` e `id` do caminho que o plano grava**
+    (`split_task_path`), não dos argumentos: o `nova_task` apara o id.
+51. **Flag desconhecida no `doctor` não aparece no diferencial.** O aceite
+    da fatia 6 fixa a saída 2 do clap (§2.1) onde o oráculo ignora a flag e
+    roda; medido em `tests/diferencial/src/cenarios.rs`: nenhum cenário
+    passa flag fora de `--archived --desc --fix --help --json --quiet
+    --status --title --volta-em`, todas conhecidas dos dois lados. Sem
+    entrada no `divergencias.toml`.
+52. **`scripts/rascunho.sh` roda `cargo clippy --all-targets -D warnings`**
+    no rascunho, com os `[lints]` copiados de `tests/aceite/Cargo.toml`, antes
+    do `cargo test`: o congelamento da fatia 6 teve de ser desfeito por um
+    `clippy::useless_concat` que só o `make check` pegou.
+53. **Reavaliação pedida: D1 no `help-por-subcomando`, D10 e a `tambem`
+    geral da D1.** Com o `new --json` portado, a rodada completa do
+    diferencial deu 290 cenários, 52237 diferenças, 66 fora da lista: as 83
+    previstas sumiram, e ficaram 60 `json:/findings` (`link-pendurado` com
+    alvo terminado em `\`) e 6 `json:/ok` (`A=false B=true`), todas no passo
+    11 (`doctor --json`) do `help-por-subcomando`; o `codigo` desse passo cai
+    na D8. O `diff-json.md` não diverge mais (os dois lados gravam a mesma
+    task), então o "só em B" do `motivo` da D10 e a alternativa
+    `arquivo:…diff-json\.md` do `onde` estão mortos. Pedido a um subagente
+    novo: (1) a forma de pôr o cenário na D1; (2) o `motivo` e o `onde` da
+    D10; (3) se a `tambem` geral da D1, que cobre `codigo ^A=1 B=0$` em
+    `recusas`, esconde uma recusa aceita em silêncio. O primeiro reavaliador
+    foi interrompido com a sessão antes de dar veredito; deixou uma lista
+    candidata e um binário de embrulho (recusa que sai 0) em
+    `target/f6-reavaliacao/`, sem rodada completa com ela.
+
+## Depois da fatia 6: fatias em paralelo
+
+54. **As fatias 9 e 10 se dividem em parte da CLI (a) e parte da TUI (b), e
+    o que vem depois da 6 corre em ondas paralelas**, um chat por worktree.
+    Decisão do dono (10/11/2026), para não fazer 7 → 8 → 9 → 10 → 11 em
+    série; altera a §5, que divide em fatias seriais numa branch só. O
+    porquê da divisão: a leitura das duas já está portada (`core/deps.rs`,
+    `meta.rs`, o `show` em `cli.rs`), e só as teclas `b` e `p` dependem da
+    TUI da fatia 7. Os testes da TUI chamam `update`/`view` em processo
+    (§3.5): congelar o aceite da tecla antes da 7 existir dá um alvo que não
+    compila, e erro de compilação aborta o `cargo test -p aceite
+    --no-fail-fast` e o `clippy --all-targets` do `make check` inteiros,
+    inclusive as fatias 0 a 6. Por isso cada parte tem a sua pasta de
+    aceite e a sua tag.
+    - **Onda 1**, logo depois da 6: `f7-tui` (a fatia 7 inteira);
+      `f9a-dependencias-cli` (`set --bloqueada-por` com recusa de ciclo,
+      `rename` que arrasta, campos no JSON, os kinds do `doctor`, I10,
+      `set_bloqueada_por_recusa_ciclo_e_nao_grava`,
+      `rename_arrasta_a_dependencia_nas_outras_tasks`);
+      `f10a-prazo-cli` (`set --prazo`, `dias_para_o_prazo`, os kinds do
+      `doctor`, I11, `prazo_invalido_nao_conta_dias_e_o_doctor_acusa`,
+      `prazo_nao_muda_a_ordem_do_painel`).
+    - **Onda 2**, depois do merge da 7: a fatia 8 no branch integrado, e
+      `f9b-dependencias-tui` com `f10b-prazo-tui` (tecla `b` e a marca;
+      tecla `p` e o prazo na tela), congeladas só agora.
+    - **Onda 3**: a 11, sozinha.
+
+    A 9 e a 10 só fecham (portão da §5) quando a parte b fecha. Nas ondas 1
+    e 2 cada chat roda `make check test aceite` (e `make diff` na parte a);
+    `make mutantes` e `make test-longo` ficam para o branch integrado (três
+    `target/` com `--jobs 4` disputam CPU e disco). No merge, o
+    `tests/aceite/Cargo.toml`, o `ACEITE.sha256` e as duas catracas
+    conflitam sempre; não se editam à mão: o dono regera com
+    `scripts/gerar-cargo-aceite.sh`, `scripts/hash-aceite.sh --gravar` e
+    `make baseline`, e confere com `git diff --numstat
+    aceite/f0-fundacao..HEAD` sobre o aceite que nenhum arquivo das pastas
+    `f*/` perde linha. `ACEITE.sha256` e `contagem.baseline` trocam linha a
+    cada congelamento, e `divergencias.toml` muda nas reavaliações; esses
+    três ficam fora da conferência.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
@@ -407,3 +494,54 @@ na seção "Testes reavaliados".
   - A `tambem` geral da D1 cobre `codigo ^A=1 B=0$` em todos os passos de
     `recusas`. Um novo que aceitasse em silêncio uma recusa, mantendo a
     mensagem no stderr, passaria. Vale um reavaliador olhar à parte.
+- **D1 no `help-por-subcomando`, D10 e a `tambem` geral da D1
+  (`divergencias.toml`), fatia 6.** Pedido na entrada 53. Um subagente
+  reavaliador novo refez a medição com rodadas completas (base: 290
+  cenários, 52237 diferenças, 66 fora) e sete binários de embrulho como
+  regressão fictícia. Os vereditos:
+  - **`help-por-subcomando`: procede com ajuste.** Uma `tambem` própria, só
+    `json:/(ok|findings)`, com o achado preso a alvo `projects/<p>/tasks/…\`.
+    Só o passo 11 sai JSON dos dois lados; o resto do cenário segue na D8.
+    Pôr o cenário na `tambem` geral tiraria da D8 o `A=1 B=0` do `doctor
+    --help`. Medido: com os achados reais sumindo (`r-vazio`), eles ficam
+    fora da lista no cenário.
+  - **D10: procede.** Nenhuma diferença toca `diff-json.md` (os dois lados
+    gravam a mesma task), e a alternativa `--json` do `detalhe` também
+    estava morta. O `onde` perdeu `arquivo:…diff-json\.md`; o `detalhe`
+    trocou `"freitask: [^"]*(version|show|--json)`, que valia em todo
+    cenário, pela forma medida da recusa de `version` e `show`; o `motivo`
+    diz o que o oráculo faz com `help --json` e `new --json`.
+  - **`tambem` geral da D1: procede, e o buraco era maior que o pedido.**
+    Ela e a principal escondiam qualquer recusa que saísse 0 e o `doctor`
+    saindo 0 ou dizendo `ok` com erro: com a lista congelada, `doctor
+    --quiet` sempre 0 dava 0 fora da lista, e recusas de `move`,
+    `unarchive` e afins só apareciam no corpus `real`. Medido: todo `A=1
+    B=0` legítimo da D1 é passo de `doctor` em seis corpora onde o falso
+    positivo é o único erro do oráculo (`minimo` e os patológicos
+    `crlf-bom`, `link-em-codigo`, `link-em-tabela`, `ponto-e-ponto-ponto`,
+    `projeto-sem-tasks-e-encerrado`), mais o `archived-true-legado` depois
+    do `--fix`; o `ok` e o `vault consistente` têm o mesmo recorte.
+    Mudança: `codigo`, `ok` e `linha 1` saíram da principal e da geral para
+    uma `tambem` presa a esses corpora e cenários; a principal perdeu
+    também `stdout` e as linhas de resumo, mortas.
+
+  Rodado com a lista nova: 290 cenários, 52237 diferenças, 0 fora da
+  lista; D1 1380, D10 46500, D2 3553, D3 92, D4 23, D5 6, D7 18, D8 665.
+  As sete regressões fictícias ficam todas fora da lista (de 15 a 2181
+  diferenças cada; `r-quiet` ia de 0 para 15, `r-recusa-mover` de 13 para
+  220), sem diferença nova fora da lista que não venha delas. Resíduo:
+  nos seis corpora uma recusa que sai 0 ainda passa, porque o harness não
+  filtra cláusula por passo. Hash regravado no mesmo commit.
+
+  O reavaliador deixou, fora do pedido:
+  - O harness não filtra cláusula por passo (um `comando` opcional em
+    `Clausula`, casado contra `Diferenca.comando`, fecharia o resíduo) e
+    só acusa entrada morta, não cláusula nem alternativa morta (por isso
+    o `diff-json` sobreviveu). Sem dor medida: não entra agora.
+  - A D2 aceita qualquer `codigo` no `ponto-e-ponto-ponto`; quem segura a
+    saída 1 do `.` e do `..` é o aceite `ponto_e_ponto_ponto_nao_sao_projeto`.
+  - No `escrita-existente`, o passo 8 (`move {task2} {proj1}`) é recusa em
+    13 corpora: a `{task2}` já está em `{proj1}`, e o primeiro `move` do
+    cenário não move nada.
+  - O corpus `real` varia entre rodadas (11 diferenças trocadas entre duas
+    bases, todas cobertas por D10 e D2).

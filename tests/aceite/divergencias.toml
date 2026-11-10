@@ -6,7 +6,7 @@
 # cláusula principal ou numa `[[divergencia.tambem]]`) cobre a diferença, então a ordem importa: as entradas vêm da mais específica para a
 # mais larga. D10 fica antes de D8 porque os dois dividem o cenário
 # `help-por-subcomando`: D10 casa só o que tem a cara dos comandos novos
-# (`só B é JSON`, `version`, `show`, `--json` na mensagem do oráculo) e D8 fica
+# (`só B é JSON`, `version` e `show` recusados pelo oráculo) e D8 fica
 # com o resto do cenário (`<sub> --help`, `-h`).
 #
 # Formas que o harness produz (tests/diferencial/src/comparar.rs):
@@ -19,21 +19,31 @@
 
 [[divergencia]]
 id = "D1"
-motivo = "`archive`, `move` e `rename` passam a reescrever `[[…\\|alias]]` dentro de tabela (bug medido em §0; o `retarget_prefix` já fazia certo). A nota com tabela fica com bytes diferentes e o `doctor` do oráculo acusa `link-pendurado` (array `findings` maior, `ok=false`, saída 1) onde o novo não acusa nada. O aviso `freitask: N referência(s) atualizada(s) em M arquivo(s)` conta só o que foi reescrito: soma os links em tabela e as notas que só os têm; como o stderr não separa isso de D5 (link em código fora da conta), nestes cenários é esta entrada que cobre o aviso. Sem escrita nenhuma, o `doctor.lua` corta o alvo no primeiro `|` (doctor.lua:327) e acusa `link-pendurado` com alvo terminado em `\\` em todo `[[projects/…\\|…]]`; o novo usa o `links::scan` (§1.4) e não acusa: saída 1 contra 0, `ok` e a linha de resumo, em qualquer corpus com tabela (cláusula `tambem`)."
+motivo = "`archive`, `move` e `rename` passam a reescrever `[[…\\|alias]]` dentro de tabela (bug medido em §0; o `retarget_prefix` já fazia certo). A nota com tabela fica com bytes diferentes e o `doctor` do oráculo acusa `link-pendurado` (array `findings` maior, `ok=false`, saída 1) onde o novo não acusa nada. O aviso `freitask: N referência(s) atualizada(s) em M arquivo(s)` conta só o que foi reescrito: soma os links em tabela e as notas que só os têm; como o stderr não separa isso de D5 (link em código fora da conta), nestes cenários é esta entrada que cobre o aviso. Sem escrita nenhuma, o `doctor.lua` corta o alvo no primeiro `|` (doctor.lua:327) e acusa `link-pendurado` com alvo terminado em `\\` em todo `[[projects/…\\|…]]`; o novo usa o `links::scan` (§1.4) e não acusa. O achado e o par de contagens do resumo aparecem em qualquer corpus com esse link (cláusulas `tambem`; no `help-por-subcomando`, só `findings` e `ok` do `doctor --json` final, porque o resto do cenário é da D8). A saída 1 contra 0, o `ok` false contra true e o `vault consistente` só aparecem onde esse falso positivo é o único erro que o oráculo acusa: a cláusula deles lista esses corpora e cenários, medidos, porque fora deles um `A=1 B=0` seria o novo saindo 0 numa recusa ou num vault com erro de verdade."
 teste = "link_em_tabela_acompanha_o_archive_o_move_e_o_rename"
 cenario = '::(tabela|escrita-existente)$'
-onde = '^(arquivo:(notas/[^/]+|projects/[^/]+/tasks/.+)\.md|json:/(ok|findings)|codigo|stderr|stdout)$'
-detalhe = '^bytes diferentes$|^A=1 B=0$|^A=false B=true$|^achado só em A: error  link-pendurado +\S+ (/ )?linha \d+: `\[\[projects/[^/]+/tasks/[^\]`]*\\\]\]` não resolve( \(fixed=false\))?$|^linha 1: A="" B="freitask: vault consistente\."$|^linha 2: A="\d+ achado\(s\), \d+ pendente\(s\)\." B="\d+ achado\(s\), \d+ pendente\(s\)\."$|^linha \d+: A="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)" B="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)"$|^0 linhas em A, 1 em B; a primeira a mais em B: "freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)"$'
+onde = '^(arquivo:(notas/[^/]+|projects/[^/]+/tasks/.+)\.md|json:/findings|stderr)$'
+detalhe = '^bytes diferentes$|^achado só em A: error  link-pendurado +\S+ (/ )?linha \d+: `\[\[projects/[^/]+/tasks/[^\]`]*\\\]\]` não resolve( \(fixed=false\))?$|^linha \d+: A="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)" B="freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)"$|^0 linhas em A, 1 em B; a primeira a mais em B: "freitask: \d+ referência\(s\) atualizada\(s\) em \d+ arquivo\(s\)"$'
 
 [[divergencia.tambem]]
 cenario = '^(minimo|sintetico-\d+|patologico-[a-z-]+)::(doctor|doctor-fix|fix-idempotente|rebuild|escrita-nova|recusas|set-preserva-bytes)$'
-onde = '^(codigo|stdout|json:/(ok|findings))$'
-detalhe = '^A=1 B=0$|^A=false B=true$|^achado só em A: error  link-pendurado +\S+ (/ )?linha \d+: `\[\[projects/[^/]+/tasks/[^\]`]*\\\]\]` não resolve( \(fixed=false\))?$|^linha 1: A="" B="freitask: vault consistente\."$|^linha 2: A="\d+ achado\(s\), \d+ pendente\(s\)\." B="\d+ achado\(s\), \d+ pendente\(s\)\."$'
+onde = '^(stdout|json:/findings)$'
+detalhe = '^achado só em A: error  link-pendurado +\S+ (/ )?linha \d+: `\[\[projects/[^/]+/tasks/[^\]`]*\\\]\]` não resolve( \(fixed=false\))?$|^linha 2: A="\d+ achado\(s\), \d+ pendente\(s\)\." B="\d+ achado\(s\), \d+ pendente\(s\)\."$'
 
 [[divergencia.tambem]]
 cenario = '^patologico-id-duplicado::ambiguo$'
 onde = '^json:/findings$'
 detalhe = '^achado só em A: error  link-pendurado +\S+ (/ )?linha \d+: `\[\[projects/[^/]+/tasks/[^\]`]*\\\]\]` não resolve( \(fixed=false\))?$'
+
+[[divergencia.tambem]]
+cenario = '^(minimo|patologico-(crlf-bom|link-em-codigo|link-em-tabela|ponto-e-ponto-ponto|projeto-sem-tasks-e-encerrado))::(doctor|doctor-fix|rebuild|escrita-nova|escrita-existente|recusas|tabela|set-preserva-bytes)$|^patologico-archived-true-legado::(doctor-fix|fix-idempotente|escrita-existente)$'
+onde = '^(codigo|stdout|json:/ok)$'
+detalhe = '^A=1 B=0$|^A=false B=true$|^linha 1: A="" B="freitask: vault consistente\."$'
+
+[[divergencia.tambem]]
+cenario = '^(minimo|sintetico-\d+|patologico-[a-z-]+)::help-por-subcomando$'
+onde = '^json:/(ok|findings)$'
+detalhe = '^A=false B=true$|^achado só em A: error  link-pendurado +\S+ (/ )?linha \d+: `\[\[projects/[^/]+/tasks/[^\]`]*\\\]\]` não resolve( \(fixed=false\))?$'
 
 [[divergencia]]
 id = "D2"
@@ -84,11 +94,11 @@ detalhe = '^só em A$'
 
 [[divergencia]]
 id = "D10"
-motivo = "Adições que o oráculo não tem: `new --json`, `show [--json]`, `version [--json]`, `help --json`, os campos novos do `list --json` (`notes`, `historico`, `checklist`, `bloqueada_por`, `bloqueada`, `bloqueia`, `prazo`, `dias_para_o_prazo`; `ciclo` no `show`), os kinds novos do `doctor` (`temporario-orfao`, `dependencia-pendurada`, `dependencia-ciclica`, `prazo-invalido`, `prazo-antes-da-volta`) e a saída 3 (conflito de escrita ou lock). No JSON aparecem como `só em B`; em `help-por-subcomando`, o oráculo recusa o comando ou a flag que não conhece (stderr com o nome) ou imprime texto onde o novo imprime JSON, e a task criada por `new --json` existe só em B."
+motivo = "Adições que o oráculo não tem: `new --json`, `show [--json]`, `version [--json]`, `help --json`, os campos novos do `list --json` (`notes`, `historico`, `checklist`, `bloqueada_por`, `bloqueada`, `bloqueia`, `prazo`, `dias_para_o_prazo`; `ciclo` no `show`), os kinds novos do `doctor` (`temporario-orfao`, `dependencia-pendurada`, `dependencia-ciclica`, `prazo-invalido`, `prazo-antes-da-volta`) e a saída 3 (conflito de escrita ou lock). No JSON aparecem como `só em B`; em `help-por-subcomando`, o oráculo recusa `version` e `show` (`comando desconhecido`, em stderr) e imprime texto onde o novo imprime JSON: o usage no `help --json` e só o caminho no `new --json`, cuja flag ele ignora, gravando a mesma task que o novo."
 teste = "new_json_devolve_caminho_projeto_e_id"
 cenario = '.*'
-onde = '^(json:(/\d+)?/(notes|historico|checklist|bloqueada_por|bloqueada|bloqueia|prazo|dias_para_o_prazo|ciclo)|json:/findings(/\d+(/\w+)?)?|codigo|stdout|stderr|arquivo:projects/[^/]+/tasks/diff-json\.md)$'
-detalhe = '^só em B|temporario-orfao|dependencia-pendurada|dependencia-ciclica|prazo-invalido|prazo-antes-da-volta|^A=\d+ B=3$|^só B é JSON$|"freitask: [^"]*(version|show|--json)'
+onde = '^(json:(/\d+)?/(notes|historico|checklist|bloqueada_por|bloqueada|bloqueia|prazo|dias_para_o_prazo|ciclo)|json:/findings(/\d+(/\w+)?)?|codigo|stdout|stderr)$'
+detalhe = '^só em B|temporario-orfao|dependencia-pendurada|dependencia-ciclica|prazo-invalido|prazo-antes-da-volta|^A=\d+ B=3$|^só B é JSON$|^\d+ linhas em A, 0 em B; a primeira a mais em A: "freitask: comando desconhecido: (version|show)"$'
 
 [[divergencia]]
 id = "D8"

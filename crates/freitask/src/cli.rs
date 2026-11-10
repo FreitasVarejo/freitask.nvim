@@ -247,23 +247,40 @@ pub fn run(args: Vec<OsString>) -> ExitCode {
         Err(e) => return die(&e, 2),
     };
     let Some(cmd) = cli.cmd else {
-        return sem_argumentos();
+        return tui();
     };
     despachar(cmd, hoje)
 }
 
-/// `freitask` sem argumentos: a TUI num terminal; senão o usage com saída 2.
-fn sem_argumentos() -> ExitCode {
+/// `freitask tui` e `freitask` sem argumentos: a TUI num terminal (stdin e
+/// stdout); fora dele, o usage em stdout com saída 2 (§2.4), porque nada pode
+/// travar esperando uma tela que ninguém vê.
+fn tui() -> ExitCode {
     use std::io::IsTerminal;
     if std::io::stdin().is_terminal() && std::io::stdout().is_terminal() {
-        return tui();
+        return die("a TUI ainda não foi portada (fatia 7)", 2);
     }
     println!("{}", usage::USAGE);
     ExitCode::from(2)
 }
 
-fn tui() -> ExitCode {
-    die("a TUI ainda não foi portada (fatia 7)", 2)
+/// `freitask current`: substitui o processo pelo Neovim no `CURRENT.md`, como
+/// o shim de hoje (`exec nvim "$HOME/ObsidianVault/CURRENT.md"`): interativo,
+/// sem `--clean`, e sem conferir que o arquivo existe. `exec` só volta se
+/// falhou.
+fn current() -> ExitCode {
+    use std::os::unix::process::CommandExt;
+    let vault = match Vault::do_home() {
+        Ok(v) => v,
+        Err(e) => return die(&e, 2),
+    };
+    let erro = std::process::Command::new("nvim")
+        .arg(vault.caminho("CURRENT.md"))
+        .exec();
+    if erro.kind() == std::io::ErrorKind::NotFound {
+        return die("nvim não encontrado no PATH", 2);
+    }
+    die(&format!("não consegui executar o nvim: {erro}"), 2)
 }
 
 fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
@@ -499,10 +516,14 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             let Some(titulo) = titulo else {
                 return die("falta o título", 2);
             };
-            if json {
-                return die("`new --json` ainda não foi portado nesta fatia", 2);
-            }
-            escrita::new(&projeto, &id, &titulo, desc.as_deref().unwrap_or(""), hoje)
+            escrita::new(
+                &projeto,
+                &id,
+                &titulo,
+                desc.as_deref().unwrap_or(""),
+                json,
+                hoje,
+            )
         }
         Cmd::NewProject { nome } => {
             let Some(nome) = nome else {
@@ -604,7 +625,7 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             deslocar::projeto(&projeto, false, hoje)
         }
         Cmd::Tui => tui(),
-        Cmd::Current => die("`current` ainda não foi portado (fatia 6)", 2),
+        Cmd::Current => current(),
         Cmd::Outro(args) => {
             let nome = args
                 .first()

@@ -79,7 +79,9 @@ pub(crate) fn fecha(vault: &Vault, hoje: Date, saida: &str) -> ExitCode {
     ExitCode::SUCCESS
 }
 
-pub fn new(projeto: &str, id: &str, titulo: &str, desc: &str, hoje: Date) -> ExitCode {
+/// `new`: cria a task, regenera o painel e imprime o caminho dela; com `json`,
+/// imprime no lugar do caminho `{"id":…,"path":…,"project":…}` (spec §2.2).
+pub fn new(projeto: &str, id: &str, titulo: &str, desc: &str, json: bool, hoje: Date) -> ExitCode {
     let _trava = match travar() {
         Ok(t) => t,
         Err(c) => return c,
@@ -99,10 +101,29 @@ pub fn new(projeto: &str, id: &str, titulo: &str, desc: &str, hoje: Date) -> Exi
             Ok(r) => r,
             Err(e) => return die(&e, 1),
         };
+    // A saída se monta antes de gravar: se o caminho não se deixasse separar,
+    // nada teria sido escrito.
+    let abs = vault.caminho_str(&rel);
+    let saida = if json {
+        match linha_json(&rel, &abs) {
+            Some(l) => l,
+            None => return die(&format!("caminho de task inesperado: {rel}"), 1),
+        }
+    } else {
+        abs
+    };
     if let Err(e) = vault.aplicar(&plano) {
         return falha(&e);
     }
-    fecha(&vault, hoje, &vault.caminho_str(&rel))
+    fecha(&vault, hoje, &saida)
+}
+
+/// A linha de `new --json`. `project` e `id` saem do caminho que o plano
+/// grava, não dos argumentos: o `nova_task` apara o id, e é o que foi gravado
+/// que o chamador precisa. `path` é o absoluto que o `new` sem `--json` imprime.
+fn linha_json(rel: &str, abs: &str) -> Option<String> {
+    let t = path::split_task_path(rel)?;
+    Some(serde_json::json!({ "id": t.id, "path": abs, "project": t.project }).to_string())
 }
 
 pub fn new_project(nome: &str) -> ExitCode {
@@ -201,4 +222,44 @@ pub fn delete(referencia: &str, hoje: Date) -> ExitCode {
         return falha(&e);
     }
     fecha(&vault, hoje, &alvo.abs)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn linha_json_tem_as_tres_chaves_em_ordem_alfabetica() {
+        assert_eq!(
+            linha_json(
+                "projects/beta/tasks/nova.md",
+                "/home/u/ObsidianVault/projects/beta/tasks/nova.md"
+            )
+            .unwrap(),
+            r#"{"id":"nova","path":"/home/u/ObsidianVault/projects/beta/tasks/nova.md","project":"beta"}"#
+        );
+    }
+
+    #[test]
+    fn linha_json_escapa_o_que_o_json_escapa() {
+        // `project` não é kebab: só não pode ter `/`. Aspas e contrabarra
+        // têm de sair escapadas, não quebrar a linha.
+        let linha = linha_json(
+            "projects/a\"b\\c/tasks/x.md",
+            "/v/projects/a\"b\\c/tasks/x.md",
+        )
+        .unwrap();
+        let v: serde_json::Value = serde_json::from_str(&linha).unwrap();
+        assert_eq!(v["project"], "a\"b\\c");
+        assert_eq!(v["path"], "/v/projects/a\"b\\c/tasks/x.md");
+        assert_eq!(v["id"], "x");
+        assert!(!linha.contains('\n'));
+    }
+
+    #[test]
+    fn linha_json_recusa_caminho_que_nao_e_de_task() {
+        assert_eq!(linha_json("CURRENT.md", "/v/CURRENT.md"), None);
+        assert_eq!(linha_json("projects/daily/tasks/x.md", "/v/x"), None);
+    }
 }
