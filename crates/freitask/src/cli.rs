@@ -546,17 +546,15 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
                 ("title", &mut pedido.title, title),
                 ("desc", &mut pedido.desc, desc),
                 ("volta-em", &mut pedido.volta_em, volta_em),
+                ("prazo", &mut pedido.prazo, prazo),
             ] {
                 match valor(flag, valor_cru) {
                     Ok(v) => *alvo = v,
                     Err(c) => return c,
                 }
             }
-            if prazo.is_some() || bloqueada_por.is_some() {
-                return die(
-                    "`--prazo` e `--bloqueada-por` ainda não foram portados nesta fatia",
-                    2,
-                );
+            if bloqueada_por.is_some() {
+                return die("`--bloqueada-por` ainda não foi portado nesta fatia", 2);
             }
             let Some(referencia) = referencia else {
                 return die("falta o id ou caminho da task", 2);

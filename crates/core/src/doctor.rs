@@ -448,6 +448,35 @@ fn checar_task(
                 false,
             );
         }
+        if let Some(p) = &fm.prazo
+            && Date::parse(p).is_none()
+        {
+            c.add(
+                Nivel::Warn,
+                "prazo-invalido",
+                rel,
+                format!(
+                    "prazo {} não é uma data AAAA-MM-DD — não conta dias",
+                    lua_q(p)
+                ),
+                false,
+            );
+        }
+        // Só com a task ainda adiada: passada a `volta-em`, ela já voltou à
+        // tela e não há mais o que acusar (decisão 55 do log).
+        if let (Some(p), Some(v)) = (&fm.prazo, &fm.volta_em)
+            && let (Some(prazo), Some(volta)) = (Date::parse(p), Date::parse(v))
+            && prazo < volta
+            && meta::is_postponed(&fm, hoje)
+        {
+            c.add(
+                Nivel::Warn,
+                "prazo-antes-da-volta",
+                rel,
+                format!("prazo {p} vem antes da volta-em {v} — a task volta à tela já vencida"),
+                false,
+            );
+        }
     }
 
     dirty.then(|| doc.com_linhas(lines).to_bytes())
@@ -887,6 +916,89 @@ mod tests {
             ]
         );
         assert!(d.plano.is_empty());
+    }
+
+    /// Os achados de prazo (e só eles) de uma task ativa `t` com o frontmatter
+    /// dado, no dia 2026-11-08.
+    fn achados_de_prazo(fm: &str) -> Vec<(&'static str, String)> {
+        let f = foto(&[(
+            "projects/p/tasks/t.md",
+            &format!("---\n{fm}---\n> [!todo] T\n> [[projects/p/tasks/t|t]]\n"),
+        )]);
+        let d = roda(&f, true);
+        assert!(d.plano.is_empty(), "nunca se repara: {:?}", d.plano);
+        d.achados
+            .iter()
+            .filter(|a| a.kind.starts_with("prazo-"))
+            .map(|a| {
+                assert!(!a.fixed && a.nivel == Nivel::Warn);
+                (a.kind, a.msg.clone())
+            })
+            .collect()
+    }
+
+    #[test]
+    fn prazo_invalido_acusa_so_o_que_nao_e_data_e_nao_repara() {
+        assert_eq!(
+            achados_de_prazo("prazo: 2026-02-30\n"),
+            vec![(
+                "prazo-invalido",
+                "prazo \"2026-02-30\" não é uma data AAAA-MM-DD — não conta dias".to_string()
+            )]
+        );
+        assert_eq!(achados_de_prazo("prazo: 2026-12-1\n").len(), 1);
+        assert!(achados_de_prazo("prazo:\n").is_empty());
+        assert!(achados_de_prazo("prazo: 2026-01-01\n").is_empty());
+        assert!(achados_de_prazo("prazo: 2028-02-29\n").is_empty());
+    }
+
+    #[test]
+    fn prazo_de_task_arquivada_nao_e_olhado() {
+        let f = foto(&[(
+            "projects/p/tasks/archived/done/c.md",
+            "---\nprazo: x\nvolta-em: 2026-12-01\n---\n> [!done] C\n> [[projects/p/tasks/archived/done/c|c]]\n\n## Histórico\n\n- 2026-01-01 — arquivada em `archived/done` (feito)\n",
+        )]);
+        assert!(roda(&f, true).achados.is_empty());
+    }
+
+    #[test]
+    fn prazo_antes_da_volta_e_estrito_e_so_com_a_task_ainda_adiada() {
+        assert_eq!(
+            achados_de_prazo("volta-em: 2026-12-01\nprazo: 2026-11-20\n"),
+            vec![(
+                "prazo-antes-da-volta",
+                "prazo 2026-11-20 vem antes da volta-em 2026-12-01 — a task volta à tela já vencida"
+                    .to_string()
+            )]
+        );
+        // Mesmo dia e depois: sem achado.
+        assert!(achados_de_prazo("volta-em: 2026-12-01\nprazo: 2026-12-01\n").is_empty());
+        assert!(achados_de_prazo("volta-em: 2026-12-01\nprazo: 2026-12-02\n").is_empty());
+        // `volta-em` de hoje ou passada: a task já voltou, sem achado.
+        assert!(achados_de_prazo("volta-em: 2026-11-08\nprazo: 2026-11-01\n").is_empty());
+        assert!(achados_de_prazo("volta-em: 2026-11-01\nprazo: 2026-10-01\n").is_empty());
+        // O dia anterior à volta ainda a deixa adiada.
+        assert_eq!(
+            achados_de_prazo("volta-em: 2026-11-09\nprazo: 2026-11-08\n").len(),
+            1
+        );
+    }
+
+    #[test]
+    fn prazo_e_volta_em_com_uma_data_invalida_nao_se_comparam() {
+        // Como texto, `2026-12-1` < `2026-12-05`; como data não é nada.
+        let kinds = |fm: &str| -> Vec<&'static str> {
+            achados_de_prazo(fm).into_iter().map(|(k, _)| k).collect()
+        };
+        assert_eq!(
+            kinds("volta-em: 2026-12-05\nprazo: 2026-12-1\n"),
+            vec!["prazo-invalido"]
+        );
+        assert!(kinds("volta-em: 2026-12-1\nprazo: 2026-11-20\n").is_empty());
+        assert_eq!(
+            kinds("volta-em: 2026-13-01\nprazo: 2026-02-30\n"),
+            vec!["prazo-invalido"]
+        );
     }
 
     #[test]

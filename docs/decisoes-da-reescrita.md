@@ -395,6 +395,39 @@ na seção "Testes reavaliados".
     cada congelamento, e `divergencias.toml` muda nas reavaliações; esses
     três ficam fora da conferência.
 
+## Fatia 10a
+
+55. **`prazo-antes-da-volta` só acusa a task ainda adiada** (`volta-em >
+    hoje`), além de `prazo < volta-em` com as duas datas válidas. A spec não
+    fecha o caso; decidido nesta fatia (§5, "o chat 3 decide"). A razão do
+    achado, na spec (§10.2), é "a task voltaria à tela já
+    vencida"; passada a `volta-em`, ela já voltou, e o `docs/freitask.md`
+    diz que a data fica "sem efeito e sem achado no doctor". Sem a condição,
+    um `volta-em` antigo esquecido no frontmatter acusaria para sempre um
+    prazo que nunca foi problema. O aceite não fixa nada com `volta-em`
+    passada (cabeçalho da pasta `f10a-prazo-cli` do aceite) e os casos com
+    `volta-em` futura passam. Está em `crates/core/src/doctor.rs`, no bloco
+    6, com `meta::is_postponed`.
+56. **As mensagens dos dois kinds novos** (o aceite só fixa que não são
+    vazias): `prazo "X" não é uma data AAAA-MM-DD — não conta dias`, na forma
+    do `volta-em-invalido`, e `prazo AAAA-MM-DD vem antes da volta-em
+    AAAA-MM-DD — a task volta à tela já vencida`, com as datas sem aspas
+    (são válidas). **`set --bloqueada-por` segue recusado** (saída 2, com
+    mensagem só dele): é da fatia 9a, que corre em paralelo e mexe no mesmo
+    trecho de `crates/freitask/src/cli.rs`; aqui sai do stub só o `--prazo`,
+    para o merge ficar pequeno.
+57. **Com `--volta-em` e `--prazo` inválidos juntos, a `volta-em` é a
+    acusada**: `validar_set` valida a `volta-em` e depois o `prazo`, e a
+    primeira recusa vence. O aceite não fixa qual das duas.
+58. **A I11 como propriedade usa o `gerador` no `core`**
+    (`crates/core/Cargo.toml` ganha `gerador` em `dev-dependencies`; ele não
+    depende de nada). `prazo_nao_muda_ordem_conjunto_hidden_nem_painel`
+    (`crates/core/tests/propriedades.rs`) põe `prazo:` (vencido, futuro, de
+    hoje, inválido, vazio) em subconjuntos das tasks de vaults sintéticos e
+    compara, pelo `index` e o `board`, as entradas (menos o `prazo`), a
+    ordem e o `hidden` por projeto e os bytes do painel. O `list` da CLI
+    usa essas mesmas funções, então a propriedade não sobe o binário.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do

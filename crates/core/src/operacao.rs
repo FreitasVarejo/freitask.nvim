@@ -143,6 +143,7 @@ pub struct PedidoSet {
     pub title: Option<String>,
     pub desc: Option<String>,
     pub volta_em: Option<String>,
+    pub prazo: Option<String>,
 }
 
 impl PedidoSet {
@@ -151,6 +152,7 @@ impl PedidoSet {
             && self.title.is_none()
             && self.desc.is_none()
             && self.volta_em.is_none()
+            && self.prazo.is_none()
     }
 
     fn mexe_no_bloco(&self) -> bool {
@@ -167,11 +169,13 @@ pub struct SetValidado {
     desc: Option<String>,
     /// `Some(None)` limpa a `volta-em`; `Some(Some(d))` grava `d`.
     volta_em: Option<Option<String>>,
+    /// Idem para o `prazo`.
+    prazo: Option<Option<String>>,
     bloco: bool,
 }
 
 /// Valida o pedido de `set` inteiro antes de qualquer escrita, na ordem de
-/// hoje: fase, título, data. `archived` é o tipo de arquivamento da task
+/// hoje: fase, título, `volta-em`, `prazo`. `archived` é o tipo de arquivamento da task
 /// (do caminho).
 pub fn validar_set(
     vocab: &Vocab,
@@ -203,11 +207,16 @@ pub fn validar_set(
         Some(v) => Some(task::check_volta_em(v).map_err(Recusa::Uso)?),
         None => None,
     };
+    let prazo = match &pedido.prazo {
+        Some(p) => Some(task::check_prazo(p).map_err(Recusa::Uso)?),
+        None => None,
+    };
     Ok(SetValidado {
         status,
         title,
         desc,
         volta_em,
+        prazo,
         bloco: pedido.mexe_no_bloco(),
     })
 }
@@ -215,8 +224,8 @@ pub fn validar_set(
 /// Aplica um `set` validado aos bytes da task e devolve os bytes novos (que
 /// podem ser os mesmos: aí nada se grava). O id é o do CAMINHO: `set` nunca
 /// renomeia, e um link de linha 2 dessincronizado sai consertado. O bloco só é
-/// reserializado quando fase, título ou descrição foram pedidos; `--volta-em`
-/// sozinho mexe só no frontmatter.
+/// reserializado quando fase, título ou descrição foram pedidos; `--volta-em` e
+/// `--prazo` mexem só no frontmatter.
 pub fn editar_set(
     vocab: &Vocab,
     t: &TaskRef,
@@ -252,6 +261,9 @@ pub fn editar_set(
     }
     if let Some(volta) = &v.volta_em {
         meta::write_volta_em(&mut lines, volta.as_deref());
+    }
+    if let Some(prazo) = &v.prazo {
+        meta::write_prazo(&mut lines, prazo.as_deref());
     }
     Ok(doc.com_linhas(lines).to_bytes())
 }
@@ -437,6 +449,7 @@ mod tests {
             title: t.map(Into::into),
             volta_em: v.map(Into::into),
             desc: None,
+            prazo: None,
         };
         assert_eq!(
             validar_set(&vo, &p(Some("bogus"), Some(""), None), None).unwrap_err(),
@@ -465,6 +478,36 @@ mod tests {
     }
 
     #[test]
+    fn validar_set_valida_o_prazo_depois_da_volta_em() {
+        let vo = Vocab::default();
+        let p = |v: Option<&str>, pr: Option<&str>| PedidoSet {
+            volta_em: v.map(Into::into),
+            prazo: pr.map(Into::into),
+            ..Default::default()
+        };
+        let e = validar_set(&vo, &p(None, Some("amanha")), None).unwrap_err();
+        assert_eq!(
+            e,
+            Recusa::Uso(
+                "data inválida: \"amanha\" (use AAAA-MM-DD, de um dia que existe; \"\" limpa)"
+                    .into()
+            )
+        );
+        // As duas inválidas: a `volta-em` é acusada primeiro.
+        let e = validar_set(&vo, &p(Some("a"), Some("b")), None).unwrap_err();
+        assert!(e.mensagem().contains("\"a\""), "{}", e.mensagem());
+        // Prazo inválido barra o resto do pedido, mesmo com a fase válida.
+        let pedido = PedidoSet {
+            status: Some("todo".into()),
+            prazo: Some("2026-02-30".into()),
+            ..Default::default()
+        };
+        assert_eq!(validar_set(&vo, &pedido, None).unwrap_err().codigo(), 2);
+        assert!(validar_set(&vo, &p(None, Some("2028-02-29")), None).is_ok());
+        assert!(validar_set(&vo, &p(None, Some("")), None).is_ok());
+    }
+
+    #[test]
     fn pedido_vazio_e_so_sem_nenhuma_flag() {
         assert!(PedidoSet::default().vazio());
         for p in [
@@ -482,6 +525,10 @@ mod tests {
             },
             PedidoSet {
                 volta_em: Some(String::new()),
+                ..Default::default()
+            },
+            PedidoSet {
+                prazo: Some(String::new()),
                 ..Default::default()
             },
         ] {
@@ -550,6 +597,59 @@ mod tests {
         )
         .unwrap();
         assert_eq!(limpo, antes);
+    }
+
+    #[test]
+    fn editar_set_prazo_so_mexe_no_frontmatter_e_nao_toca_a_volta_em() {
+        // Bloco fora do canônico, sem `## Histórico`: nada além do `prazo:`.
+        let antes = "---\nvolta-em: 2026-12-01\n---\n\n> [!todo] **X**\n> [[x]]\n";
+        let r = set(
+            antes,
+            "projects/p/tasks/x.md",
+            PedidoSet {
+                prazo: Some("2026-12-24".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            r,
+            "---\nvolta-em: 2026-12-01\nprazo: 2026-12-24\n---\n\n> [!todo] **X**\n> [[x]]\n"
+        );
+        let troca = set(
+            &r,
+            "projects/p/tasks/x.md",
+            PedidoSet {
+                prazo: Some("2026-12-25".into()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert!(troca.contains("prazo: 2026-12-25\n") && !troca.contains("12-24"));
+        let limpo = set(
+            &r,
+            "projects/p/tasks/x.md",
+            PedidoSet {
+                prazo: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            limpo,
+            "---\nvolta-em: 2026-12-01\n---\n\n> [!todo] **X**\n> [[x]]\n"
+        );
+        // Sem o campo, limpar não muda um byte.
+        let igual = set(
+            "> [!todo] X\r\n> [[x]]\r\n",
+            "projects/p/tasks/x.md",
+            PedidoSet {
+                prazo: Some(String::new()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(igual, "> [!todo] X\r\n> [[x]]\r\n");
     }
 
     #[test]
