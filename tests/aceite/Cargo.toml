@@ -58,3 +58,7 @@ path = "f5-projeto-e-doctor/main.rs"
 [[test]]
 name = "f6-acabamento-da-cli"
 path = "f6-acabamento-da-cli/main.rs"
+
+[[test]]
+name = "f9a-dependencias-cli"
+path = "f9a-dependencias-cli/main.rs"
