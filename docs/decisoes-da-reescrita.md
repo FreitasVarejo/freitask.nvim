@@ -632,6 +632,26 @@ f7.9. **Os `.snap` nascem por `scripts/snapshots-novos.sh`, que só cria o
     cada teste. Cada tela tira dois, em 100×30 e 60×15 (`foto` em
     `tui/tela.rs`); são 24, lidos um a um antes do commit.
 
+## Depois do merge da 7
+
+64. **Reavaliação pedida: a propriedade `rename_ida_e_volta_devolve_os_links`
+    (I5) gera um caso que nenhuma implementação cumpre.** O `make
+    test-longo` (4096 casos) do merge da 7 falhou nela
+    (`crates/core/tests/propriedades.rs`) com `a = "b"`, `b = "a"`,
+    `alias = Some("a ")`; o `crates/core` do merge é o mesmo de `16ac907`.
+    O `rewrite_link` (`crates/core/src/links.rs`) troca o alias quando
+    `trim(alias) == old.id`, como o oráculo (`lua/freitask/links.lua`, "o
+    alias ERA o id antigo, caso em que ele acompanha o rename"). Na ida
+    (b→a), `[[projects/0/tasks/b|a ]]` vira `[[projects/0/tasks/a|a ]]` e o
+    alias fica; na volta (a→b), o alias agora é o id antigo e vira `b`. Um
+    alias igual ao nome de destino, depois da ida, não se distingue de um
+    que acompanha o nome; o espaço não importa (`alias = "a"` falha igual).
+    Pedido: o gerador da propriedade descarta o alias cujo `trim` é o id de
+    destino (`prop_assume!`), e a I5 da spec passa a valer exceto nesse
+    caso. Decisão do dono (10/11/2026) entre isso e mudar a regra do alias,
+    que hoje é a do oráculo. Um subagente novo reavalia o pedido contra a
+    spec.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
@@ -782,3 +802,22 @@ f7.9. **Os `.snap` nascem por `scripts/snapshots-novos.sh`, que só cria o
     cenário não move nada.
   - O corpus `real` varia entre rodadas (11 diferenças trocadas entre duas
     bases, todas cobertas por D10 e D2).
+- **`rename_ida_e_volta_devolve_os_links` (`crates/core/tests/propriedades.rs`),
+  depois do merge da 7.** Pedido na entrada 64. Veredito do subagente
+  reavaliador: **procede com ajuste**. O caso do id de destino é impossível
+  para qualquer implementação que siga a regra do alias (§1.4): os aliases
+  `a` e `b` dão a mesma ida, que não é injetiva. Mas o pedido errava em dois
+  pontos. Há um segundo caso que falha: o alias com espaço cujo `trim` é o
+  id de ORIGEM (`a = "g"`, `b = "a"`, `alias = " g"`). Como o oráculo troca
+  o alias inteiro, o espaço some na ida, e a entrada 64 errou ao dizer que
+  o espaço não importa. E o `prop_assume!` afrouxava mais do que precisava:
+  nos dois casos a volta tem resultado determinado, com o alias igual ao id
+  de origem. Mudança: a propriedade não descarta caso nenhum e afirma esse
+  resultado. O reavaliador rodou oito mutantes do `rewrite_link`, com 100
+  mil casos cada. Na forma adotada, a propriedade pega todos, menos dois. O
+  "nunca troca o alias" fica com o teste unitário
+  `ao_renomear_reescreve_as_duas_formas`. O "troca preservando o espaço"
+  nenhuma variante pega de forma confiável. Com o `prop_assume!`, o
+  "igualdade sem `trim`" passaria por todo o `crates/core`. Ele achou,
+  com 200 mil casos, outras entradas da mesma família (`a = "a"`, `b = "f"`,
+  `alias = "f"`).

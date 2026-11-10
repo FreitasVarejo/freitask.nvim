@@ -132,7 +132,8 @@ proptest! {
         prop_assert_eq!(lines, vec!["---".to_string(), format!("{alheia}: valor alheio"), "---".to_string(), "".to_string(), "> [!todo] x".to_string()]);
     }
 
-    /// I5 nos links: renomear a→b e b→a devolve o texto original.
+    /// I5 nos links: renomear a→b e b→a devolve o texto original, exceto pelo
+    /// alias da exceção da I5 (decisão 64).
     #[test]
     fn rename_ida_e_volta_devolve_os_links(
         a in kebab_id(), b in kebab_id(), p in kebab_id(),
@@ -154,7 +155,17 @@ proptest! {
         let em_codigo = format!("`[[{}]]`", a);
         prop_assert!(ida.contains(&em_codigo));
         let (volta, _) = links::rewrite_text(&ida, |t, al| links::rewrite_link(t, al, &eb, &ea)).unwrap();
-        prop_assert_eq!(volta, texto);
+        // Exceção da I5 (decisão 64): o alias cujo trim é o id de destino não
+        // se distingue, depois da ida, de um que acompanhou o id; o que é o id
+        // de origem com espaço em volta perde o espaço na ida. Nos dois, a
+        // volta deixa o alias igual ao id de origem, e só ele muda.
+        let esperado = match alias.as_deref() {
+            Some(x) if freitask_core::trim(x) == b || (freitask_core::trim(x) == a && x != a) => {
+                texto.replacen(&format!("{sep}{x}]]"), &format!("{sep}{a}]]"), 1)
+            }
+            _ => texto.clone(),
+        };
+        prop_assert_eq!(volta, esperado);
     }
 
     #[test]

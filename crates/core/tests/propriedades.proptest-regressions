@@ -5,3 +5,4 @@
 # It is recommended to check this file in to source control so that
 # everyone who runs the test benefits from these saved cases.
 cc 957b19e0c3e23a36a22d694833e77b7e50cf737c518ce693f9b5778ee3ea6c29 # shrinks to pares = {"a": " "}, alheia = "aaa"
+cc b61c3a006947d1db2b044d02847250447fe9a3c7df91422210e7cae2c668157e # shrinks to a = "b", b = "a", p = "0", alias = Some("a "), sub = None, tabela = false
