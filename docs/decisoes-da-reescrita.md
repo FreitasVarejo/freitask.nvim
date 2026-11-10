@@ -429,6 +429,48 @@ na seção "Testes reavaliados".
     ordem e o `hidden` por projeto e os bytes do painel. O `list` da CLI
     usa essas mesmas funções, então a propriedade não sobe o binário.
 
+## Fatia 10b (prazo, TUI)
+
+Entradas `f10b.N`, pelo mesmo motivo das `f7.N` (a 9b corre em paralelo).
+
+f10b.1. **A tecla `p` abre um prompt com o prazo como está escrito** no
+    frontmatter, mesmo inválido, para consertar ali, com o título ` Prazo
+    (AAAA-MM-DD, vazio limpa) `. `Enter` grava pelo mesmo caminho da CLI
+    (`escrita::set` com `PedidoSet { prazo }`, o texto aparado); vazio limpa,
+    então o prompt aceita vazio, como o da descrição. Igual ao que está
+    escrito (sem prazo e vazio também) não grava nada, como `t`, `i` e `r`.
+    A recusa do motor (data inválida, saída 2 na CLI) vai para a barra em
+    vermelho com a mensagem da CLI, e o prompt volta com o que foi digitado.
+    No sucesso a barra diz `prazo: AAAA-MM-DD` ou `prazo removido`. Sem task
+    selecionada, `nenhuma task selecionada`, como as outras teclas de task. A
+    task arquivada recebe o que a CLI faria; o aceite não fixa esse caso.
+f10b.2. **Na linha da task, `prazo DD/MM` vem depois do id e da `volta`, se
+    houver, e antes do título**, separado por dois espaços como a `volta`
+    (§10.2: "no mesmo lugar em que a adiada mostra `volta`"). Amarelo
+    enquanto `dias_para_o_prazo >= 0`, o que inclui o próprio dia; vermelho
+    quando é negativo. Só aparece em task ativa com prazo válido. A arquivada
+    não mostra, como não mostra a `volta`: um prazo vencido de uma task feita
+    em vermelho seria ruído. O prazo inválido também não aparece, porque não
+    há dia para mostrar; o `doctor` acusa `prazo-invalido` e o `p` o mostra
+    para consertar. O cabeçalho do preview não ganha o prazo (a `volta em`
+    está lá porque a adiada some da lista sem `S`; a task com prazo nunca
+    some, e a linha dela já o mostra), e o frontmatter cru segue no
+    conteúdo do arquivo. Os snapshots da §3.5 ("task com prazo e com prazo
+    vencido") e o do prompt do `p` nascem por `scripts/snapshots-novos.sh`
+    (f7.9). O ano não aparece, nem num prazo de outro ano
+    (§10.2 fixa `DD/MM`; `Date::dia_mes`).
+f10b.3. **`Resumo` ganha `prazo` e `dias_para_o_prazo`**, os mesmos do
+    JSON, e `linhas::linha` passa a serializar os do `Resumo` (um lugar só,
+    f7.6). A tela só escolhe a cor e deixa de fora a arquivada e o prazo
+    inválido.
+f10b.4. **A ajuda ganha a linha `p` ("definir / limpar o prazo") logo
+    depois do `i`**; a dica da barra não muda (o aceite da 7 a confere por
+    partes e deixaria o `p` entrar; a §10.2 não pede, e mexer nela é mais um
+    ponto de conflito com a 9b). A ajuda passa a 22 linhas de conteúdo, 24
+    com a moldura, que cabem em 100×30. Os dois `.snap` da ajuda (`ajuda_100x30` e
+    `ajuda_60x15`) mudam, e por isso passam pela reavaliação (§4, camada 1).
+    O aceite da 7 confere a ajuda linha a linha, por `contains`, e não muda.
+
 ## Fatia 9a (dependências, CLI)
 
 59. **I10 roda no crate `vault`** (`tests/dependencias.rs`), como I1, I2,
