@@ -1,0 +1,28 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "freitask new --json",
+  "description": "A task criada: caminho absoluto do arquivo, projeto e id (spec §2.2).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "path",
+    "project"
+  ],
+  "properties": {
+    "id": {
+      "description": "O id da task (nome do arquivo sem .md); sempre string.",
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "description": "Caminho absoluto de projects/<projeto>/tasks/<id>.md.",
+      "type": "string",
+      "pattern": "^/.*/projects/[^/]+/tasks/[^/]+\\.md$"
+    },
+    "project": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

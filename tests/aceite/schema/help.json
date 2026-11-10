@@ -1,0 +1,64 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "freitask help --json",
+  "description": "A gramática da CLI, gerada das definições do clap (spec §2.2 e §2.3): por subcomando, se escreve no vault, os posicionais em ordem e as flags (nomes sem `--`) que levam valor e as que não levam.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "json",
+    "subcommands"
+  ],
+  "properties": {
+    "json": {
+      "description": "Versão do contrato JSON (a mesma do version --json).",
+      "type": "integer",
+      "minimum": 1
+    },
+    "subcommands": {
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": {
+        "pattern": "^[a-z][a-z-]*$"
+      },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "bool_flags",
+          "positionals",
+          "value_flags",
+          "writes"
+        ],
+        "properties": {
+          "bool_flags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z-]*$"
+            }
+          },
+          "positionals": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "value_flags": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "type": "string",
+              "pattern": "^[a-z][a-z-]*$"
+            }
+          },
+          "writes": {
+            "type": "boolean"
+          }
+        }
+      }
+    }
+  }
+}

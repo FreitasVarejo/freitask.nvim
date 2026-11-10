@@ -54,3 +54,7 @@ path = "f4-deslocamentos/main.rs"
 [[test]]
 name = "f5-projeto-e-doctor"
 path = "f5-projeto-e-doctor/main.rs"
+
+[[test]]
+name = "f6-acabamento-da-cli"
+path = "f6-acabamento-da-cli/main.rs"
