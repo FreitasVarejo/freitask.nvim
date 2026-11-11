@@ -61,6 +61,11 @@ diff-oraculo:
 # /tmp desta máquina tem cota pequena (medido: "Disk quota exceeded").
 mutantes: build
 	mkdir -p target/tmp
+	@# NOCOW: em btrfs o cargo-mutants copia a árvore por reflink, que não
+	@# preserva o bit de execução, e os testes que rodam scripts/*.sh falhavam
+	@# contra todo mutante (decisão 70). Com +C o reflink falha e ele cai na
+	@# cópia comum. Fora de btrfs o chattr não se aplica.
+	-@chattr +C target/tmp 2>/dev/null
 	TMPDIR=$(CURDIR)/target/tmp cargo mutants --workspace --jobs 4 --output target/mutants $(MUTANTS_ARGS)
 	scripts/mutantes.sh --conferir
 

@@ -25,7 +25,11 @@ fn raiz() -> PathBuf {
 fn codigo(comando: &str) -> i32 {
     let entrada = serde_json::json!({ "tool_input": { "command": comando } }).to_string();
     let script = raiz().join("scripts/trava-bash.sh");
-    let mut filho = Command::new(&script)
+    // Por `bash`, e não pelo bit de execução: a cópia de trabalho do
+    // cargo-mutants (27.1) não o preserva, e o baseline da mutação quebrava
+    // aqui (decisão 70).
+    let mut filho = Command::new("bash")
+        .arg(&script)
         .current_dir(raiz())
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

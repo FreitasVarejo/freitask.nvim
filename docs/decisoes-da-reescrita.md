@@ -895,6 +895,33 @@ f9b.3. **Reavaliação pedida: os `.snap` da ajuda (`ajuda_60x15` e
     comentário; as propriedades I3 e I10 (`crates/vault/tests/doctor.rs`,
     `dependencias.rs`) fixam 64 casos e ficam fora dos 4096 do
     `test-longo`, como a §3.2 admite para o que toca disco.
+70. **A mutação nunca mediu nada até aqui: todo mutante saía `caught` por
+    um teste que falhava sempre.** Achado no `make portoes` da fatia 11,
+    quando o baseline do cargo-mutants passou a incluir o pacote
+    `freitask` e falhou em `crates/freitask/tests/trava_bash.rs` com
+    `Permission denied`. O mecanismo (`cargo-mutants-27.1.0/src/copy_tree.rs`,
+    `copy_file`): em btrfs a cópia de trabalho é feita por reflink, que cria
+    o arquivo com o modo padrão; os scripts do repo perdem o bit de execução
+    na cópia. Os testes que executam `scripts/trava-bash.sh` e
+    `scripts/hash-aceite.sh` diretamente, inclusive os do aceite da f0,
+    falham na cópia contra qualquer mutante. Medido nos logs da segunda
+    parte da fatia 8 (`target/mutants/mutants.out.old/log/`): os 616 logs de
+    mutante têm `Permission denied (os error 13)`, com `trava_bash_*` e
+    `hash_aceite_conferir_sai_0` em `FAILED`. O baseline daquela rodada
+    testava só `freitask-core` e `freitask-vault` (o aceite entra só nas
+    rodadas por mutante), por isso nada acusou. O "0 missed" da entrada 65,
+    e o das fatias anteriores, que rodavam com o mesmo `test_package`, não
+    vale.
+    Mudanças: o `make mutantes` marca `target/tmp` como NOCOW (`chattr +C`),
+    o que faz o reflink falhar e o cargo-mutants cair na cópia comum, que
+    preserva o modo (medido: `reflink_used=false` e os scripts com `rwx` na
+    cópia); o `scripts/mutantes.sh --conferir` falha se algum log de mutante
+    tiver `Permission denied (os error 13)`; e
+    `crates/freitask/tests/trava_bash.rs`, que não é congelado, chama o
+    script por `bash`, sem depender do bit. O aceite da f0 também executa o
+    script direto e fica como está: com a cópia certa, ele passa. A
+    mutação completa é refeita na fatia 11 com a cópia certa, e o número
+    dela é o primeiro que vale.
 
 ## Testes reavaliados
 

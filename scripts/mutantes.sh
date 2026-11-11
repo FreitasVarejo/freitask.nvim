@@ -36,6 +36,13 @@ case "${1:-}" in
   --conferir)
     placar
     falhas=0
+    # Um teste que falha contra todo mutante faz todo mutante sair `caught`:
+    # foi o que a cópia sem bit de execução fez (decisão 70). Se algum log de
+    # mutante tem o erro de permissão, o placar inteiro não vale.
+    if [[ -d "$dir/log" ]] && grep -lqs 'Permission denied (os error 13)' "$dir"/log/*.log; then
+      echo "mutantes: há log de mutante com 'Permission denied (os error 13)'; a cópia de trabalho perdeu permissões e os 'caught' não valem (decisão 70)" >&2
+      falhas=1
+    fi
     if (( core_missed > 0 )); then
       echo "mutantes: $core_missed sobrevivente(s) em crates/core; o limiar é zero" >&2; falhas=1
     fi
