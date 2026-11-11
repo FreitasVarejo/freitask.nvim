@@ -5,29 +5,20 @@ arquivo**; o status é **o tipo do callout**; estar arquivada é **o caminho**.
 Não há banco de dados, e nenhum estado vive fora dos arquivos que o Obsidian já
 sincroniza.
 
-Duas partes, neste repo:
-
-- **o motor** (`lua/freitask/`), com todas as regras, rodado pela CLI
-  `freitask` sob `nvim --clean -l` — o Neovim como interpretador Lua, sem
-  janela;
-- **a TUI** (`tui/`, Rust), uma tela estilo lazygit que fala com o motor só
-  pela CLI.
-
-O nome `.nvim` é do tempo em que isto era um plugin com picker no Snacks; o
-Neovim não carrega mais nada daqui.
+É **um binário Rust**, `freitask`, que é a CLI e a TUI, sobre o vault
+`~/ObsidianVault` (workspace na raiz, `crates/`). O nome `.nvim` é do tempo em
+que isto era um plugin com picker no Snacks; o Neovim não carrega mais nada
+daqui.
 
 ## Instalação
 
-A CLI é um shim que vive no dotfiles (`vault/.local/bin/freitask`), porque é o
-dotfiles que sabe onde este repo foi clonado (`FREITASK_REPO`, default
-`~/dev/freitask.nvim`). A TUI:
-
 ```bash
-cargo install --path tui     # instala freitask-tui em ~/.cargo/bin
+cargo install --locked --path crates/freitask   # instala freitask em ~/.cargo/bin
 ```
 
-O módulo assume o vault em `~/ObsidianVault/projects/<projeto>/tasks/` (ver
-`lua/freitask/config.lua`).
+Precisa de Rust stable via rustup, na versão do `rust-version` do
+[`Cargo.toml`](Cargo.toml). No dotfiles, o `setup.sh` faz isso, e o shim
+`~/.local/bin/freitask` só faz `exec` do binário.
 
 ## Uso
 
@@ -44,18 +35,23 @@ vez de `mv`/`rm`, porque só ela mantém os invariantes acoplados em sincronia
 
 - [`docs/freitask.md`](docs/freitask.md) — formato das tarefas, fluxo de uso e o
   contrato para agentes de IA.
-- [`docs/freitask-internals.md`](docs/freitask-internals.md) — mapa dos módulos,
+- [`docs/freitask-internals.md`](docs/freitask-internals.md) — mapa do código,
   regras de dependência e como testar.
 
-## Testes
+## Desenvolvimento
+
+Os alvos estão no `Makefile` (`make help`); não se digita `cargo test` à mão.
 
 ```bash
-tests/run.sh             # motor: funções puras + a CLI de ponta a ponta
-tests/run.sh cli         # filtra por nome de arquivo
-luacheck lua tests
-(cd tui && cargo test)   # TUI: estado e teclas
-(cd tui && cargo fmt --check && cargo clippy --all-targets -- -D warnings)
+make check     # fmt + clippy
+make test      # unitários, propriedades e TUI
+make aceite    # os testes congelados de tests/aceite/
+make portoes   # tudo isso, mais mutação e catracas; grava o PORTOES.md
 ```
 
-O harness (`tests/runner.lua`) roda sob `nvim --clean -l` de propósito: a
-suíte não deve depender de plugin nenhum nem do estado do usuário.
+`tests/aceite/` e os snapshots não se editam nem se apagam (regra no
+[`AGENTS.md`](AGENTS.md)). `make diff` compara o binário com o oráculo Lua (a
+tag `oraculo-lua`) e precisa de `nvim` no PATH.
+
+Até o cutover, `lua/` e `tui/` seguem no repo como oráculo (ver "Até o cutover"
+em [`docs/freitask-internals.md`](docs/freitask-internals.md)).
