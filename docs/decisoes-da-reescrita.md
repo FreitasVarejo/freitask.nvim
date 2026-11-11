@@ -777,6 +777,27 @@ f9b.3. **Reavaliação pedida: os `.snap` da ajuda (`ajuda_60x15` e
     é o de quem entrar por último, regerado do mesmo jeito. Um subagente
     novo reavalia o pedido contra a spec.
 
+## Fatia 8
+
+65. **A mutação da fatia 8 saiu em duas partes, sobre o mesmo commit
+    (`85785be`), e as duas juntas são o `make mutantes` completo.** A
+    primeira rodada, dentro do `make portoes`, foi interrompida por falta de
+    memória da máquina (quatro cópias do workspace compilando o aceite com
+    o jobserver em 20 processos) depois de 851 dos 1505 mutantes: 763
+    `caught`, 88 `unviable`, 0 `missed`, 0 `timeout`. A segunda, `make
+    mutantes MUTANTS_ARGS="--iterate --jobserver-tasks 6"`, pulou esses 851
+    e testou os 654 restantes: 616 `caught`, 38 `unviable`, 0 `missed`, 0
+    `timeout`. Total: 1379 `caught`, 126 `unviable`, 0 `missed` (core 0,
+    resto 0). Por isso o `PORTOES.md` da fatia, gerado depois com
+    `PORTOES_SEM_MUTANTES=1`, traz "mutantes: pulado" na tabela e só a
+    segunda parte na seção "Mutação". Os demais portões dele (check, test,
+    hash, aceite, diff com 0 fora da lista, catraca) rodaram inteiros.
+    `make test-longo` verde no mesmo commit. Auditor em contexto limpo
+    sobre `crates/*/src` desde `3528861`: limpo. Fora do pedido, a
+    divergência entre a §1 da spec e o código (efeitos do plano, `Comando`
+    da TUI, módulos do binário) foi descrita em `docs/freitask-internals.md`
+    pelo código, e fica para o relatório da 11.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
