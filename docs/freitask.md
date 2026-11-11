@@ -4,15 +4,14 @@ Como registrar tarefas e o planejamento diário neste setup — pensado tanto pa
 o usuário quanto para **agentes de IA** que precisem ler/criar notas sem quebrar
 as convenções.
 
-Implementação, neste repositório: o **motor** em `lua/freitask/` (dividido por
-responsabilidade), que a CLI `freitask` roda sob `nvim -l`, e a **TUI** em
-`tui/` (Rust), que fala com o motor só pela CLI. O Neovim não carrega nada
+Implementação, neste repositório: **um binário Rust**, `freitask`, que é a CLI e
+a TUI (workspace na raiz, `crates/`). As regras moram num núcleo puro; o binário
+só traduz argumentos e teclas em chamadas a ele. O Neovim não carrega nada
 daqui: o dotfiles só abre a TUI num float (`<leader>k`) e roda
 `freitask rebuild` ao salvar uma task. Opera **exclusivamente** sob
 `~/ObsidianVault/projects/<projeto>/tasks/`; só encerrar e reabrir um projeto
-movem a pasta `projects/<projeto>/` inteira. Para o mapa dos módulos e como
-testar, ver
-[`freitask-internals.md`](freitask-internals.md).
+movem a pasta `projects/<projeto>/` inteira. Para o mapa do código e como
+testar, ver [`freitask-internals.md`](freitask-internals.md).
 
 ---
 
@@ -67,8 +66,8 @@ bloco é o rodapé `## Histórico`, ao arquivar/desarquivar, ao mover de projeto
 e ao renomear o id — e ainda assim só acrescentando uma linha (ver "Arquivar /
 desarquivar / deletar", "Mover para outro projeto" e "Rodapé `## Histórico`").
 
-**Frontmatter YAML** é pulado pela detecção do callout, e hoje carrega a
-prioridade e a data de volta (abaixo). Chaves que o freitask não conhece — as
+**Frontmatter YAML** é pulado pela detecção do callout, e carrega a
+prioridade, a data de volta, o prazo e as dependências (abaixo). Chaves que o freitask não conhece — as
 que o obsidian.nvim injeta, como `aliases`/`tags` — são **preservadas
 verbatim**: ele nunca reescreve linha que não seja sua.
 
@@ -125,7 +124,7 @@ volta-em: 2026-12-01
   `hidden: true` e, em `volta_em`, o dia em que ela volta).
 - **Vale em qualquer fase ativa** e vence `prioridade: alta` enquanto a data não
   chega; a prioridade só decide a ordem do que está à mostra.
-- **É lida na hora e nunca gravada.** O motor compara a data com o dia de hoje a
+- **É lida na hora e nunca gravada.** O freitask compara a data com o dia de hoje a
   cada leitura, e quando a data chega nada grava nada na task. Por isso não há
   job que possa falhar e deixá-la escondida (nem timer: duas máquinas gravariam
   o mesmo arquivo sob o Syncthing). O preço é o painel: o `CURRENT.md` só muda
@@ -152,6 +151,107 @@ Mora no frontmatter pelos mesmos motivos da prioridade: é metadado consultável
 o celular o edita, e o bloco é reserializado a partir do caminho, que não
 carrega data nenhuma.
 
+### Dependências (`bloqueada-por`)
+
+Um campo **opcional** no frontmatter da task que **espera** outra, ortogonal à
+fase: a fase diz em que pé o trabalho está, este diz do que ele depende.
+
+```yaml
+---
+bloqueada-por: [id-a, id-b]
+---
+```
+
+- **Só ids, numa linha.** Lista YAML em uma linha, e cada elemento é o `id` de
+  uma task (o nome do arquivo, como em todo lugar). É a forma que o parser de
+  frontmatter entende e que o celular escreve à mão.
+- **Só o lado que espera é gravado.** O lado inverso (`bloqueia`: quem espera
+  esta task) nunca vai para o arquivo; é derivado na leitura. Gravar nos dois
+  lados dobraria as escritas sob o Syncthing e abriria a porta para os dois
+  discordarem.
+- **A escrita é `freitask set <id> --bloqueada-por "a,b"`**, que **substitui a
+  lista inteira**: a vírgula separa, os espaços são aparados, repetidos saem, e
+  `""` limpa (a chave some, e o frontmatter some junto se era só ela). O
+  comando recusa — saída `1`, mensagem em stderr, nada gravado — o id que não
+  existe entre as tasks ativas nem entre as arquivadas, o id que existe em mais
+  de um projeto (ambíguo), a própria task, e a lista que fecha um **ciclo**, com
+  o caminho na mensagem (`ciclo de dependência: a → b → a`). Limpar a lista
+  sempre se aceita: é como se corta o ciclo que o `doctor` acusa. À mão também
+  vale, para o celular e o claude.ai; o `doctor` acusa o que vier errado. A
+  TUI tem a tecla `b` (um prompt com a lista atual).
+- **Leitura.** Cada linha do `list --json` e o `show --json` trazem
+  `bloqueada_por` (a lista, como está escrita), `bloqueada` (verdadeiro quando
+  ao menos uma bloqueadora **ativa** existe) e `bloqueia` (os ids ativos que
+  listam esta task). `freitask show <id>` em texto imprime o bloco da task e,
+  embaixo, `bloqueada por: a, b` e `bloqueia: 3 (x, y, z)` quando houver; com
+  ciclo, `CICLO: a → b → a` em stderr e saída `1`. Quem decide qual é a "task
+  atual" é quem chama (as skills a descobrem pela branch): o freitask só
+  responde sobre o id que recebe.
+- **Semântica das bloqueadoras.** Uma bloqueadora **arquivada**, em qualquer
+  tipo, está resolvida e não bloqueia. Uma que **não existe** também não
+  bloqueia — um erro de digitação não pode fazer uma task sumir da frente — e
+  vira achado do `doctor`. Uma **escondida** (Algum dia ou adiada) bloqueia
+  normalmente: esconder não resolve. A task bloqueada **não sai** do painel
+  nem da TUI: ganha uma marca (`⛔` antes do id na TUI; nada no `CURRENT.md`,
+  cujo bloco é o do arquivo). Quem quer só a fronteira do que dá para começar
+  filtra o JSON (`jq 'map(select(.bloqueada | not))'`); não há subcomando para
+  isso.
+- **`rename` arrasta; `delete` não toca.** Renomear o id de uma task reescreve
+  o id em todas as linhas `bloqueada-por` do vault (edição só da linha no
+  frontmatter, pela mesma gravação conferida), como já reescreve os wikilinks.
+  Arquivar e mover de projeto não mudam o id, então não há o que reescrever.
+  `delete` não toca ninguém: a dependência fica pendurada e o `doctor` a acusa,
+  pelo mesmo motivo do `link-pendurado`.
+- **Vigiado pelo `doctor`:** `dependencia-pendurada` (cita um id que não
+  existe) e `dependencia-ciclica`, ambos sem `--fix`: não se adivinha o id, e
+  escolher que aresta cortar é decisão editorial. É aqui que aparece o ciclo
+  escrito à mão pelo celular, ou juntado por um merge do Syncthing de duas
+  edições que sozinhas eram acíclicas.
+
+Mora no frontmatter pelos mesmos motivos da prioridade: é metadado
+consultável, o celular o edita, e o bloco é reserializado a partir do caminho,
+que não carrega dependência nenhuma. Ficam de fora tipos de aresta e
+dependência entre projetos como caso especial (o id é global).
+
+### Prazo (`prazo`)
+
+Um campo **opcional** no frontmatter, ortogonal à fase, à prioridade e ao
+`volta-em`: uma **data informativa**, que a CLI, o JSON e a TUI mostram e o
+`doctor` vigia.
+
+```yaml
+---
+prazo: 2026-12-24
+---
+```
+
+- **Não muda a ordem nem a visibilidade.** O prazo não reordena o painel, o
+  `list` nem a TUI, e não esconde nem mostra task alguma: quem passa na frente
+  continua sendo `prioridade: alta`. Um vault com `prazo:` em todas as tasks
+  gera o mesmo `CURRENT.md` que sem, porque o prazo mora no frontmatter, que o
+  painel nunca copiou. Não há urgência derivada do prazo, nem pontuação.
+- **A escrita é `freitask set <id> --prazo AAAA-MM-DD`**, e `""` limpa o
+  campo. A validação é a do `volta-em`: só `AAAA-MM-DD` de um dia que existe;
+  data inválida é saída `2`, sem gravar nada do comando. À mão também vale. A
+  TUI tem a tecla `p` (prompt com o prazo atual; vazio limpa).
+- **Leitura.** O JSON traz `prazo` (o texto como está, ou `null`) e
+  `dias_para_o_prazo` (inteiro, negativo quando vencido; `null` sem prazo ou
+  com prazo inválido). `freitask show <id>` em texto imprime
+  `prazo: AAAA-MM-DD (em N dias)` ou `prazo: AAAA-MM-DD (vencido há N dias)`.
+- **Na TUI**, `prazo DD/MM` aparece ao lado do id, no mesmo lugar em que a
+  adiada mostra `volta`: em amarelo até o dia do prazo, em vermelho depois dele.
+  A task arquivada não mostra prazo (um prazo vencido de uma task feita seria
+  ruído), nem a de prazo inválido (não há dia para mostrar).
+- **Adiada com prazo** continua escondida até a data de volta. Se o prazo vem
+  **antes** da volta, a task voltaria à tela já vencida, e o `doctor` acusa
+  `prazo-antes-da-volta` enquanto ela ainda está adiada.
+- **Vigiado pelo `doctor`:** `prazo-invalido` (o que não é uma data), sem
+  `--fix` — o espelho do `volta-em-invalido`. Uma data inválida não conta
+  dias: o JSON a devolve em `prazo`, com `dias_para_o_prazo` nulo.
+
+Fica de fora tudo o que seria decidir pelo prazo: urgência derivada, recorrência
+e "revisar depois de".
+
 ### Status 0 — callout sem tipo reconhecido
 
 Se a linha 1 tem um `[!tipo]` que não existe em `status.json` (typo, tipo
@@ -162,7 +262,8 @@ arquivo (não é substituído nem apagado), para que:
 - a task continue consertável — `s` na TUI (ou `freitask set <id> --status
   <fase>`) troca o tipo; status 0 não é um beco sem saída;
 - o erro fique visível: `freitask list --json` devolve o tipo errado em
-  `callout`, e a TUI mostra a task com o ícone de erro;
+  `callout`, e a TUI mostra a task com o ícone de erro (e o `doctor` acusa
+  `status-0`);
 - no board, a task ordene **antes das normais do seu projeto** (0 é o menor
   `status_num`; só as de `prioridade: alta` passam à frente), com ícone/hl de
   erro — sinal de "conserte isso".
@@ -189,15 +290,15 @@ callout):
 | 8 | `quote` | Algum dia | backlog que o dono aceita esquecer por anos, mas quer poder lembrar; **escondida por padrão** |
 | 9 | `done` | Arquivada | é o que `archive` grava |
 
-São **as fases mais `done`**, e não os 27 callouts que o render-markdown
-suporta. O vocabulário largo não estava sendo escolhido — 36 tasks ativas,
-todas em `todo` — e status que ninguém escolhe não informa nada: a
+São **as fases mais `done`**, e não todos os callouts que o render-markdown
+suporta. O vocabulário largo não estava sendo escolhido — as tasks ativas
+ficavam todas em `todo` — e status que ninguém escolhe não informa nada: a
 diferenciação real terminava na frase em itálico, que é texto livre e não se
 consulta. Cada fase existe porque alguém precisa distingui-la de outra para não
 atropelá-la.
 
-**Algum dia é escondida por padrão** (`HIDDEN_CALLOUTS` em `config.lua`, e
-`hidden` no `list --json`): o `CURRENT.md` não a imprime nem a conta, e a TUI só
+**Algum dia é escondida por padrão** (`HIDDEN_CALLOUTS` em `config`, no
+`core`, e `hidden` no `list --json`): o `CURRENT.md` não a imprime nem a conta, e a TUI só
 a mostra com `S`. Continua em `freitask list`, para quem precisa achá-la. É a
 última fase que aparece na ordem; `done` só existe em arquivada. A task adiada
 (`volta-em`, acima) é escondida pela mesma regra e pelo mesmo campo `hidden`,
@@ -216,18 +317,21 @@ Sair do `status.json` **não** tira um callout do Obsidian: `note`, `info` e os
 demais seguem renderizando no corpo das notas. Este arquivo governa só como o
 freitask lê o **primeiro bloco** de uma task.
 
-Tasks novas (`M.template`) começam em `1` (`todo`).
+Tasks novas começam em `1` (`todo`).
 
-O arquivo só é criado quando falta: um vault que já tinha o `status.json` de
-antes de Refinada e Algum dia precisa ganhar essas duas linhas à mão (copie de
-`DEFAULT_STATUS_JSON` em `config.lua`). Sem elas, a task em `[!tip]` ou
-`[!quote]` vira status 0, nada é escondido, e o `doctor` acusa o callout que
-não existe.
+O arquivo só é criado quando falta, e só por um comando que escreve (`new`,
+`rebuild`…): quem só lê usa o vocabulário embutido no binário
+(`DEFAULT_STATUS_JSON` em `config`) e não cria nada. Um vault que já tinha o
+`status.json` de antes de Refinada e Algum dia precisa ganhar essas duas linhas
+à mão (copie dali). Sem elas, a task em `[!tip]` ou `[!quote]` vira status 0,
+nada é escondido, e o `doctor` acusa o callout que não existe.
 
 Editar `status.json` muda rótulos/ícones/cores/ordem. O parser mapeia
 `callout → número` a partir desse arquivo, então mantenha os callouts
 distintos. Renumerar/reordenar não quebra tasks existentes: o status de cada
 task é lido do `[!callout]` da linha 1, nunca de um número gravado no arquivo.
+O `status.json` é lido a cada execução; se não for um JSON válido, o freitask
+avisa em stderr e usa o vocabulário embutido.
 
 ---
 
@@ -254,12 +358,16 @@ weekday: Monday
 > _Ajustando formulário de inscrição_
 ```
 
-- **Auto-regeneração**: salvar qualquer arquivo de tarefa (`BufWritePost`)
-  regenera o `CURRENT.md` silenciosamente — tarefas novas/mudanças de status
-  aparecem sozinhas. Abrir a TUI também o regenera, e é o que põe o painel em
-  dia quando uma task adiada volta sem que nada tenha sido gravado. Se o
-  `CURRENT.md` estiver com edições não salvas, a regen é pulada (sem
-  sobrescrever seu trabalho).
+- **Auto-regeneração**: os comandos que escrevem regeneram o `CURRENT.md` no
+  fim, e salvar uma tarefa no Neovim roda `freitask rebuild` (autocmd do
+  dotfiles) — tarefas novas e mudanças de status aparecem sozinhas. Abrir a
+  TUI também o regenera, e é o que põe o painel em dia quando uma task adiada
+  volta sem que nada tenha sido gravado. O `rebuild` só grava quando o
+  conteúdo muda. Como a CLI roda fora do Neovim e não enxerga os buffers dele,
+  um `CURRENT.md` aberto com edição não salva é regravado no disco mesmo
+  assim, e o Neovim avisa (W12) quando você for salvá-lo — o mesmo aviso das
+  notas que citam uma tarefa renomeada (ver "Referências do Obsidian"). O que
+  está em `## Notas Avulsas` sobrevive à regeneração.
 - **Arquivo diário**: ao regenerar num dia novo, o painel do dia anterior é
   snapshotado em `daily/YYYY-MM-DD.md` antes de ser recarimbado com a data
   de hoje.
@@ -273,45 +381,59 @@ weekday: Monday
 
 ## Uso interativo (TUI)
 
-`freitask` sem argumentos, num terminal, abre a TUI (`freitask-tui`); no
-Neovim, `<leader>k` a abre num float. São três painéis: projetos, as tarefas
-do projeto (ícone e cor da fase, e um `!` nas de prioridade alta) e o preview
-do arquivo.
+`freitask` sem argumentos, num terminal, e `freitask tui` abrem a TUI; no
+Neovim, `<leader>k` a abre num float. Fora de um terminal (script, agente,
+pipe) os dois imprimem o usage e saem `2`: nada pode travar esperando uma tela
+que ninguém vê. São três painéis: projetos, as tarefas do projeto (ícone e cor
+da fase, um `!` nas de prioridade alta, um `⛔` antes do id nas que esperam
+outra, e `prazo DD/MM` ao lado do id nas que têm prazo, ver "Prazo") e o
+preview do arquivo.
 
 | Tecla | Ação |
 | ----- | ---- |
-| `n` | nova tarefa no projeto: título → id (sugerido pelo motor a partir do título, editável) → descrição; nasce `todo` |
+| `j` / `k`, `↓` / `↑` | mover |
+| `h` / `l`, `←` / `→`, `Tab` | trocar de painel |
+| `g` / `G`, `Home` / `End` | topo / fim |
+| `Enter` / `e` | abrir a tarefa no editor |
+| `C-d` / `C-u` | rolar o preview |
+| `/` | filtrar por id ou título |
+| `n` | nova tarefa no projeto: título → id (sugerido a partir do título (`freitask kebab`), editável) → descrição; nasce `todo` |
 | `s` | trocar a fase |
 | `t` / `i` | editar o título / a descrição do estado |
+| `p` | definir / limpar o prazo |
 | `r` | renomear o id |
+| `b` | editar a lista `bloqueada-por` |
 | `a` | arquivar (o tipo sugerido vem pré-selecionado) ou, numa arquivada, desarquivar |
 | `A` | mostrar / esconder as arquivadas |
 | `S` | mostrar / esconder as de Algum dia e as adiadas (com a data de volta ao lado da adiada) |
 | `d` | largar: arquiva como `dropped` (pede `y`) |
 | `N` | novo projeto |
 | `c` | regenerar e abrir o `CURRENT.md` |
-| `/` | filtrar por id ou título |
-| `Enter` / `e` | abrir a tarefa no editor |
+| `R` | reler o vault |
+| `Esc` | limpar o filtro e o aviso |
 | `?` | todas as teclas |
+| `q` / `C-c` | sair |
 
-A TUI **não conhece regra de tarefa**: cada tecla vira um subcomando da CLI
-(`set`, `rename`, `archive`…), e quando o motor recusa, a mensagem dele aparece
-na barra de baixo e o modal volta preenchido para corrigir. Ao abrir, ela roda
-`freitask rebuild` antes de ler as tasks; se o `rebuild` falhar, a TUI abre
-mesmo assim e o motivo vai para a barra. As **notas**
-(linhas 4+) se editam no editor (`e`) — texto livre não cabe num campo.
+A TUI **não conhece regra de tarefa**, e **roda em processo**: cada tecla monta
+um pedido e chama as mesmas funções da CLI (`set`, `rename`, `archive`…) pelo
+mesmo caminho — lock, leitura, plano do núcleo, gravação conferida e
+regeneração do painel —, sem subprocesso e sem segunda cópia de regra. Quando a
+regra recusa, a mesma mensagem que a CLI daria aparece na barra de baixo e o
+modal volta preenchido para corrigir. Ao abrir, ela regenera o painel (o mesmo que
+`freitask rebuild`) antes de ler as tasks; se isso falhar, a TUI abre mesmo
+assim e o motivo vai para a barra. As **notas** (linhas 4+) se editam no editor
+(`e`) — texto livre não cabe num campo.
 
 Abrir uma tarefa com a TUI **dentro do Neovim** a abre no Neovim pai (via
 `$NVIM`) e fecha o float, como o lazygit; fora dele, roda `$VISUAL`/`$EDITOR`
-em primeiro plano e regenera o `CURRENT.md` na volta. Salvar uma tarefa no
-Neovim roda `freitask rebuild` (autocmd do dotfiles).
+em primeiro plano e regenera o `CURRENT.md` e relê o vault na volta. Salvar uma
+tarefa no Neovim roda `freitask rebuild` (autocmd do dotfiles).
 
-Renomear o id faz **rename real** do arquivo (`vim.fn.rename`, não
-escrever-o-novo-e-apagar-o-velho) e **migra as referências do vault**
-(`M.retarget_links`) junto com o `id:` do frontmatter, e registra o id antigo
-no `## Histórico`. O id novo passa pela
-mesma validação de uma tarefa nova — kebab-case e livre, inclusive em
-`archived/` —, porque ele é também o nome da branch.
+Renomear o id **move** o arquivo (não escreve o novo e apaga o velho) e
+**migra as referências do vault** junto com o `id:` do frontmatter e as listas
+`bloqueada-por` das outras tasks, e registra o id antigo no `## Histórico`. O
+id novo passa pela mesma validação de uma tarefa nova — kebab-case e livre,
+inclusive em `archived/` —, porque ele é também o nome da branch.
 
 Editar uma tarefa **arquivada** funciona normalmente, inclusive renomear o id
 — ela continua na mesma pasta de arquivamento. Trocar a fase de uma arquivada
@@ -327,9 +449,9 @@ desarquivar uma task `done` a devolve como `check` (Pronta). Só `done` tem essa
 regra, porque só ele tem callout — `dropped` e `failed` são destinos sem fase
 correspondente. O
 **caminho é a única fonte de verdade** do arquivamento — não existe flag no
-frontmatter, do mesmo jeito que o status vem só do callout. Como `archived/`
-acrescenta dois níveis, o glob do cache (`tasks/*/*.md`) já as ignora sem
-código extra.
+frontmatter, do mesmo jeito que o status vem só do callout: `tasks/<id>.md` é
+ativa, `tasks/archived/<tipo>/<id>.md` é arquivada, e `list`, o painel e a TUI
+só enxergam as ativas, a não ser que se peça as arquivadas.
 
 Os tipos são **três**:
 
@@ -340,21 +462,19 @@ Os tipos são **três**:
 | `failed` | tentei e não deu |
 
 O tipo de arquivamento já vem **pré-selecionado** a partir do callout
-(`M.suggest_archive_type`, exposto como `suggested_archive` no
-`list --json`: `done`/`check` → `done`; o resto → `dropped`). `failed` não tem
+(exposto como `suggested_archive` no `list --json`: `done`/`check` → `done`;
+o resto → `dropped`). `failed` não tem
 default desde que as fases encolheram — nenhuma delas significa
 "falhou" — e se escolhe à mão. `dropped` é a única
 decisão que o status não carrega. Não há um quarto balde genérico ("misc") de
 propósito: ele viraria o destino de tudo que se arquiva com pressa, sem
 distinguir nada — e criar um diretório depois é trivial, esvaziar um cheio não.
 
-- **Arquivar** (`a` na TUI · `freitask archive <id> <tipo>` ·
-  `M.archive_task(path, tipo)`): move o arquivo, reescreve o wikilink da linha 2
-  para o novo caminho, registra no rodapé (ver abaixo), migra as referências do
-  vault e tira do cache.
-- **Desarquivar** (`a` numa arquivada · `freitask unarchive <id>` ·
-  `M.unarchive_task(path)`): o caminho inverso.
-  A tarefa volta ao cache e reaparece no `CURRENT.md` na regen seguinte.
+- **Arquivar** (`a` na TUI · `freitask archive <id> <tipo>`): move o arquivo,
+  reescreve o wikilink da linha 2 para o novo caminho, registra no rodapé (ver
+  abaixo) e migra as referências do vault.
+- **Desarquivar** (`a` numa arquivada · `freitask unarchive <id>`): o caminho
+  inverso. A tarefa reaparece no `CURRENT.md` na regen seguinte.
 
 #### Rodapé `## Histórico`
 
@@ -389,11 +509,11 @@ callout.
 
 Esta é a **única** exceção à regra de que a ferramenta não reescreve o corpo do
 arquivo — e ela só acrescenta, nunca mexe no que já estava lá.
+
 - **Ver as arquivadas**: `A` na TUI alterna a exibição delas na mesma lista
   (prefixadas com `[<tipo>]` e esmaecidas); `freitask list --archived` as
-  inclui. São lidas do disco
-  sob demanda (`M.archived_entries_for`) e **nunca** entram em `M.cache`, para
-  que board, regen e o resto do módulo sigam enxergando só o que está ativo.
+  inclui. Elas **nunca** entram no painel nem na contagem dele, que seguem
+  enxergando só o que está ativo.
 - **Largar** (`d` na TUI, que pede `y`): é arquivar como `dropped`. O arquivo
   fica e os links acompanham, como em qualquer arquivamento. Numa task já
   arquivada a tecla recusa: reclassificar é `a`, desarquivando antes.
@@ -403,16 +523,16 @@ arquivo — e ela só acrescenta, nunca mexe no que já estava lá.
 
 ### Mover para outro projeto
 
-`freitask move <id|caminho> <projeto>` · `M.move_to_project(path, projeto)`.
-Leva o arquivo para `projects/<projeto>/tasks/<id>.md` — ou para
+`freitask move <id|caminho> <projeto>`. Leva o arquivo para
+`projects/<projeto>/tasks/<id>.md` — ou para
 `projects/<projeto>/tasks/archived/<tipo>/<id>.md`, se estava arquivada. O tipo
 de arquivamento e a fase **não mudam**: mudar de projeto não é (des)arquivar. O
 `id` também não, então os links curtos `[[id]]` seguem valendo; quem muda de
 endereço são o wikilink da linha 2 e as referências path-qualificadas do vault
-(`M.retarget_links`, como nos outros moves), e a mudança é registrada no
-`## Histórico`.
+(a mesma reescrita dos outros moves, ver "Referências do Obsidian"), e a mudança
+é registrada no `## Histórico`.
 
-O motor recusa — saída `1`, mensagem em stderr, nada escrito — quando:
+O `move` recusa — saída `1`, mensagem em stderr, nada escrito — quando:
 
 - o projeto de destino **não existe**. A mensagem sugere `freitask new-project`:
   um projeto nunca nasce em silêncio por causa de um typo no nome;
@@ -422,14 +542,11 @@ O motor recusa — saída `1`, mensagem em stderr, nada escrito — quando:
   noção do `new`;
 - a task **já está** nesse projeto;
 - o **id já está ocupado** no destino, ativo ou arquivado em qualquer tipo — o
-  id é o nome da branch, e duas tasks com ele no mesmo projeto não se distinguem;
-- o buffer da task tem **alterações não salvas** (só dispara se o motor é
-  chamado de dentro de um Neovim com a task aberta).
+  id é o nome da branch, e duas tasks com ele no mesmo projeto não se distinguem.
 
 ### Encerrar / reabrir um projeto
 
-`freitask encerrar <projeto>` · `M.close_project(projeto)`, e
-`freitask reabrir <projeto>` · `M.reopen_project(projeto)`.
+`freitask encerrar <projeto>` e `freitask reabrir <projeto>`.
 
 Projeto que terminou mora em `projects/_encerrados/<projeto>/`. Encerrar leva
 para lá a pasta `projects/<projeto>/` inteira (MOC, spec, `decisoes/`,
@@ -441,8 +558,8 @@ nenhum.
 
 Os dois reescrevem, no vault inteiro, os wikilinks path-qualificados que
 começam por `projects/<projeto>/` (ao reabrir, por
-`projects/_encerrados/<projeto>/`): é `M.retarget_prefix`, a mesma varredura
-de `M.retarget_links`, com as mesmas exceções (`daily/` e `CURRENT.md`). As
+`projects/_encerrados/<projeto>/`): a mesma varredura de wikilinks de
+"Referências do Obsidian", com as mesmas exceções (`daily/` e `CURRENT.md`). As
 notas da própria pasta entram, e é assim que a linha 2 de cada task acompanha.
 Os links curtos ficam como estão, porque o basename de nada muda. E nenhum dos
 dois escreve no `## Histórico`: quem mudou de lugar foi o projeto, não a task.
@@ -462,25 +579,26 @@ dois escreve no `## Histórico`: quem mudou de lugar foi o projeto, não a task.
 projeto só.
 
 Encerrado, o projeto fica fora do alcance da CLI: as tasks dele não se acham
-pelo id, e um caminho para dentro de `_encerrados/` não passa por
-`split_task_path`. Para mexer nelas, reabra.
+pelo id, e um caminho para dentro de `_encerrados/` não é reconhecido como
+arquivo de task. Para mexer nelas, reabra.
 
 Um nome encerrado também não volta por outra porta: `new`, `new-project` e
 `move` o recusam e apontam `freitask reabrir <projeto>`. O `new` cria em
 silêncio o projeto que não existe, mas não o encerrado: criá-lo ao lado da
 pasta encerrada daria dois projetos com um nome só, um deles invisível.
 
-### Referências do Obsidian (`M.retarget_links`)
+### Referências do Obsidian
 
 Arquivar, desarquivar, mudar de projeto e renomear o id são o **mesmo evento** —
-"esse arquivo mudou de endereço" — e por isso passam todos por
-`M.retarget_links(old, new)`, que varre o vault inteiro reescrevendo os
-wikilinks. Cobre `[[alvo]]`, `[[alvo|alias]]`, embeds `![[...]]` e sufixos
+"esse arquivo mudou de endereço" — e por isso passam todos pelo mesmo plano
+(`deslocar`: mover o arquivo, regravá-lo no endereço novo, reescrever os
+wikilinks que o citam), que varre o vault inteiro reescrevendo os wikilinks.
+Cobre `[[alvo]]`, `[[alvo|alias]]`, embeds `![[...]]` e sufixos
 `#heading` / `^bloco`; preserva o alias, exceto quando ele **era** o id antigo
 (aí acompanha o rename).
 
-Encerrar e reabrir são o mesmo evento para a pasta de um projeto, e passam por
-`M.retarget_prefix(old, new)`: a mesma varredura, trocando o prefixo
+Encerrar e reabrir são o mesmo evento para a pasta de um projeto, e passam pelo
+plano de `projeto`: a mesma varredura, trocando o prefixo
 `projects/<projeto>/` de cada link que começa por ele e deixando o resto do
 link (alias, sufixo, extensão de anexo) como estava.
 
@@ -491,14 +609,14 @@ Daí a assimetria — e é por isso que arquivar e mudar de projeto saem baratos
 | --- | --- | --- | --- |
 | arquivar / desarquivar / mudar de projeto | intacto | reescrito | intacto |
 | encerrar / reabrir o projeto | intacto | reescrito | intacto |
-| renomear id | reescrito | reescrito | reescrito |
+| renomear id | reescrito | reescrito | reescrito (e a lista `bloqueada-por` das outras tasks) |
 
 Ficam **de fora** da varredura, de propósito:
 
 - `daily/*.md` — são snapshots de como o board estava naquele dia;
   reescrevê-los falsificaria o histórico.
 - `CURRENT.md` (na raiz do vault) — é regenerado do zero; basta o
-  `rebuild_current` seguinte.
+  `freitask rebuild` seguinte.
 
 A CLI roda **fora** do seu Neovim e não enxerga os buffers dele: uma nota
 aberta e com alterações não salvas que referencia a tarefa é reescrita no
@@ -509,14 +627,20 @@ disco mesmo assim. O Neovim avisa (W12) quando você for salvá-la — recarregu
 
 ## CLI (`freitask`)
 
-A CLI é a **única porta para o motor**: a TUI passa por ela, e também os
-outros escritores deste vault — o Obsidian (aqui e no celular, via Syncthing)
-e agentes de IA com acesso a shell. Nenhum deles vai chamar uma função Lua; sem
-a CLI, chamariam `mv`. Ela existe para que o caminho certo seja o mais fácil:
+A CLI é a **única porta para as regras**: a TUI chama o mesmo código em
+processo, e também os outros escritores deste vault — o Obsidian (aqui e no
+celular, via Syncthing) e agentes de IA com acesso a shell. Nenhum deles tem uma
+API em processo para chamar; sem a CLI, chamariam `mv`. Ela existe para que o
+caminho certo seja o mais fácil:
 
 ```bash
-freitask new         <projeto> <id> "<título>" [--desc "<estado>"]
+freitask                                  # TUI, se stdin e stdout são terminal; senão usage, saída 2
+freitask tui
+freitask current                          # exec nvim ~/ObsidianVault/CURRENT.md
+freitask new         <projeto> <id> "<título>" [--desc "<estado>"] [--json]
 freitask set         <id|caminho> [--status <fase>] [--title "…"] [--desc "…"] [--volta-em AAAA-MM-DD]
+                                  [--prazo AAAA-MM-DD] [--bloqueada-por "id,id"]
+freitask show        <id|caminho> [--json]
 freitask archive     <id|caminho> done|dropped|failed
 freitask unarchive   <id|caminho>
 freitask rename      <id|caminho> <novo-id>
@@ -531,25 +655,122 @@ freitask statuses    [--json]
 freitask kebab       "<texto>"
 freitask rebuild
 freitask doctor      [--fix] [--json] [--quiet]
+freitask version     [--json]
+freitask help        [--json]
+freitask <sub> --help | -h
 ```
 
-Argumentos e o formato exato de cada saída: `freitask help`.
+`freitask help` é o usage geral e `freitask <sub> --help` (ou `-h`) o trecho de
+um subcomando, com saída `0`; `--help` é resolvido **antes** de abrir o vault,
+então nenhum subcomando com `--help` lê ou grava arquivo. Flag desconhecida é
+saída `2`, com a mensagem do parser em stderr.
 
-Saídas: `0` ok · `1` inconsistência pendente ou operação falha · `2` uso
-inválido. Com `--json`, `list`, `projects`, `statuses` e `doctor` emitem
-estrutura parseável — é o contrato para agentes e para a TUI. Os avisos do
-motor saem em stderr, uma linha cada; stdout carrega só o dado.
+### Códigos de saída
+
+| Código | Significa |
+| ------ | --------- |
+| `0` | ok; `doctor` sem achado pendente |
+| `1` | recusa (task não encontrada, projeto encerrado, `done` por `set`, ciclo de dependência…); `doctor` com achado pendente; `show` de uma task em ciclo |
+| `2` | uso inválido (falta argumento, fase que não existe, data inválida, flag desconhecida, `freitask` sem terminal para a TUI) |
+| `3` | **conflito de escrita** (o arquivo mudou entre a leitura e a gravação) ou **lock ocupado** por mais de 5 s. Nada foi gravado, e repetir o comando é seguro. |
+
+Os avisos saem em stderr, uma linha cada, com o prefixo `freitask: `;
+stdout carrega só o dado.
+
+### JSON: a mesma forma, campos só por adição
+
+Com `--json`, `list`, `show`, `projects`, `statuses`, `doctor`, `new`,
+`version` e `help` emitem estrutura parseável — é o contrato para agentes,
+scripts e hooks. As regras:
+
+- **A forma não muda.** `list --json`, `projects --json`, `statuses --json` e
+  `doctor --json` seguem arrays e objetos crus, sem envelope, e os campos de
+  antes seguem com o mesmo nome e tipo. Campo novo só entra por **adição**;
+  campo removido ou de tipo mudado é mudança do contrato e **decisão do dono**
+  (é o `json` de `version --json`). Quem lê deve ignorar campo que não conhece.
+- **`id` é sempre string**, as chaves saem em **ordem alfabética**, o que não
+  tem valor é `null`, e lista vazia é `[]`.
+- **`list --json`** devolve um array de linhas, cada uma com `project`, `id`,
+  `status` (o título da fase), `status_num`, `callout`, `title`, `desc`,
+  `archived`, `suggested_archive`, `hidden`, `prioridade`, `volta_em`, `path`
+  e os campos que dispensam abrir o arquivo da task: `notes` (as linhas 4+ do
+  bloco, sem o `> `), `historico` (as linhas `- AAAA-MM-DD — …` do
+  `## Histórico`, na ordem do arquivo), `checklist` (`{feitos, total}` dos
+  `- [ ]` e `- [x]` do corpo) e, de dependências e prazo, `bloqueada_por`,
+  `bloqueada`, `bloqueia`, `prazo` e `dias_para_o_prazo`.
+- **`show --json`** é um objeto com os mesmos campos de uma linha do `list
+  --json`, mais `ciclo` (a lista de ids do ciclo em que a task está, ou
+  `null`). Em texto, `show` imprime o bloco da task e as linhas de dependência e
+  prazo descritas em "Dependências" e "Prazo".
+- **`new --json`** devolve `{"id", "path", "project"}`.
+- **`projects --json`** é `[{project, active}]`, **`statuses --json`** é
+  `[{num, callout, title, icon, hl_group, hidden}]` e **`doctor --json`** é
+  `{ok, findings: [{level, kind, path, msg, fixed}]}`.
+- **`version --json`** devolve `{"freitask": "<versão>", "json": <n>}`; `json`
+  é a versão do contrato acima.
+- **`help --json`** é a **gramática** dos subcomandos, gerada das definições
+  da CLI: `{"json": <n>, "subcommands": {"set": {"writes": true,
+  "positionals": ["ref"], "value_flags": ["status", …], "bool_flags": []}, …}}`.
+  É a fonte para quem precisa saber quais subcomandos escrevem e que flags
+  levam valor (as travas dos agentes), em vez de copiar a lista à mão. O
+  `doctor` consta como `writes: false`: só o `--fix` escreve, e quem decide é a
+  flag.
+- O **schema de cada comando** mora em `tests/aceite/schema/` e é validado nos
+  testes de aceite.
+
+### Leitura pura
+
+`list`, `show`, `projects`, `statuses`, `kebab`, `help`, `version` e
+`doctor` sem `--fix` **nunca escrevem nada**: nem `status.json`, nem
+`projects/`, nem o `CURRENT.md`, e não tomam o lock. Num vault vazio, nada é
+criado. O que cria o que falta (`projects/`, `.freitask/status.json`) são os
+comandos que escrevem.
+
+### Como grava
+
+Toda gravação do vault passa por um caminho só, para o Syncthing nunca ver um
+arquivo pela metade e uma edição de outro dispositivo nunca ser perdida:
+
+- **Só grava quando o conteúdo muda.** O comando lê o arquivo, calcula o
+  resultado e, se ele é igual ao que já está lá, não grava e não toca no mtime
+  (vale também para o `CURRENT.md`: `rebuild` repetido não escreve nada).
+- **Temporário na mesma pasta e `rename`.** O resultado vai para
+  `.freitask.<nome>.<pid>.tmp` ao lado do destino, com `fsync`, e só então
+  substitui o arquivo por `rename` (com `fsync` da pasta).
+- **Conferência contra o que foi lido.** Antes do `rename`, o destino é relido;
+  se mudou desde a leitura (o Obsidian, o celular, outro `freitask`), o
+  temporário é apagado, nada é gravado e a saída é `3`. É conflito, nunca
+  perda: repetir o comando refaz a conta sobre o que está lá agora.
+- **Não normaliza.** CRLF por linha, BOM e a falta de `\n` final do arquivo
+  sobrevivem a uma edição.
+- **Lock entre dois `freitask`.** Os comandos que escrevem tomam um lock fora do
+  vault (`$XDG_RUNTIME_DIR/freitask.lock`, ou `~/.local/state/freitask/lock`) e
+  esperam até 5 s por ele; depois disso, saída `3`. Existe porque os hooks dos
+  agentes chamam a CLI a cada comando de shell.
+- **Operação com vários arquivos** (um `rename` com N backlinks) grava o arquivo
+  primeiro e os links depois, sem journal: se for interrompida no meio, o
+  estado intermediário é o que o `doctor` acusa (`link-pendurado`,
+  `bloco-dessincronizado`) e o `--fix` repara.
+
+### Os comandos
 
 `set` recusa `--status done`: `done` é o que `archive <id> done` grava junto
-com o move. `set --volta-em` recusa (saída `2`) o que não é uma data
-`AAAA-MM-DD` de um dia que existe, sem escrever nada do comando, e `""` limpa o
-campo. `delete` não pergunta nada — quem confirma é quem chama — e deixa
+com o move. `set --volta-em` e `set --prazo` recusam (saída `2`) o que não é uma
+data `AAAA-MM-DD` de um dia que existe, sem escrever nada do comando, e `""`
+limpa o campo; `set --bloqueada-por` recusa o que "Dependências" lista (saída
+`1`). `delete` não pergunta nada — quem confirma é quem chama — e deixa
 as referências penduradas de propósito, para o `doctor` apontar.
 
-Implementação: `vault/.local/bin/freitask` (shim bash) →
-`lua/freitask/cli.lua` (shim Lua) → o módulo `freitask`. **Nenhuma regra
-é reimplementada em nenhuma das camadas**; um segundo motor em bash ou python
-divergiria do Lua em semanas, e aí existiriam duas regras em vez de uma.
+O dia de hoje é o relógio local; só os testes o fixam, com
+`FREITASK_TODAY=AAAA-MM-DD`, o que vale para adiadas, prazo, cabeçalho do
+painel e a linha do `## Histórico`. O vault é sempre `$HOME/ObsidianVault`:
+nenhuma variável o troca (os testes trocam o `HOME`).
+
+**O binário é a CLI inteira.** O shim do dotfiles (`vault/.local/bin/freitask`)
+só faz `exec` dele; **nenhuma regra mora no shim nem na TUI**, e um segundo
+freitask em bash ou python divergiria do primeiro em semanas, e aí existiriam duas
+regras em vez de uma. O mapa do código está em
+[`freitask-internals.md`](freitask-internals.md).
 
 ## `freitask doctor` — verificação e reparo
 
@@ -585,6 +806,11 @@ agente que só faz `mv` para `archived/` causa dano **inteiramente reparável**.
 | `callout-vs-pasta` — em `archived/done/` com callout ≠ `done` | warn | sim |
 | `prioridade-desconhecida` — `prioridade:` diferente de `alta` | warn | não |
 | `volta-em-invalido` — `volta-em:` que não é uma data `AAAA-MM-DD` | warn | não (não se adivinha a data) |
+| `prazo-invalido` — `prazo:` que não é uma data `AAAA-MM-DD` | warn | não (idem) |
+| `prazo-antes-da-volta` — `prazo` anterior à `volta-em` de uma task ainda adiada: ela voltaria à tela já vencida | warn | não |
+| `dependencia-pendurada` — `bloqueada-por` cita um id que não existe (nem ativo nem arquivado) | warn | não (não se adivinha o id) |
+| `dependencia-ciclica` — as tasks ativas se esperam em ciclo | error | não (que aresta cortar é decisão editorial) |
+| `temporario-orfao` — `.freitask.<nome>.<pid>.tmp` de uma gravação que não chegou ao `rename` | warn | sim (apaga o temporário; o destino está no estado anterior) |
 
 `callout-vs-pasta` só vale para `done`: esse status significa literalmente
 "Arquivada", e um arquivo em `archived/done/` dizendo "Não iniciada" é
@@ -604,6 +830,9 @@ falso — **um checker em que não se confia é um checker que não se lê**:
 O `--fix` de histórico ausente **não inventa data**: escreve a linha marcada
 com `[reconstruído pelo doctor; data real desconhecida]`. Mentir sobre a data
 seria pior que não ter a linha.
+
+`doctor` sem `--fix` é **leitura pura**: não toma o lock, não grava e, num
+vault vazio, não cria nada. Com `--fix`, executa o plano de reparo.
 
 `freitask doctor --quiet` é consumido por `vault/hooks/check.sh`, então
 `./healthcheck.sh` já reporta a integridade do vault junto com o resto.
@@ -645,20 +874,22 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
 > dados — é a pasta para a qual um agente externo é apontado. Esta seção é a
 > versão longa.
 
-1. **Criar tarefa**: `freitask new <projeto> <id> "<título>" [--desc "<estado>"]`.
-   É o caminho único onde há shell — ele valida (id kebab-case, projeto não
-   reservado, id livre inclusive em `archived/`; projeto novo é criado, menos o
-   encerrado, que se reabre), serializa o bloco pelo mesmo
-   código de todo o resto e **regenera o `CURRENT.md`**. Montar o markdown na
-   mão deixa o painel para trás, que era o sintoma antigo: task criada por
-   arquivo não aparecia no board até alguém salvar outra task no Neovim.
-   Na TUI, `n` chama o mesmo `freitask new`. De dentro do Lua, `require("freitask").create_task(project, model)` —
-   `model` é `{ status_num, raw_callout, title, id, desc, extras }`, os mesmos
-   campos que `parse_block` devolve.
-   Sem shell (o claude.ai pelo conector MCP), escrever o arquivo à mão segue
-   sendo a única opção: siga o formato do bloco à risca. A TUI lê os arquivos
-   e regenera o `CURRENT.md` ao abrir pelo `c`; `freitask rebuild` é o mesmo
-   para quem tem shell.
+Não há API em processo para quem está de fora: a interface do freitask é a CLI.
+`freitask help --json` diz quais subcomandos escrevem e que flags cada um leva;
+o texto do `freitask help` ainda é o de antes da reescrita e não lista `show`,
+`version`, `--prazo` nem `--bloqueada-por`, que estão nesta página.
+
+1. **Criar tarefa**: `freitask new <projeto> <id> "<título>" [--desc "<estado>"]`
+   (`--json` devolve `{id, path, project}`). É o caminho único onde há shell —
+   ele valida (id kebab-case, projeto não reservado, id livre inclusive em
+   `archived/`; projeto novo é criado, menos o encerrado, que se reabre),
+   serializa o bloco pelo mesmo código de todo o resto e **regenera o
+   `CURRENT.md`**. Montar o markdown na mão deixa o painel para trás: task criada
+   por arquivo não aparecia no board até alguém salvar outra task no Neovim. Na
+   TUI, `n` faz o mesmo. Sem shell (o claude.ai pelo conector MCP), escrever o
+   arquivo à mão segue sendo a única opção: siga o formato do bloco à risca. A
+   TUI lê os arquivos e regenera o `CURRENT.md` ao abrir pelo `c`;
+   `freitask rebuild` é o mesmo para quem tem shell.
 2. **Status é derivado EXCLUSIVAMENTE do tipo do callout da linha 1** — para
    mudar o status, `freitask set <id> --status <fase>`, ou troque o callout à
    mão (`[!todo]`→`[!example]`). Se o tipo não
@@ -675,89 +906,69 @@ sincronização (quem sincroniza é o Syncthing) nem histórico compartilhado.
    meio do bloco — isso deslocaria a leitura da primeira nota real). Preserve
    as linhas seguintes (impedimentos/notas) ao editar — são texto livre do
    usuário, e sobrevivem tal como estão.
-5. **Reaproveite o parser canônico** em vez de regex ad-hoc:
-   `require("freitask").parse_block(linhas)` →
-   `{ status_num, raw_callout, title, id, desc, extras }`, e
-   `serialize_block(model)` de volta (`model.project` precisa estar setado
-   para o link sair com caminho). `raw_callout` é o tipo cru digitado —
-   relevante só quando `status_num == 0`, para preservar o typo em vez de
-   apagá-lo. O par é idempotente (round-trip seguro) e já lida com
-   frontmatter e formatos legados (inclusive o "nome" livre pré-migração, que
-   vira nota).
+5. **Para ler, use `freitask list --json` ou `freitask show <id> --json`**, não
+   regex nem `awk` sobre o arquivo: é o mesmo parser do bloco que o resto usa, e
+   o JSON já traz o que seria extraído à mão — `notes` (as linhas 4+ do
+   bloco), `historico` (o log do `## Histórico`), `checklist` (`feitos` e
+   `total`), a fase, a prioridade, as dependências e o prazo. `callout` é o tipo
+   cru digitado — relevante só quando `status_num` é 0, para ver o typo. Ler o
+   `.md` direto só faz sentido onde não há shell.
 6. **Não edite as seções `## <projeto>` do `CURRENT.md` à mão** — são geradas.
-   Edite os arquivos de tarefa; o painel se atualiza ao salvar. Só
-   `## Notas Avulsas` é livre.
+   Edite os arquivos de tarefa (ou use a CLI); o painel se atualiza ao salvar
+   no Neovim e a cada escrita da CLI. Só `## Notas Avulsas` é livre.
 7. **Ignore `daily/`, `templates/` e `projects/_encerrados/`** ao varrer
    projetos, e pule `tasks/*/archived/**` — estão arquivadas, não fazem parte
-   do board ativo.
-   O estado de arquivamento é o **caminho**, não uma flag de frontmatter; use
-   `M.split_task_path(path)` → `project, id, archived` como guarda único (ele
-   devolve `nil` para qualquer coisa fora de padrão) ou `M.is_archived(path)`.
+   do board ativo. O estado de arquivamento é o **caminho**, não uma flag de
+   frontmatter; `list --json` já traz `archived` e `path`, e `list --archived`
+   inclui as arquivadas.
 8. **Nunca mova nem renomeie um arquivo de tarefa na mão** — use
-   `M.archive_task` / `M.unarchive_task` / `M.move_to_project` / `M.apply_edit`.
-   Os quatro chamam `M.retarget_links`, sem a qual os wikilinks do vault ficam
-   pendurados; o wikilink da linha 2 é path-qualified e precisa ser reescrito
-   junto; e arquivar/desarquivar/mudar de projeto/renomear ainda registram a
-   linha datada em `## Histórico`. A pasta de um projeto também não se move na
+   `freitask archive` / `unarchive` / `move` / `rename`. Os quatro reescrevem os
+   wikilinks do vault, sem o que eles ficam pendurados; o wikilink da linha 2
+   é path-qualificado e precisa ser reescrito junto; e eles registram a linha
+   datada em `## Histórico`. A pasta de um projeto também não se move na
    mão para dentro ou para fora de `projects/_encerrados/`: é
-   `freitask encerrar` / `freitask reabrir`, que levam os links junto.
+   `freitask encerrar` / `freitask reabrir`, que levam os links junto. Apagar é
+   `freitask delete`.
 9. **Não escreva em `## Histórico` à mão** para marcar arquivamento, mudança de
-   projeto ou rename — quem escreve ali é
-   `M.archive_task`/`M.unarchive_task`/`M.move_to_project`/`M.apply_edit`, e a fonte de
-   verdade do estado continua sendo o **caminho**. Uma linha de histórico sem o
-   move correspondente é só um texto mentindo sobre onde o arquivo está.
+   projeto ou rename — quem escreve ali é a CLI (`archive`, `unarchive`, `move`,
+   `rename`), e a fonte de verdade do estado continua sendo o **caminho**. Uma
+   linha de histórico sem o move correspondente é só um texto mentindo sobre
+   onde o arquivo está.
 10. **Adiar uma task é `volta-em`, não fase nem arquivo.** Com shell,
     `freitask set <id> --volta-em AAAA-MM-DD` (`""` limpa), que recusa data
     inválida. Sem shell, a linha `volta-em:` no frontmatter, com `AAAA-MM-DD` de
     um dia que existe. A task segue em `tasks/`, na mesma fase.
+11. **Prazo e dependência são frontmatter, não bloco.** Com shell,
+    `freitask set <id> --prazo AAAA-MM-DD` e
+    `freitask set <id> --bloqueada-por "id-a,id-b"` (`""` limpa os dois): a CLI
+    recusa data inválida, id que não existe e ciclo, sem gravar nada. Sem shell,
+    a linha `prazo: AAAA-MM-DD` e a linha `bloqueada-por: [id-a, id-b]` no
+    frontmatter (lista numa linha, só ids); o `doctor` acusa o que vier errado
+    (`prazo-invalido`, `dependencia-pendurada`, `dependencia-ciclica`). Nenhum
+    dos dois muda a ordem do painel nem esconde task: o que passa na frente é
+    `prioridade: alta`.
+12. **Saída `3` é "repita".** A CLI saiu com conflito de escrita ou lock
+    ocupado: nada foi gravado, e rodar o mesmo comando de novo é seguro. Saída
+    `1` é recusa, com o motivo em stderr; não insista com o mesmo
+    pedido.
 
 ---
 
 ## Manutenção / verificação
 
-- O código vive em `lua/freitask/`, um módulo por responsabilidade — ver
-  [`freitask-internals.md`](freitask-internals.md) para o mapa, as regras de
-  dependência e o roteiro de verificação. `freitask.model`
-  (`parse_block`/`serialize_block`) é a fonte única do formato: mudanças de
-  formato começam aí. `lua/freitask/cli.lua` e o executável
-  `vault/.local/bin/freitask` (no dotfiles) são shims sem lógica: **não**
-  acrescente regra neles, senão passam a existir duas versões da mesma regra.
-- `links.retarget_links` é chamada por `task.archive_task`,
-  `task.unarchive_task`, `task.move_to_project` e `task.apply_edit` (rename), e
-  `links.retarget_prefix` por `task.close_project` e `task.reopen_project`.
-  Qualquer caminho novo que mova ou renomeie um arquivo de task, ou uma pasta
-  que as contenha, precisa chamar uma delas — são o único ponto que conserta as
-  referências do vault.
-- `doctor.migrate_format()` converte arquivos de formatos antigos para o atual
-  (idempotente); rode-o após qualquer mudança de formato, seguido de
-  `board.rebuild_current()`. Também migra o **formato legado de arquivamento**
-  (`archived: true` no frontmatter): move essas tarefas para
-  `archived/dropped/` — o balde honesto, já que o flag antigo não registrava
-  o porquê — e remove a linha. Reconhece tanto o vocabulário atual de `status.json`
-  quanto títulos legados que já saíram dele (`LEGACY_STATUS_TITLES`, ex.:
-  "Backlog", "In Progress") — se `status.json` for reestruturado de novo,
-  cheque se essa tabela precisa crescer, senão a migração vira texto-livre
-  permanente em vez de status.
-- `path.split_task_path` é o **guarda único** de "isto é um arquivo de task?" —
-  cache, doctor e CLI passam por ele. Ao acrescentar um formato de
-  caminho, mude-o lá e não com um `match` novo no ponto de uso.
-- O cache (`cache.cache`) guarda o **bloco bruto** de cada task (`entry.block`),
-  lido uma única vez por `scan_task`; `rebuild_current` reimprime a partir daí
-  em vez de reler os arquivos. Ao adicionar campos ao cache, prefira estender
-  `scan_task` a abrir o arquivo de novo em outro lugar.
-- Validação:
-  ```bash
-  tests/run.sh        # funções puras + a CLI de ponta a ponta
-  (cd tui && cargo test)   # estado e teclas da TUI
-  luacheck lua tests
-  shellcheck -x tests/run.sh
-  freitask doctor          # integridade dos DADOS (o resto checa o CÓDIGO)
-  ./healthcheck.sh         # inclui o doctor via vault/hooks/check.sh
-  ```
-  As operações de **escrita** são cobertas por `tests/cli_spec.lua`, num vault
-  descartável (ver [`freitask-internals.md`](freitask-internals.md)); o que
-  segue manual é o `doctor --fix` e o desenho da TUI.
+- O código e o mapa de cada módulo estão em
+  [`freitask-internals.md`](freitask-internals.md); os portões antes de dar por
+  pronto, em `docs/agents/verificacao.md` e em `make help`.
+- O formato do bloco tem **fonte única**: `crates/core/src/model.rs` (parser e
+  serializer). Mudança de formato começa ali, e nada fora do `core` reimplementa
+  o bloco. O shim do dotfiles e a TUI não têm regra: **não** acrescente regra
+  neles, senão passam a existir duas versões da mesma regra.
+- Todo caminho que **move ou renomeia** um arquivo de task, ou uma pasta que as
+  contenha, passa pelo plano de `deslocar` (task) ou de `projeto` (pasta de um
+  projeto): são o único ponto que conserta as referências do vault e escreve o
+  `## Histórico`. Comando novo que mova arquivo por fora deles deixa wikilinks
+  pendurados.
 - O `doctor` é a rede de segurança contra escritores que não passam por este
-  módulo (Obsidian, celular, agentes). Ao acrescentar um invariante ao formato,
+  código (Obsidian, celular, agentes). Ao acrescentar um invariante ao formato,
   acrescente **junto** o check correspondente — um invariante que só existe na
   documentação é um invariante que vai ser violado em silêncio.

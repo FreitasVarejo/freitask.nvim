@@ -819,6 +819,83 @@ f9b.3. **Reavaliação pedida: os `.snap` da ajuda (`ajuda_60x15` e
     (fora de `tests/aceite/`, que não se toca). O texto da regra está na §4,
     item 3, da spec.
 
+## Fatia 11
+
+67. **A exclusão de `crates/freitask/src/tui/loop.rs` em
+    `.cargo/mutants.toml` sai, e o laço do terminal segue mutado.** O
+    arquivo nunca existiu (`git log --all`): o laço nasceu como `laco.rs`
+    (`4bcfb9a`), e o glob não casava nada. O comentário justificava uma
+    exclusão que não acontecia. Medido na rodada da fatia 8 (entrada 65,
+    `target/mutants/mutants.out.old/caught.txt`): os 18 mutantes de
+    `laco.rs` saíram `caught`, nenhum `missed`. Trocar o glob para
+    `laco.rs` tiraria da mutação um arquivo que os testes já cobrem; por
+    isso a linha e o comentário saem, e o arquivo ganha uma linha dizendo
+    que o laço é mutado.
+68. **Triagem do `/code-review high` sobre a branch (contra `main`, que é
+    a tag `oraculo-lua`).** Dez achados, cada um medido antes de decidir.
+    Entram, por serem regressão de paridade ou trava frouxa:
+    - **A TUI fixava o dia na abertura** (`Sessao` guardava `hoje`): aberta
+      antes da meia-noite, regenerava o `CURRENT.md` com a data de ontem. A
+      TUI antiga chamava a CLI a cada ação e lia o dia a cada vez. A
+      `Sessao::abrir(home, hoje)` do aceite segue com dia fixo; a TUI de
+      verdade passa um relógio, lido a cada comando.
+    - **A gravação perdia o modo do arquivo** (temporário criado pelo umask,
+      depois `rename`). Medido em 11/11: 48 tasks e 58 notas com link para
+      task em `0600` no vault real; o `writefile` do oráculo trunca no lugar
+      e preserva o modo, e o Syncthing sincroniza permissão. O temporário
+      passa a herdar as permissões do destino. Symlink fica fora: não há
+      nenhum no vault.
+    - **`cli.rs`**: quatro subcomandos de leitura repetiam o que
+      `cli::vault()` e `cli::vocab()` já fazem; passam a chamá-los.
+    - **`docs/agents/aceite.md`** descrevia o que `make congelar` e
+      `scripts/rascunho.sh` fazem; vira ponteiro (regra de contrato do dono).
+
+    Ficam registrados, sem mudança, por não terem dor medida ou por serem
+    paridade com o oráculo:
+    - `rename x 'y '` valida o id aparado e grava `y .md`. O oráculo faz o
+      mesmo (medido em HOME temporário, os dois saem 0 com `y .md`); mudar
+      é divergência nova, e nenhum caso aconteceu.
+    - `bloqueada-por` em lista YAML de bloco (`- a` em linhas), como o
+      editor de Propriedades do Obsidian grava, é lido como lista vazia, sem
+      achado do `doctor`. A §10.1 decide lista em uma linha, e nenhuma task
+      do vault tem a chave. Vai para o relatório como candidata a task.
+    - Caminho do vault por symlink resolvido (`rel_de` compara texto):
+      `~/ObsidianVault` não é symlink no notebook.
+    - `encerrar` de um projeto cujas tasks arquivadas são bloqueadoras de
+      tasks de outro projeto: depois do `encerrar`, a dependência fica
+      pendurada (`_encerrados/` está fora do índice). A §10.1 não trata o
+      caso, e nenhuma task tem `bloqueada-por`.
+    - `voltou_do_editor` ignora a falha do `rebuild`: a TUI antiga fazia o
+      mesmo (`tui/src/main.rs`, `let _ = engine.run(&["rebuild"])`).
+    - `set --bloqueada-por` numa task fora do índice (projeto com nome
+      começando por `.` ou task por symlink) diz "não é um arquivo de texto
+      UTF-8", mensagem errada para a causa; nenhum dos dois casos existe no
+      vault.
+69. **Triagem do auditor em contexto limpo sobre `oraculo-lua..a977b4a`.**
+    Veredito: sem special-casing em `crates/*/src`, sem afrouxamento do
+    aceite nem de `.snap` sem reavaliação registrada. Entram:
+    - `make test-longo` saía 0 com erro de compilação (o código do `cargo`
+      se perdia no `| grep … || true`); passa a sair com o código do cargo.
+      A evidência "test-longo verde" da entrada 65 vale para testes que
+      rodaram, não para o caso de build quebrado, que não aconteceu (o
+      `make test` do mesmo `PORTOES.md` compilou).
+    - A catraca aceitava `#[ignore]`/`#[should_panic]` se o CAMINHO do
+      arquivo aparecesse no log (dez arquivos com teste já aparecem); passa
+      a exigir o NOME do teste. Não há nenhum dos dois atributos no repo.
+    - O comentário de `.cargo/mutants.toml` apontava a catraca da mutação
+      para `scripts/catraca.sh`; quem confere é `scripts/mutantes.sh`.
+
+    Ficam para o dono, porque mexem em `divergencias.toml` ou no harness do
+    diferencial, e só mudam pela mão dele depois de reavaliação (§4.1):
+    a D1 e a D4 aceitam `bytes diferentes` de qualquer arquivo de task nos
+    cenários delas, sem saber a causa; o `resumo_diff` só reporta a primeira
+    linha diferente de cada fluxo por passo; a alternativa `^A=\d+ B=3$` da
+    D10 vale em todo cenário e só cobriria regressão (0 ocorrências no
+    último relatório). Registrados sem mudança: a catraca conta `assert` em
+    comentário; as propriedades I3 e I10 (`crates/vault/tests/doctor.rs`,
+    `dependencias.rs`) fixam 64 casos e ficam fora dos 4096 do
+    `test-longo`, como a §3.2 admite para o que toca disco.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do

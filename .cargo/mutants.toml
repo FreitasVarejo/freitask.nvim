@@ -1,17 +1,15 @@
 # cargo-mutants (spec §3.6). Limiar: zero `missed` em crates/core; catraca no
-# resto (tests/aceite/mutantes.baseline, conferida por scripts/catraca.sh).
+# resto (tests/aceite/mutantes.baseline, conferida por scripts/mutantes.sh).
 #
 # Exclusões, cada uma com o porquê:
 # - crates/freitask/src/main.rs: é o despacho `main()` e a detecção de terminal;
 #   um mutante ali só se mata abrindo um terminal de verdade, e o smoke em PTY
 #   (§3.5, item 4) já prova o caminho que importa (sobe, desenha, `q` sai 0).
-# - crates/freitask/src/tui/loop.rs: o laço fino do terminal (ler tecla, chamar
-#   `update`, chamar `view`, executar efeitos). O estado (`update`) e o desenho
-#   (`view`) são puros e cobertos; o laço em si só se exercita em PTY.
 # - tests/**: código de teste, gerador e harness não são produção.
+# O laço do terminal (crates/freitask/src/tui/laco.rs) é mutado: os testes o
+# matam (decisão 67 em docs/decisoes-da-reescrita.md).
 exclude_globs = [
   "crates/freitask/src/main.rs",
-  "crates/freitask/src/tui/loop.rs",
   "tests/**",
 ]
 

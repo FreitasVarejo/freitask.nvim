@@ -1,6 +1,8 @@
 # AGENTS.md — freitask.nvim
 
-Motor (Lua, rodado pela CLI sob `nvim -l`) e TUI (Rust, em `tui/`) do freitask.
+O freitask: um binário Rust (workspace na raiz, `crates/`) que é a CLI e a TUI. Até o
+cutover, `lua/` e `tui/` ficam como oráculo (`docs/freitask-internals.md`, "Até o
+cutover").
 
 - Antes de mexer no código: `docs/freitask-internals.md` — mapa dos módulos, regras
   de dependência e os portões antes de dar por pronto.

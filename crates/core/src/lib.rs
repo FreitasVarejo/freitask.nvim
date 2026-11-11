@@ -4,9 +4,9 @@
 //! parâmetro e tudo que sai é valor. Operações que mudam o vault devolvem um
 //! plano de efeitos sobre arquivos, que a crate `freitask-vault` executa.
 //!
-//! Os módulos seguem os nomes do motor Lua (`docs/freitask-internals.md`),
-//! porque a responsabilidade de cada um já está justificada lá; o que muda é a
-//! linguagem e a fronteira com o disco.
+//! Os nomes dos módulos vêm do motor Lua que este núcleo substitui; o mapa de
+//! cada um — o que é e o que não é responsabilidade dele — está em
+//! `docs/freitask-internals.md`.
 
 pub mod board;
 pub mod config;
