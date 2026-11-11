@@ -7,9 +7,10 @@ Como um agente escreve os testes congelados de uma fatia da reescrita (spec,
 ## Onde escrever
 
 - `.aceite-rascunho/<fatia>/main.rs` (obrigatório) e os módulos que quiser ao
-  lado (`mod util;` em `.aceite-rascunho/<fatia>/util.rs`). `make congelar
-  FATIA=<fatia>` leva a pasta para `tests/aceite/<fatia>/` e a registra como
-  alvo de teste; `tests/aceite/` em si não se escreve.
+  lado (`mod util;` em `.aceite-rascunho/<fatia>/util.rs`). Com o rascunho
+  conferido, congele-o com `make congelar FATIA=<fatia>` (`make help`; o que o
+  alvo faz e o que recusa está no cabeçalho de `scripts/congelar.sh`);
+  `tests/aceite/` em si não se escreve.
 - Arquivos da raiz de `tests/aceite/` (`divergencias.toml`, `schema/*.json`,
   `dores.rs`) vão em `.aceite-rascunho/raiz/`; o `congelar` só copia o que
   ainda não existe lá.
@@ -22,10 +23,10 @@ Como um agente escreve os testes congelados de uma fatia da reescrita (spec,
 
 ## Como conferir o rascunho
 
-`scripts/rascunho.sh <fatia>` compila e roda o rascunho fora do workspace
-(cópia em `target/rascunho/`), sem tocar em `tests/aceite/`. Antes de
-congelar, o rascunho tem de compilar e tem de ficar VERMELHO contra o
-esqueleto: teste que já passa sem implementação não prova nada.
+Antes de congelar, rode `scripts/rascunho.sh <fatia>` (uso e propósito: o
+cabeçalho do próprio script). O rascunho tem de compilar e tem de ficar
+VERMELHO contra o esqueleto: teste que já passa sem implementação não prova
+nada.
 
 ## Como o teste roda o binário
 

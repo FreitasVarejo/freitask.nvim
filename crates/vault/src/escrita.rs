@@ -3,13 +3,17 @@
 //!
 //! 1. o chamador leu `B0` (`antes`; `None` se o arquivo não existia);
 //! 2. se `B1 == B0`, nada se grava e o mtime fica;
-//! 3. escreve `.freitask.<nome>.<pid>.tmp` na mesma pasta e faz `fsync`;
+//! 3. escreve `.freitask.<nome>.<pid>.tmp` na mesma pasta, dá a ele as
+//!    permissões do arquivo que vai substituir (se ele existia) e faz `fsync`;
 //! 4. relê o destino; se o sha256 não é mais o de `B0`, apaga o temporário e
 //!    devolve conflito (saída 3): nada foi gravado;
 //! 5. `rename` e `fsync` do diretório.
 //!
 //! O Syncthing detecta mudança por mtime/tamanho e só vê o arquivo final; um
-//! leitor nunca encontra o destino pela metade.
+//! leitor nunca encontra o destino pela metade. As permissões vão junto
+//! porque o Syncthing também sincroniza o modo: um `rename` que trocasse o
+//! 0600 do vault pelo 0644 do umask seria um evento de sync por arquivo
+//! reescrito (o `writefile` do Lua, que truncava no lugar, preservava o modo).
 
 use std::path::{Path, PathBuf};
 
@@ -84,6 +88,12 @@ pub fn gravar(
         e
     };
     disco.escrever(&tmp, depois).map_err(|e| desfaz(io(e)))?;
+    if antes.is_some() {
+        // Arquivo novo fica com o modo do umask; o que já existia, com o seu.
+        disco
+            .herdar_permissoes(destino, &tmp)
+            .map_err(|e| desfaz(io(e)))?;
+    }
     disco.fsync(&tmp).map_err(|e| desfaz(io(e)))?;
     let atual = disco.ler(destino).map_err(|e| desfaz(io(e)))?;
     if hash(atual.as_deref()) != hash(antes) {
@@ -276,9 +286,10 @@ mod tests {
     /// só acontece depois de uma falha anterior, e não há segunda falha).
     #[test]
     fn falha_em_cada_passo_deixa_o_antigo_ou_o_novo() {
-        // Passos de uma gravação: escrever tmp (1), fsync (2), rename (3),
-        // fsync dir (4). O 5 não existe: é a gravação sem falha nenhuma.
-        for passo in 1..=5 {
+        // Passos de uma gravação sobre um arquivo que existe: escrever tmp
+        // (1), herdar as permissões (2), fsync (3), rename (4), fsync dir (5).
+        // O 6 não existe: é a gravação sem falha nenhuma.
+        for passo in 1..=6 {
             let dir = tempfile::tempdir().unwrap();
             let destino = dir.path().join("x.md");
             std::fs::write(&destino, b"antigo").unwrap();
@@ -286,12 +297,12 @@ mod tests {
             let r = gravar(&f, &destino, Some(b"antigo"), b"novo");
             let agora = std::fs::read(&destino).unwrap();
             match passo {
-                1..=3 => {
+                1..=4 => {
                     assert!(matches!(r, Err(ErroEscrita::Io(..))), "passo {passo}");
                     assert_eq!(agora, b"antigo", "passo {passo}");
                 }
-                // 4: a falha no fsync do diretório chega depois do rename, o
-                // arquivo já é o novo e a gravação conta como feita. 5: sem
+                // 5: a falha no fsync do diretório chega depois do rename, o
+                // arquivo já é o novo e a gravação conta como feita. 6: sem
                 // falha.
                 _ => {
                     assert!(r.unwrap(), "passo {passo}");
@@ -304,6 +315,55 @@ mod tests {
                 "temporário sobrou no passo {passo}"
             );
         }
+    }
+
+    fn modo(p: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).unwrap().permissions().mode() & 0o7777
+    }
+
+    /// O vault real tem tasks em 0600 e o Syncthing sincroniza o modo: o
+    /// `rename` do temporário não pode trocá-lo pelo do umask.
+    #[test]
+    fn gravar_preserva_o_modo_do_arquivo_que_substitui() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        for m in [0o600, 0o644, 0o640, 0o444] {
+            let destino = dir.path().join(format!("x{m:o}.md"));
+            std::fs::write(&destino, b"antigo").unwrap();
+            std::fs::set_permissions(&destino, std::fs::Permissions::from_mode(m)).unwrap();
+            assert!(gravar(&Real, &destino, Some(b"antigo"), b"novo").unwrap());
+            assert_eq!(std::fs::read(&destino).unwrap(), b"novo");
+            assert_eq!(modo(&destino), m, "modo {m:o}");
+        }
+        assert!(
+            ls(dir.path()).iter().all(|n| !n.contains(".freitask.")),
+            "nenhum temporário sobra"
+        );
+    }
+
+    #[test]
+    fn arquivo_novo_nasce_com_o_modo_de_um_arquivo_criado_sem_cerimonia() {
+        let dir = tempfile::tempdir().unwrap();
+        let referencia = dir.path().join("referencia");
+        std::fs::write(&referencia, b"x").unwrap();
+        let novo = dir.path().join("novo.md");
+        assert!(gravar(&Real, &novo, None, b"a").unwrap());
+        assert_eq!(modo(&novo), modo(&referencia));
+    }
+
+    /// Uma gravação sobre arquivo que existe tem o passo das permissões a
+    /// mais; a de arquivo novo, não (não há de onde herdar).
+    #[test]
+    fn o_passo_das_permissoes_so_existe_quando_ha_arquivo_para_herdar() {
+        let dir = tempfile::tempdir().unwrap();
+        let novo = dir.path().join("novo.md");
+        let f = Falhando::no_passo(&Real, 99);
+        gravar(&f, &novo, None, b"a").unwrap();
+        assert_eq!(f.passos(), 4, "escrever, fsync, rename, fsync do diretório");
+        let f = Falhando::no_passo(&Real, 99);
+        gravar(&f, &novo, Some(b"a"), b"b").unwrap();
+        assert_eq!(f.passos(), 5);
     }
 
     #[test]
@@ -397,7 +457,7 @@ mod tests {
             },
         ];
         let mut viu_velho_no_novo = false;
-        for passo in 1..=12 {
+        for passo in 1..=14 {
             let dir = tempfile::tempdir().unwrap();
             std::fs::create_dir_all(dir.path().join("p/tasks")).unwrap();
             std::fs::write(dir.path().join("p/tasks/x.md"), b"velho").unwrap();

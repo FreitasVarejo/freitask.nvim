@@ -18,7 +18,7 @@ use ratatui::layout::Rect;
 
 use crate::deslocar;
 use crate::escrita;
-use crate::saida::{self, Contexto, Resultado};
+use crate::saida::{self, Contexto, Falha, Resultado, Saida};
 use crate::tui::dados::Dados;
 use crate::tui::estado::{Comando, Depois, Escrita, Evento, State, update};
 use crate::tui::tela::view;
@@ -35,39 +35,53 @@ pub enum Pedido {
     Abrir(PathBuf),
 }
 
+/// De onde a `Sessao` tira o dia: perguntado a cada comando e a cada leitura,
+/// porque uma TUI aberta às 23:50 ainda está aberta depois da meia-noite, e o
+/// painel e as adiadas não podem ficar no dia de ontem. O erro é a mensagem de
+/// quem não soube dizer o dia.
+pub type Relogio = Box<dyn Fn() -> Result<Date, String>>;
+
 /// Uma TUI aberta sobre `<home>/ObsidianVault`.
 pub struct Sessao {
     estado: State,
     vault: Vault,
     /// Onde mora o lock de escrita (`$XDG_RUNTIME_DIR` ou o `home`).
     trava: PathBuf,
-    hoje: Date,
+    relogio: Relogio,
 }
 
 impl Sessao {
     /// Abre como a TUI abre: regenera o `CURRENT.md` (`rebuild`) e então lê o
-    /// vault. `hoje` é `AAAA-MM-DD` e faz o papel do `FREITASK_TODAY`. Se o
-    /// `rebuild` falhar, abre mesmo assim, com o motivo na barra. Nunca lê
+    /// vault. `hoje` é `AAAA-MM-DD` e faz o papel do `FREITASK_TODAY`: o dia
+    /// fica fixo na sessão inteira (é o que os testes de aceite precisam). Se
+    /// o `rebuild` falhar, abre mesmo assim, com o motivo na barra. Nunca lê
     /// `HOME`: o vault é `<home>/ObsidianVault`.
     pub fn abrir(home: &Path, hoje: &str) -> Result<Sessao, String> {
         let hoje = saida::dia(hoje)?;
+        Sessao::abrir_com_relogio(home, Box::new(move || Ok(hoje)))
+    }
+
+    /// O mesmo, para a TUI de verdade: o dia vem de `relogio`, perguntado a
+    /// cada comando e a cada leitura do vault (a `CLI` fazia o mesmo ao ser
+    /// chamada a cada ação). Se o relógio falhar na abertura, a sessão não
+    /// abre; se falhar depois, o comando que precisava do dia não roda e o
+    /// motivo vai para a barra, como o de um `rebuild` que falha.
+    pub fn abrir_com_relogio(home: &Path, relogio: Relogio) -> Result<Sessao, String> {
+        relogio()?;
         let trava =
             saida::caminho_da_trava(Some(&home.to_string_lossy())).map_err(|f| f.para_a_barra())?;
         let mut sessao = Sessao {
             estado: State::default(),
             vault: Vault::em(home.join("ObsidianVault")),
             trava,
-            hoje,
+            relogio,
         };
         // O `rebuild` vem antes da leitura para que as duas concordem: a task
         // adiada que voltou hoje entra no painel sem ninguém ter escrito nela.
-        let rebuild = escrita::rebuild(&sessao.contexto());
+        let rebuild = sessao.regenerar();
         let mut eventos = vec![sessao.dados_novos(Depois::Manter, String::new())];
-        if let Err(f) = rebuild {
-            eventos.push(Evento::Falhou(format!(
-                "rebuild falhou: {}",
-                f.para_a_barra()
-            )));
+        if let Err(motivo) = rebuild {
+            eventos.push(Evento::Falhou(format!("rebuild falhou: {motivo}")));
         }
         sessao.processar(eventos);
         Ok(sessao)
@@ -115,7 +129,7 @@ impl Sessao {
         if let Some(e) = erro {
             eventos.push(Evento::Falhou(e));
         }
-        let _ = escrita::rebuild(&self.contexto());
+        let _ = self.regenerar();
         eventos.push(self.dados_novos(Depois::Manter, String::new()));
         self.processar(eventos);
     }
@@ -125,19 +139,35 @@ impl Sessao {
         &self.estado
     }
 
-    fn contexto(&self) -> Contexto<'_> {
-        Contexto {
-            vault: &self.vault,
-            trava: &self.trava,
-            hoje: self.hoje,
-        }
+    /// O dia de agora, perguntado ao relógio; o erro já vem como a barra o
+    /// mostra.
+    fn dia(&self) -> Result<Date, String> {
+        (self.relogio)().map_err(|e| format!("relógio falhou: {e}"))
     }
 
+    fn contexto(&self) -> Result<Contexto<'_>, String> {
+        Ok(Contexto {
+            vault: &self.vault,
+            trava: &self.trava,
+            hoje: self.dia()?,
+        })
+    }
+
+    /// O `rebuild`, com o motivo da falha já como a barra o mostra.
+    fn regenerar(&self) -> Result<Saida, String> {
+        escrita::rebuild(&self.contexto()?).map_err(|f| f.para_a_barra())
+    }
+
+    /// A leitura do vault no dia de agora; se o relógio falha, a tela fica
+    /// como está e a barra diz por quê.
     fn dados_novos(&self, depois: Depois, saida: String) -> Evento {
-        Evento::Dados {
-            dados: Dados::ler(&self.vault, self.hoje),
-            depois,
-            saida,
+        match self.dia() {
+            Ok(hoje) => Evento::Dados {
+                dados: Dados::ler(&self.vault, hoje),
+                depois,
+                saida,
+            },
+            Err(motivo) => Evento::Falhou(motivo),
         }
     }
 
@@ -162,9 +192,9 @@ impl Sessao {
         match comando {
             Comando::Sair => return Some(Pedido::Sair),
             Comando::Abrir(caminho) => return Some(Pedido::Abrir(PathBuf::from(caminho))),
-            Comando::AbrirCurrent => match escrita::rebuild(&self.contexto()) {
+            Comando::AbrirCurrent => match self.regenerar() {
                 Ok(saida) => return Some(Pedido::Abrir(PathBuf::from(saida.stdout))),
-                Err(f) => fila.push_back(Evento::Falhou(f.para_a_barra())),
+                Err(motivo) => fila.push_back(Evento::Falhou(motivo)),
             },
             Comando::Reler { depois, saida } => fila.push_back(self.dados_novos(depois, saida)),
             Comando::SugerirId(titulo) => {
@@ -197,7 +227,15 @@ impl Sessao {
     /// Grava pelo mesmo caminho da CLI: lock, leitura, plano do `core` ou
     /// recusa, escrita com CAS e `rebuild`.
     fn escrever(&self, acao: Escrita) -> Resultado {
-        let cx = self.contexto();
+        let cx = match self.contexto() {
+            Ok(cx) => cx,
+            Err(motivo) => {
+                return Err(Falha {
+                    stderr: vec![motivo],
+                    codigo: 1,
+                });
+            }
+        };
         match acao {
             Escrita::NovaTask {
                 projeto,
@@ -289,6 +327,179 @@ mod tests {
             (m.texto.as_str(), m.erro),
             ("nvim --remote-expr falhou: x", true)
         );
+    }
+
+    /// Um relógio que o teste move: o dia atual e se ele está quebrado.
+    struct Mostrador {
+        dia: std::cell::Cell<Date>,
+        quebrado: std::cell::Cell<bool>,
+    }
+
+    fn mostrador(dia: &str) -> std::rc::Rc<Mostrador> {
+        std::rc::Rc::new(Mostrador {
+            dia: std::cell::Cell::new(saida::dia(dia).unwrap()),
+            quebrado: std::cell::Cell::new(false),
+        })
+    }
+
+    fn relogio(m: &std::rc::Rc<Mostrador>) -> Relogio {
+        let m = std::rc::Rc::clone(m);
+        Box::new(move || {
+            if m.quebrado.get() {
+                Err("sem relógio".to_string())
+            } else {
+                Ok(m.dia.get())
+            }
+        })
+    }
+
+    fn painel(home: &tempfile::TempDir) -> String {
+        std::fs::read_to_string(home.path().join("ObsidianVault/CURRENT.md")).unwrap()
+    }
+
+    fn tecla(c: char) -> KeyEvent {
+        KeyEvent::from(ratatui::crossterm::event::KeyCode::Char(c))
+    }
+
+    fn digita(s: &mut Sessao, texto: &str) {
+        for c in texto.chars() {
+            s.tecla(tecla(c));
+        }
+    }
+
+    fn enter() -> KeyEvent {
+        KeyEvent::from(ratatui::crossterm::event::KeyCode::Enter)
+    }
+
+    #[test]
+    fn o_dia_e_perguntado_a_cada_comando_e_a_cada_leitura() {
+        let home = home_com_uma_task();
+        let adiada = home.path().join("ObsidianVault/projects/a/tasks/dois.md");
+        std::fs::write(
+            adiada,
+            "---\nvolta-em: 2026-11-11\n---\n\n> [!todo] Dois\n> [[dois]]\n",
+        )
+        .unwrap();
+        let relogio_manual = mostrador("2026-11-10");
+        let mut s = Sessao::abrir_com_relogio(home.path(), relogio(&relogio_manual)).unwrap();
+        assert_eq!(ids(&s), ["um"], "a adiada ainda não voltou");
+        assert!(painel(&home).contains("date: 2026-11-10"));
+
+        // Passou a meia-noite com a TUI aberta.
+        relogio_manual.dia.set(saida::dia("2026-11-11").unwrap());
+        s.tecla(tecla('R'));
+        assert_eq!(ids(&s), ["dois", "um"], "a leitura usa o dia novo");
+        assert!(
+            painel(&home).contains("date: 2026-11-10"),
+            "reler não grava o painel"
+        );
+
+        let pedido = s.tecla(tecla('c'));
+        assert!(matches!(pedido, Pedido::Abrir(_)));
+        let novo = painel(&home);
+        assert!(novo.contains("date: 2026-11-11"), "{novo}");
+        assert!(novo.contains("> [!todo] Dois\n"), "{novo}");
+    }
+
+    #[test]
+    fn a_gravacao_regenera_o_painel_no_dia_de_agora() {
+        let home = home_com_uma_task();
+        let relogio_manual = mostrador("2026-11-10");
+        let mut s = Sessao::abrir_com_relogio(home.path(), relogio(&relogio_manual)).unwrap();
+        relogio_manual.dia.set(saida::dia("2026-11-11").unwrap());
+        s.tecla(tecla('i'));
+        digita(&mut s, "estado novo");
+        s.tecla(enter());
+        let task =
+            std::fs::read_to_string(home.path().join("ObsidianVault/projects/a/tasks/um.md"))
+                .unwrap();
+        assert!(task.contains("estado novo"), "{task}");
+        let novo = painel(&home);
+        assert!(novo.contains("date: 2026-11-11"), "{novo}");
+        assert!(
+            home.path()
+                .join("ObsidianVault/daily/2026-11-10.md")
+                .is_file(),
+            "o painel de ontem virou o snapshot do dia dele"
+        );
+    }
+
+    #[test]
+    fn relogio_que_falha_na_abertura_nao_abre() {
+        let home = home_com_uma_task();
+        let m = mostrador("2026-11-10");
+        m.quebrado.set(true);
+        let e = Sessao::abrir_com_relogio(home.path(), relogio(&m))
+            .err()
+            .unwrap();
+        assert_eq!(e, "sem relógio");
+        assert!(!home.path().join("ObsidianVault/CURRENT.md").exists());
+    }
+
+    #[test]
+    fn relogio_que_falha_no_meio_da_sessao_vai_para_a_barra_e_nao_derruba() {
+        let home = home_com_uma_task();
+        let m = mostrador("2026-11-10");
+        let mut s = Sessao::abrir_com_relogio(home.path(), relogio(&m)).unwrap();
+        let antes = painel(&home);
+        m.quebrado.set(true);
+        let barra = |s: &Sessao| {
+            let m = s.estado().mensagem.clone().unwrap();
+            assert!(m.erro);
+            m.texto
+        };
+
+        s.tecla(tecla('R'));
+        assert_eq!(barra(&s), "relógio falhou: sem relógio");
+        assert_eq!(ids(&s), ["um"], "a tela fica como estava");
+
+        assert_eq!(s.tecla(tecla('c')), Pedido::Nada);
+        assert_eq!(barra(&s), "relógio falhou: sem relógio");
+
+        s.tecla(tecla('i'));
+        digita(&mut s, "estado novo");
+        s.tecla(enter());
+        assert_eq!(barra(&s), "relógio falhou: sem relógio");
+        let task =
+            std::fs::read_to_string(home.path().join("ObsidianVault/projects/a/tasks/um.md"))
+                .unwrap();
+        assert_eq!(task, "> [!todo] Um\n> [[um]]\n", "sem dia, nada é gravado");
+        // O campo volta aberto, com o que foi digitado; Esc o fecha.
+        s.tecla(KeyEvent::from(ratatui::crossterm::event::KeyCode::Esc));
+
+        s.voltou_do_editor(None);
+        assert_eq!(barra(&s), "relógio falhou: sem relógio");
+        assert_eq!(painel(&home), antes, "sem dia, o painel não é regravado");
+
+        // O relógio volta e a sessão segue de onde estava.
+        m.quebrado.set(false);
+        s.tecla(tecla('R'));
+        assert_eq!(ids(&s), ["um"]);
+        assert!(matches!(s.tecla(tecla('c')), Pedido::Abrir(_)));
+    }
+
+    #[test]
+    fn relogio_que_falha_logo_depois_de_abrir_abre_com_o_motivo_na_barra() {
+        let home = home_com_uma_task();
+        let chamadas = std::rc::Rc::new(std::cell::Cell::new(0));
+        let c = std::rc::Rc::clone(&chamadas);
+        let hoje = saida::dia("2026-11-10").unwrap();
+        let s = Sessao::abrir_com_relogio(
+            home.path(),
+            Box::new(move || {
+                c.set(c.get() + 1);
+                if c.get() == 1 {
+                    Ok(hoje)
+                } else {
+                    Err("caiu".to_string())
+                }
+            }),
+        )
+        .unwrap();
+        let m = s.estado().mensagem.clone().unwrap();
+        assert!(m.erro);
+        assert_eq!(m.texto, "rebuild falhou: relógio falhou: caiu");
+        assert!(!home.path().join("ObsidianVault/CURRENT.md").exists());
     }
 
     #[test]

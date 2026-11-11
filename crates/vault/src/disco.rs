@@ -13,6 +13,10 @@ pub trait Disco {
     fn ler(&self, p: &Path) -> io::Result<Option<Vec<u8>>>;
     /// Cria (ou trunca) `p` com `bytes`.
     fn escrever(&self, p: &Path, bytes: &[u8]) -> io::Result<()>;
+    /// Dá a `para` as permissões de `de`, para o `rename` do temporário não
+    /// trocar o modo do arquivo que substitui (o que `escrever` cria sai com
+    /// o modo do umask). Se `de` não existe, não faz nada.
+    fn herdar_permissoes(&self, de: &Path, para: &Path) -> io::Result<()>;
     /// `fsync` do arquivo.
     fn fsync(&self, p: &Path) -> io::Result<()>;
     fn renomear(&self, de: &Path, para: &Path) -> io::Result<()>;
@@ -44,6 +48,14 @@ impl Disco for Real {
     fn escrever(&self, p: &Path, bytes: &[u8]) -> io::Result<()> {
         let mut f = std::fs::File::create(p)?;
         f.write_all(bytes)
+    }
+
+    fn herdar_permissoes(&self, de: &Path, para: &Path) -> io::Result<()> {
+        match std::fs::metadata(de) {
+            Ok(m) => std::fs::set_permissions(para, m.permissions()),
+            Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(e),
+        }
     }
 
     fn fsync(&self, p: &Path) -> io::Result<()> {
@@ -149,6 +161,11 @@ impl Disco for Falhando<'_> {
         self.dentro.escrever(p, bytes)
     }
 
+    fn herdar_permissoes(&self, de: &Path, para: &Path) -> io::Result<()> {
+        self.conta()?;
+        self.dentro.herdar_permissoes(de, para)
+    }
+
     fn fsync(&self, p: &Path) -> io::Result<()> {
         self.conta()?;
         self.dentro.fsync(p)
@@ -223,6 +240,57 @@ mod tests {
         assert!(Real.fsync_dir(&dir.path().join("nao")).is_err());
     }
 
+    fn modo(p: &Path) -> u32 {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(p).unwrap().permissions().mode() & 0o7777
+    }
+
+    fn com_modo(p: &Path, m: u32) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::write(p, b"x").unwrap();
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(m)).unwrap();
+    }
+
+    #[test]
+    fn herdar_permissoes_copia_o_modo_da_origem_e_nao_faz_nada_sem_origem() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        com_modo(&a, 0o600);
+        com_modo(&b, 0o644);
+        Real.herdar_permissoes(&a, &b).unwrap();
+        assert_eq!((modo(&a), modo(&b)), (0o600, 0o600));
+        com_modo(&a, 0o644);
+        Real.herdar_permissoes(&a, &b).unwrap();
+        assert_eq!(modo(&b), 0o644, "nos dois sentidos");
+        // Sem origem (arquivo novo): o destino fica como está.
+        com_modo(&b, 0o640);
+        Real.herdar_permissoes(&dir.path().join("falta"), &b)
+            .unwrap();
+        assert_eq!(modo(&b), 0o640);
+        // Destino que falta é erro; origem ilegível (não é NotFound) também.
+        assert!(
+            Real.herdar_permissoes(&a, &dir.path().join("falta"))
+                .is_err()
+        );
+        assert!(
+            Real.herdar_permissoes(&a.join("dentro"), &b).is_err(),
+            "ENOTDIR não é 'não existe'"
+        );
+        assert_eq!(modo(&b), 0o640);
+    }
+
+    #[test]
+    fn falhando_herda_as_permissoes_de_verdade_quando_nao_e_o_passo() {
+        let dir = tempfile::tempdir().unwrap();
+        let (a, b) = (dir.path().join("a"), dir.path().join("b"));
+        com_modo(&a, 0o600);
+        com_modo(&b, 0o644);
+        let f = Falhando::no_passo(&Real, 2);
+        f.herdar_permissoes(&a, &b).unwrap();
+        assert_eq!((f.passos(), modo(&b)), (1, 0o600));
+        assert!(f.herdar_permissoes(&a, &b).is_err(), "o passo 2 falha");
+    }
+
     #[test]
     fn mover_pasta_leva_o_conteudo_e_nunca_junta_nem_sobrescreve() {
         let dir = tempfile::tempdir().unwrap();
@@ -289,11 +357,12 @@ mod tests {
             .unwrap();
         assert_eq!(f.passos(), 2);
         assert!(dir.path().join("c2").is_dir());
-        for passo in 1..=7 {
+        for passo in 1..=8 {
             let f = Falhando::no_passo(&Real, passo);
             let p = dir.path().join(format!("p{passo}"));
             let r = [
                 f.escrever(&p, b"y"),
+                f.herdar_permissoes(&p, &p),
                 f.fsync(&p),
                 f.renomear(&p, &dir.path().join(format!("q{passo}"))),
                 f.fsync_dir(dir.path()),

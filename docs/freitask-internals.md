@@ -78,7 +78,7 @@ alcançam em processo) e o binário (`main.rs`, que despacha para `cli`).
 | Módulo | Responsabilidade | Não é responsabilidade dele |
 | --- | --- | --- |
 | `main` | Despacho: entrega os argumentos a `cli::run`. | Ter lógica. |
-| `cli` | Os subcomandos com clap: argumentos, saída (texto ou `--json`), código de saída, o relógio (`FREITASK_TODAY` ou o local, lido uma vez por comando), o `current` (que executa o Neovim no `CURRENT.md`), e a gramática de `help --json`. | Ter regra — é tradução entre argumentos, chamadas e texto. |
+| `cli` | Os subcomandos com clap: argumentos, saída (texto ou `--json`), código de saída, o relógio (`FREITASK_TODAY` ou o local, lido uma vez por comando; a TUI o recebe como função e o pergunta a cada comando), o `current` (que executa o Neovim no `CURRENT.md`), e a gramática de `help --json`. | Ter regra — é tradução entre argumentos, chamadas e texto. |
 | `usage` | O texto de `freitask help` e o trecho de cada subcomando. | Dizer o que um comando faz: aponta para `freitask <sub> --help` e `freitask.md`. |
 | `escrita` | Os comandos que escrevem (`new`, `new-project`, `set`, `delete`, `rebuild`): toma o lock, lê, pede o plano ao `core`, executa com CAS, regenera o painel. Devolve um `Resultado`. | Decidir uma validação ou a mensagem de uma recusa — são do `core`. |
 | `deslocar` | O mesmo fluxo para `archive`, `unarchive`, `rename`, `move`, `encerrar`, `reabrir`, mais o aviso de quantas referências foram reescritas. | Calcular o plano — é do `core`. |
@@ -128,9 +128,11 @@ alcançam em processo) e o binário (`main.rs`, que despacha para `cli`).
   arquivo final, e uma mudança de outro escritor entre a leitura e a gravação
   vira conflito (saída 3), nunca perda. O lock cobre dois `freitask` na mesma
   máquina, e leitura nunca escreve.
-- **O relógio e o ambiente entram uma vez, na borda.** `cli` lê o dia
-  (`FREITASK_TODAY` ou o local) e o passa a todos; o `core` nunca o lê, o que
-  deixa adiada, prazo e cabeçalho do painel testáveis com o dia fixo.
+- **O relógio e o ambiente entram na borda.** `cli` lê o dia
+  (`FREITASK_TODAY` ou o local) uma vez por comando e o passa a todos; a TUI,
+  que fica aberta por horas, recebe o relógio e o pergunta a cada comando. O
+  `core` nunca o lê, o que deixa adiada, prazo e cabeçalho do painel testáveis
+  com o dia fixo.
 - **A TUI roda em processo, com `update` puro e `view` que só lê** (spec,
   §1.7). A TUI monta o pedido e chama as mesmas funções da CLI, pelo mesmo
   caminho, então não há subprocesso e não há segunda cópia de regra. Regra nova

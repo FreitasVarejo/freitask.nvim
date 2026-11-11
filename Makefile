@@ -37,8 +37,12 @@ test: build
 test-longo: PROPTEST_CASES := 4096
 test-longo: build
 	@echo "PROPTEST_CASES=$(PROPTEST_CASES)"
-	cargo test --workspace -- --nocapture 2>&1 | tee target/test-longo.log | grep -E 'seed|test result|FAILED|panicked' || true
-	@grep -q 'FAILED\|panicked' target/test-longo.log && exit 1 || true
+	@# O código de saída é o do `cargo test`: um erro de compilação não tem
+	@# `FAILED` nem `panicked` no log, e o grep sozinho o deixaria passar.
+	@cargo test --workspace -- --nocapture >target/test-longo.log 2>&1; status=$$?; \
+	  grep -E 'seed|test result|FAILED|panicked|^error' target/test-longo.log; \
+	  if [ $$status -ne 0 ]; then echo "test-longo: cargo test saiu com $$status (log em target/test-longo.log)" >&2; fi; \
+	  exit $$status
 
 ## aceite      os testes congelados de tests/aceite (crate aceite), inclusive schemas
 aceite: build

@@ -2,15 +2,48 @@
 # Catraca de números (spec §4, camada 4) e varredura de special-casing barato.
 #
 # Confere que a contagem de testes e a de asserts não diminuíram em relação a
-# tests/aceite/contagem.baseline, que não há `#[ignore]`/`#[should_panic]` sem
-# justificativa no log de decisões, nenhum `assert!(true)`, nenhum `cfg!(test)`
-# em src/ e nenhuma string com nome de teste/fixture em src/.
+# tests/aceite/contagem.baseline, que todo teste com `#[ignore]`/`#[should_panic]`
+# tem o NOME da função justificado no log de decisões, nenhum `assert!(true)`,
+# nenhum `cfg!(test)` em src/ e nenhuma string com nome de teste/fixture em src/.
 #
 # Uso: scripts/catraca.sh            confere (sai 1 se algo regrediu)
 #      scripts/catraca.sh --gravar   confere e regrava o baseline com os números atuais
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
+
+# `ignorados_sem_justificativa LOG RAIZ...`: uma linha por `#[ignore]` ou
+# `#[should_panic]` cuja função de teste (a primeira `fn` depois do atributo)
+# não aparece no LOG. O caminho do arquivo não basta: dez arquivos com teste já
+# são citados no log por outro motivo, e um `#[ignore]` novo passaria.
+ignorados_sem_justificativa() {
+  local log="$1"; shift
+  local achados linha arquivo resto n nome
+  achados=$(grep -rnE '#\[(ignore|should_panic)' "$@" --include='*.rs' || true)
+  [[ -n "$achados" ]] || return 0
+  while IFS= read -r linha; do
+    arquivo=${linha%%:*}
+    resto=${linha#*:}
+    n=${resto%%:*}
+    nome=$(awk -v n="$n" '
+      NR >= n && match($0, /(^|[^A-Za-z0-9_"])fn[ \t]+[A-Za-z_][A-Za-z0-9_]*/) {
+        achou = substr($0, RSTART, RLENGTH)
+        sub(/^.*fn[ \t]+/, "", achou)
+        print achou
+        exit
+      }' "$arquivo")
+    if [[ -z "$nome" ]]; then
+      echo "$linha (sem fn depois do atributo)"
+    elif ! grep -qwF -- "$nome" "$log"; then
+      echo "$linha (teste $nome)"
+    fi
+  done <<<"$achados"
+}
+
+# Carregado por `source` (para provar o caso vermelho com outros caminhos), só
+# a função fica definida.
+[[ "${BASH_SOURCE[0]}" == "$0" ]] || return 0
+
 export CI=true INSTA_UPDATE=no INSTA_FORCE_PASS=0
 
 baseline=tests/aceite/contagem.baseline
@@ -35,15 +68,13 @@ if [[ -f "$baseline" ]]; then
   echo "catraca: delta testes=$((testes - base_testes)) asserts=$((asserts - base_asserts))"
 fi
 
-# 3. #[ignore] e #[should_panic] novos exigem justificativa no log de decisões.
-ignorados=$(grep -rnE '#\[(ignore|should_panic)' crates tests --include='*.rs' || true)
-if [[ -n "$ignorados" ]]; then
+# 3. #[ignore] e #[should_panic] novos exigem o nome do teste no log de decisões.
+sem_justificativa=$(ignorados_sem_justificativa docs/decisoes-da-reescrita.md crates tests)
+if [[ -n "$sem_justificativa" ]]; then
   while IFS= read -r linha; do
-    arquivo=${linha%%:*}
-    if ! grep -qF "$arquivo" docs/decisoes-da-reescrita.md; then
-      echo "catraca: $linha sem justificativa em docs/decisoes-da-reescrita.md" >&2; falhas=1
-    fi
-  done <<<"$ignorados"
+    echo "catraca: $linha sem justificativa em docs/decisoes-da-reescrita.md" >&2
+  done <<<"$sem_justificativa"
+  falhas=1
 fi
 
 # 4. assert!(true) é um teste que não testa.

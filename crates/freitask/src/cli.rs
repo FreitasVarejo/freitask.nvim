@@ -294,14 +294,15 @@ pub fn run(args: Vec<OsString>) -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    // `FREITASK_TODAY` é lido uma vez, aqui, e vale para todo o comando: um
-    // valor inválido é erro de uso antes de qualquer leitura do vault.
+    // `FREITASK_TODAY` é lido uma vez, aqui, e vale para todo o comando (a TUI
+    // é a exceção, `abrir_a_tui`): um valor inválido é erro de uso antes de
+    // qualquer leitura do vault.
     let hoje = match hoje() {
         Ok(d) => d,
         Err(e) => return die(&e, 2),
     };
     let Some(cmd) = cli.cmd else {
-        return abrir_a_tui(hoje);
+        return abrir_a_tui();
     };
     despachar(cmd, hoje)
 }
@@ -312,7 +313,11 @@ pub fn run(args: Vec<OsString>) -> ExitCode {
 ///
 /// Num terminal: sem `HOME` é erro de uso (2), como nos outros comandos; a
 /// `Sessao` que não abre ou o terminal que falha saem 1 (decisão f7.3).
-fn abrir_a_tui(hoje: Date) -> ExitCode {
+///
+/// Aqui o dia não é o lido uma vez no `run`: a TUI fica aberta por horas, então
+/// a `Sessao` recebe `hoje` como relógio e o pergunta a cada comando, como a
+/// TUI antiga fazia ao chamar a CLI a cada ação.
+fn abrir_a_tui() -> ExitCode {
     use std::io::IsTerminal;
     if !(std::io::stdin().is_terminal() && std::io::stdout().is_terminal()) {
         println!("{}", usage::USAGE);
@@ -321,10 +326,11 @@ fn abrir_a_tui(hoje: Date) -> ExitCode {
     let Some(home) = std::env::var_os("HOME") else {
         return die("HOME não está definido", 2);
     };
-    let mut sessao = match tui::Sessao::abrir(std::path::Path::new(&home), &hoje.to_string()) {
-        Ok(s) => s,
-        Err(e) => return die(&e, 1),
-    };
+    let mut sessao =
+        match tui::Sessao::abrir_com_relogio(std::path::Path::new(&home), Box::new(hoje)) {
+            Ok(s) => s,
+            Err(e) => return die(&e, 1),
+        };
     match tui::laco::rodar(&mut sessao) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => die(&e.to_string(), 1),
@@ -382,14 +388,11 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             imprimir(escrita::kebab(&texto))
         }
         Cmd::Statuses { json } => {
-            let vault = match Vault::do_home() {
+            let vault = match vault() {
                 Ok(v) => v,
-                Err(e) => return die(&e, 2),
+                Err(c) => return c,
             };
-            let (vocab, aviso) = vault.vocab();
-            if let Some(a) = aviso {
-                eprintln!("{a}");
-            }
+            let vocab = vocab(&vault);
             let linhas = vocab.linhas();
             if json {
                 let rows: Vec<serde_json::Value> = linhas
@@ -417,14 +420,11 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             ExitCode::SUCCESS
         }
         Cmd::List { json, archived } => {
-            let vault = match Vault::do_home() {
+            let vault = match vault() {
                 Ok(v) => v,
-                Err(e) => return die(&e, 2),
+                Err(c) => return c,
             };
-            let (vocab, aviso) = vault.vocab();
-            if let Some(a) = aviso {
-                eprintln!("{a}");
-            }
+            let vocab = vocab(&vault);
             let indice = vault.indice(&vocab);
             let linhas = linhas::todas(&indice, archived);
             if json {
@@ -448,14 +448,11 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             let Some(referencia) = referencia else {
                 return die("falta o id ou caminho da task", 2);
             };
-            let vault = match Vault::do_home() {
+            let vault = match vault() {
                 Ok(v) => v,
-                Err(e) => return die(&e, 2),
+                Err(c) => return c,
             };
-            let (vocab, aviso) = vault.vocab();
-            if let Some(a) = aviso {
-                eprintln!("{a}");
-            }
+            let vocab = vocab(&vault);
             let indice = vault.indice(&vocab);
             let rel = match vault.find_task(&indice, &referencia) {
                 Ok(r) => r,
@@ -511,14 +508,11 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             ExitCode::SUCCESS
         }
         Cmd::Projects { json } => {
-            let vault = match Vault::do_home() {
+            let vault = match vault() {
                 Ok(v) => v,
-                Err(e) => return die(&e, 2),
+                Err(c) => return c,
             };
-            let (vocab, aviso) = vault.vocab();
-            if let Some(a) = aviso {
-                eprintln!("{a}");
-            }
+            let vocab = vocab(&vault);
             let indice = vault.indice(&vocab);
             let rows = linhas::projetos(&vocab, &indice, hoje);
             if json {
@@ -672,7 +666,7 @@ fn despachar(cmd: Cmd, hoje: Date) -> ExitCode {
             };
             escrevendo(hoje, |cx| deslocar::projeto(cx, &projeto, false))
         }
-        Cmd::Tui => abrir_a_tui(hoje),
+        Cmd::Tui => abrir_a_tui(),
         Cmd::Current => current(),
         Cmd::Outro(args) => {
             let nome = args
