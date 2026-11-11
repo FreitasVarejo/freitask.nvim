@@ -736,7 +736,9 @@ arquivo pela metade e uma edição de outro dispositivo nunca ser perdida:
   (vale também para o `CURRENT.md`: `rebuild` repetido não escreve nada).
 - **Temporário na mesma pasta e `rename`.** O resultado vai para
   `.freitask.<nome>.<pid>.tmp` ao lado do destino, com `fsync`, e só então
-  substitui o arquivo por `rename` (com `fsync` da pasta).
+  substitui o arquivo por `rename` (com `fsync` da pasta). O temporário
+  recebe antes as permissões do arquivo que substitui: o Syncthing sincroniza
+  o modo, e uma troca de `0600` para `0644` seria um evento de sync à toa.
 - **Conferência contra o que foi lido.** Antes do `rename`, o destino é relido;
   se mudou desde a leitura (o Obsidian, o celular, outro `freitask`), o
   temporário é apagado, nada é gravado e a saída é `3`. É conflito, nunca
