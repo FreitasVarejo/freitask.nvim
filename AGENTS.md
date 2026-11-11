@@ -13,8 +13,9 @@ cutover").
   `~/ObsidianVault/projects/workflow-ia/reescrita-do-freitask-spec.md`): os alvos
   são os do `Makefile` (`make help`). Teste de `tests/aceite/` e snapshot não se
   afrouxam nem se apagam; teste que parecer errado é registrado em
-  `docs/decisoes-da-reescrita.md` e reavaliado por outro agente antes de mudar
-  (spec, §4).
+  `docs/decisoes-da-reescrita.md` e reavaliado pelo subagente `auditor` antes de
+  mudar (spec, §4). Os testes de aceite de cada fatia, o subagente `aceite` escreve;
+  o auditor em contexto limpo do fim da fatia é o `auditor`.
 - Complexidade nova entra só por dor medida: a que já aconteceu em dado do vault ou
   já custou trabalho, não a que o desenho prevê. Ideia sem dor medida vira task em
   "Algum dia".
