@@ -798,6 +798,27 @@ f9b.3. **Reavaliação pedida: os `.snap` da ajuda (`ajuda_60x15` e
     da TUI, módulos do binário) foi descrita em `docs/freitask-internals.md`
     pelo código, e fica para o relatório da 11.
 
+## Depois da fatia 8: a trava de Bash
+
+66. **A trava de Bash (`scripts/trava-bash.sh`) não fecha glob nem caminho
+    resolvido, e ganha uma exceção para chamada única de `freitask`.** O
+    hook casa texto na linha de comando. Medido: glob (`tests/ac*e/…`),
+    aspas, barra invertida, variável, `tests//aceite`, `cd tests` seguido de
+    caminho curto, `sed --in-place`, `perl -pi`, `find -exec` e `git
+    checkout HEAD -- tests/ac*e` passam e escrevem de fato no aceite
+    congelado, e `contagem.baseline` e `mutantes.baseline` ficam fora do hash
+    da camada 2. A dor medida foi uma só, em leitura, sem escrita (task
+    `trava-de-teste-pega-glob`), então o limite fica registrado, não
+    fechado: fechar o caminho resolvido pede interpretar o shell, e quem
+    cobre o resto são as camadas 2 e 5. A correção de código é só o falso
+    positivo: o hook negava `freitask new` e `freitask set` com `tests/aceite`
+    no título ou na descrição, que só escrevem no vault. Chamada única de
+    `freitask` (a linha inteira, sem `;`, `&`, `|`, `<`, `>`, `$`, crase nem
+    quebra de linha) pula só esse padrão; os demais continuam valendo. Os
+    casos medidos estão afirmados em `crates/freitask/tests/trava_bash.rs`
+    (fora de `tests/aceite/`, que não se toca). O texto da regra está na §4,
+    item 3, da spec.
+
 ## Testes reavaliados
 
 - **D2 (`divergencias.toml`), fatia 3.** Pedido na entrada 32. Veredito do
