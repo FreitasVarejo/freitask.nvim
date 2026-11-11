@@ -8,9 +8,16 @@
 # restore` sobre tests/ (desfazer um teste que falhou é a mesma coisa que
 # apagá-lo).
 #
-# Limite conhecido: o hook só enxerga a linha de comando. Um script ou
-# subprocesso que faça o mesmo passa; por isso existem o hash
-# (tests/aceite/ACEITE.sha256) e o auditor em contexto limpo.
+# Exceção: uma chamada única de `freitask` (a linha inteira, sem `; & | < > $`,
+# crase nem quebra de linha) não é negada por citar tests/aceite, porque o
+# texto vai para título ou descrição de task e só escreve no vault. Os demais
+# padrões continuam valendo.
+#
+# Limite conhecido: o hook casa texto na linha de comando, não o caminho
+# resolvido. Glob, aspas, variável e `cd` seguido de caminho curto passam, além
+# de subprocesso e script; por isso existem o hash (tests/aceite/ACEITE.sha256)
+# e o auditor em contexto limpo. contagem.baseline e mutantes.baseline ficam
+# fora do hash, então uma escrita neles por essas formas a camada 2 não acusa.
 #
 # Entrada: o JSON do hook em stdin; a decisão sai pelo código: 0 deixa passar,
 # 2 bloqueia e manda a razão para o modelo pelo stderr.
@@ -32,7 +39,16 @@ padroes=(
   'git[[:space:]]+restore[[:space:]]+.*tests/'
 )
 
+so_freitask=0
+if [[ "$cmd" =~ ^[[:space:]]*freitask[[:space:]] ]] \
+  && [[ "$cmd" != *[';&|<>$`']* && "$cmd" != *$'\n'* ]]; then
+  so_freitask=1
+fi
+
 for p in "${padroes[@]}"; do
+  if [[ "$p" == 'tests/aceite' && "$so_freitask" == 1 ]]; then
+    continue
+  fi
   if [[ "$cmd" =~ $p ]]; then
     echo "trava (spec §4): comando negado por casar \`$p\`. Testes congelados e snapshots não se editam por aqui; use make congelar (subagente) ou registre a decisão em docs/decisoes-da-reescrita.md." >&2
     exit 2
